@@ -231,6 +231,14 @@ export function getComboModelsFromData(modelStr, combosData) {
   return null;
 }
 
+function isCodexSseTransientError(modelStr, errorText) {
+  const slash = String(modelStr || "").indexOf("/");
+  const provider = slash > 0 ? String(modelStr).slice(0, slash) : "";
+  if (provider !== "codex" && provider !== "cx") return false;
+  const lower = String(errorText || "").toLowerCase();
+  return lower.includes("server_is_overloaded") || lower.includes("service_unavailable_error");
+}
+
 /**
  * Handle combo chat with fallback
  * @param {Object} options
@@ -297,8 +305,11 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         try { errorText = JSON.stringify(errorText); } catch { errorText = String(errorText); }
       }
 
-      // Check if should fallback to next model
-      const { shouldFallback, cooldownMs } = checkFallbackError(result.status, errorText);
+      // Codex turns 200-SSE transient failures into 503 after its own bounded retries.
+      // Keep this error model-scoped so a combo can continue without changing account fallback.
+      const codexTransient = isCodexSseTransientError(modelStr, errorText);
+      const { shouldFallback: classifiedFallback, cooldownMs } = checkFallbackError(result.status, errorText);
+      const shouldFallback = codexTransient || classifiedFallback;
 
       if (!shouldFallback) {
         log.warn("COMBO", `Model ${modelStr} failed (no fallback)`, { status: result.status });
@@ -308,7 +319,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
       // For transient errors (503/502/504), wait for cooldown before falling through
       // so a briefly-overloaded provider gets a chance to recover rather than being
       // skipped immediately (fixes: combo falls through on transient 503)
-      if (cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
+      if (!codexTransient && cooldownMs && cooldownMs > 0 && cooldownMs <= 5000 &&
           (result.status === 503 || result.status === 502 || result.status === 504)) {
         log.info("COMBO", `Model ${modelStr} transient ${result.status}, waiting ${cooldownMs}ms before next`);
         await new Promise(r => setTimeout(r, cooldownMs));
