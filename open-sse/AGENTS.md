@@ -1,3 +1,5 @@
+<!-- Parent: ../AGENTS.md -->
+
 # open-sse
 
 Provider-agnostic SSE engine: one OpenAI-style request → any provider (LLM chat, image, embedding, tts, stt, search), streamed back in the client's format.

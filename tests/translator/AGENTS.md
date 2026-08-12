@@ -1,3 +1,5 @@
+<!-- Parent: ../AGENTS.md -->
+
 # Translation Layer Tests
 
 Tests for `open-sse/translator/`. Goals: (1) data-driven coverage of every provider/model, (2) expose bugs caused by using OpenAI as the intermediate format.
