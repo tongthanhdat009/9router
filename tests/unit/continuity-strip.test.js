@@ -62,6 +62,15 @@ describe("stripContinuityFields (outbound boundary)", () => {
     expect(stripContinuityFields(null)).toBe(null);
   });
 
+  it("leaves messages without continuity fields untouched (conditional delete)", () => {
+    const clean = { role: "assistant", content: "ok" };
+    const body = { messages: [{ role: "user", content: "hi" }, clean] };
+    stripContinuityFields(body);
+    expect(clean).toEqual({ role: "assistant", content: "ok" });
+    expect(clean).not.toHaveProperty("encrypted_content");
+    expect(clean).not.toHaveProperty("reasoning_encrypted_content");
+  });
+
   it("end-to-end: Responses multi-turn translation stripped before dispatch", () => {
     const translated = openaiResponsesToOpenAIRequest("x", makeResponsesBody(), false, {});
     // The translator stashes the blob for internal round-trip symmetry...

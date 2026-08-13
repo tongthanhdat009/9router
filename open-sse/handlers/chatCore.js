@@ -50,8 +50,8 @@ export function stripContinuityFields(body) {
   if (!body || !Array.isArray(body.messages)) return body;
   for (const msg of body.messages) {
     if (msg && typeof msg === "object") {
-      delete msg.encrypted_content;
-      delete msg.reasoning_encrypted_content;
+      if (msg.encrypted_content !== undefined) delete msg.encrypted_content;
+      if (msg.reasoning_encrypted_content !== undefined) delete msg.reasoning_encrypted_content;
     }
   }
   return body;
