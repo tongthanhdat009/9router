@@ -25,16 +25,6 @@ vi.mock("@/shared/constants/providers.js", () => ({
 }));
 vi.mock("@/sse/utils/logger.js", () => ({ debug: vi.fn(), warn: vi.fn(), info: vi.fn() }));
 
-function streamFromChunks(chunks) {
-  const encoder = new TextEncoder();
-  return new ReadableStream({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk));
-      controller.close();
-    },
-  });
-}
-
 describe("Batch 2 performance guards", () => {
   it("TTL cache reuses entries then invalidates", async () => {
     const loader = vi.fn(async (key) => `${key}-${loader.mock.calls.length}`);
@@ -71,13 +61,23 @@ describe("Batch 2 performance guards", () => {
     expect(refreshed).not.toBe(first);
   });
 
-  it("finds transient Codex errors in an 8KB sliding peek window", async () => {
+  it("cancels upstream once a pre-output transient marker completes across chunks", async () => {
     const executor = new CodexExecutor();
-    const response = new Response(streamFromChunks([
-      `data: ${"x".repeat(4096)}\n`,
-      'event: error\ndata: {"error":{"message":"server_is_overloaded"}}\n\n',
-    ]), { status: 200 });
-    const peek = await executor._peekSseTransientError(response);
-    expect(peek.matched).toBe("server_is_overloaded");
+    const encoder = new TextEncoder();
+    const marker = "event: error\ndata: {\"error\":{\"message\":\"server_is_overloaded\"}}\n\n";
+    const split = marker.length >> 1;
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(marker.slice(0, split)));
+        controller.enqueue(encoder.encode(marker.slice(split)));
+        controller.close();
+      },
+    }), { status: 200 });
+
+    const peek = executor._peekSseTransientError(response);
+    // Pass-through forwards the first partial chunk immediately, then stops
+    // when the marker completes — so the full error never reaches downstream.
+    const received = await new Response(peek.replacementBody).text();
+    expect(received).not.toContain("server_is_overloaded");
   });
 });

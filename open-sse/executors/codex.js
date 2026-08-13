@@ -9,7 +9,6 @@ import { normalizeResponsesInput } from "../translator/formats/responsesApi.js";
 import { fetchImageAsBase64 } from "../translator/concerns/image.js";
 import { getModelUpstreamId } from "../config/providerModels.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
-import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 
@@ -22,8 +21,15 @@ const CODEX_SSE_USER_OUTPUT_PATTERNS = [
   '"type":"response.output_text.delta"',
   '"type":"response.function_call_arguments.delta"',
 ];
-const CODEX_SSE_PEEK_BYTES = 8 * 1024;
-const CODEX_MODEL_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
+const CODEX_SSE_MARKER_PATTERNS = [
+  ...CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS,
+  ...CODEX_SSE_RETRY_PATTERNS,
+  ...CODEX_SSE_USER_OUTPUT_PATTERNS,
+];
+const CODEX_SSE_SCAN_BYTES = 8 * 1024;
+// Longest marker length - 1; rolling tail detects split markers without buffering
+// prior chunks or decoded SSE text.
+const CODEX_SSE_MARKER_TAIL_BYTES = Math.max(...CODEX_SSE_MARKER_PATTERNS.map(pattern => pattern.length)) - 1;
 
 // Server-generated item id prefixes that Codex /responses cannot resolve when store=false
 const SERVER_ID_PATTERN = /^(rs|fc|resp|msg)_/;
@@ -133,58 +139,6 @@ function normalizeReasoningEffort(model, value) {
   return value;
 }
 
-function findNestedMessage(value, depth = 0) {
-  if (!value || depth > 6 || typeof value === "string") return null;
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const found = findNestedMessage(item, depth + 1);
-      if (found) return found;
-    }
-    return null;
-  }
-  if (typeof value !== "object") return null;
-  if (typeof value.message === "string" && value.message.trim()) return value.message;
-  if (typeof value.error?.message === "string" && value.error.message.trim()) return value.error.message;
-  if (typeof value.response?.error?.message === "string" && value.response.error.message.trim()) return value.response.error.message;
-  for (const child of Object.values(value)) {
-    const found = findNestedMessage(child, depth + 1);
-    if (found) return found;
-  }
-  return null;
-}
-
-function extractSseErrorMessage(text, fallback) {
-  const exact = text?.match(/Selected model is at capacity\. Please try a different model\./i)?.[0];
-  if (exact) return exact;
-
-  for (const line of String(text || "").split(/\r?\n/)) {
-    if (!line.startsWith("data:")) continue;
-    const data = line.slice(5).trim();
-    if (!data || data === "[DONE]") continue;
-    try {
-      const message = findNestedMessage(JSON.parse(data));
-      if (message) return message;
-    } catch {
-      // Ignore non-JSON SSE data lines.
-    }
-  }
-
-  return fallback || CODEX_MODEL_CAPACITY_MESSAGE;
-}
-
-function codexSseErrorResponse(status, message) {
-  return new Response(JSON.stringify({
-    error: {
-      message,
-      type: status >= 500 ? "server_error" : "invalid_request_error",
-      code: status === HTTP_STATUS.SERVICE_UNAVAILABLE ? "service_unavailable" : "upstream_error",
-    }
-  }), {
-    status,
-    headers: { "Content-Type": "application/json" },
-  });
-}
-
 /**
  * Codex Executor - handles OpenAI Codex API (Responses API format)
  * Automatically injects default instructions if missing
@@ -267,84 +221,68 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
-    // Retry loop for SSE-level overloaded errors (200 OK body contains event: error)
-    // Reuses 503 retry config — same semantic: upstream temporarily unavailable
-    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
-    const { attempts, delayMs } = resolveRetryEntry(retryConfig[503]);
-    let attempt = 0;
-    while (true) {
-      const result = await super.execute(args);
-      const peek = await this._peekSseTransientError(result.response);
-      if (!peek.matched) {
-        // Replace body with re-assembled stream (prefix bytes already read + rest)
-        if (peek.replacementBody) {
-          result.response = new Response(peek.replacementBody, {
-            status: result.response.status,
-            statusText: result.response.statusText,
-            headers: result.response.headers,
-          });
-        }
-        return result;
-      }
-      if (peek.accountFallback) {
-        args.log?.warn?.("RETRY", `CODEX | SSE account fallback "${peek.message}"`);
-        result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || CODEX_MODEL_CAPACITY_MESSAGE);
-        return result;
-      }
-      if (attempt >= attempts) {
-        args.log?.warn?.("RETRY", `CODEX | SSE overloaded "${peek.matched}" — retries exhausted (${attempt}/${attempts})`);
-        result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, peek.message || peek.matched);
-        return result;
-      }
-      attempt++;
-      args.log?.debug?.("RETRY", `CODEX | SSE "${peek.matched}" retry ${attempt}/${attempts} after ${delayMs / 1000}s`);
-      dbg("CODEX", `SSE overloaded "${peek.matched}" → retry ${attempt}/${attempts} in ${delayMs}ms`);
-      await new Promise(r => setTimeout(r, delayMs));
+    const result = await super.execute(args);
+    const peek = this._peekSseTransientError(result.response);
+    if (peek.replacementBody) {
+      result.response = new Response(peek.replacementBody, {
+        status: result.response.status,
+        statusText: result.response.statusText,
+        headers: result.response.headers,
+      });
     }
+    return result;
   }
 
-  // Peek first N bytes of SSE body to detect upstream transient errors.
-  // Returns { matched: string|null, message: string|null, accountFallback: boolean, replacementBody: ReadableStream|null }.
-  // Caller must use replacementBody when no error matched (original body has been read).
-  async _peekSseTransientError(response) {
+  // Pass SSE bytes through without tee buffering. Markers span at most the rolling
+  // tail plus current chunk; only transient errors before user-visible output abort.
+  _peekSseTransientError(response) {
     if (!response || !response.ok || !response.body) return { matched: null, message: null, accountFallback: false, replacementBody: null };
-    const [peekBody, replacementBody] = response.body.tee();
-    const reader = peekBody.getReader();
+    const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let peeked = 0;
-    let text = "";
-    let matched = null;
-    let accountFallback = false;
-    try {
-      while (peeked < CODEX_SSE_PEEK_BYTES) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        // Read/decode only the bounded peek prefix; the tee branch preserves the
-        // untouched body for replay without retaining a large upstream chunk.
-        const prefix = value.subarray(0, CODEX_SSE_PEEK_BYTES - peeked);
-        peeked += prefix.byteLength;
-        text += decoder.decode(prefix, { stream: true });
-        const lowerText = text.toLowerCase();
-        const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(p => lowerText.includes(p));
-        if (accountHit) { matched = accountHit; accountFallback = true; break; }
-        const retryHit = CODEX_SSE_RETRY_PATTERNS.find(p => lowerText.includes(p));
-        if (retryHit) { matched = retryHit; break; }
-        if (CODEX_SSE_USER_OUTPUT_PATTERNS.some(p => lowerText.includes(p))) break;
-      }
-    } catch (e) {
-      dbg("CODEX", `peek read error: ${e.message}`);
-    }
+    let tail = "";
+    let userOutput = false;
+    let cancelled = false;
 
-    if (matched) {
-      // Both tee branches must cancel together; awaiting either one first blocks.
-      try { reader.cancel(); } catch { /* noop */ }
-      try { replacementBody.cancel(); } catch { /* noop */ }
-      try { reader.releaseLock(); } catch { /* noop */ }
-      return { matched, message: extractSseErrorMessage(text, matched), accountFallback, replacementBody: null };
-    }
-
-    reader.releaseLock();
-    // No match: replay the untouched tee branch (byte-exact full body) downstream.
+    const replacementBody = new ReadableStream({
+      async pull(controller) {
+        if (cancelled) return controller.close();
+        try {
+          const { done, value } = await reader.read();
+          if (done) {
+            controller.close();
+            reader.releaseLock();
+            return;
+          }
+          // Scan at most the marker tail plus the first 8 KiB of this chunk; a
+          // marker can span at most the previous tail and the chunk prefix.
+          const scanBytes = value.byteLength < CODEX_SSE_SCAN_BYTES ? value.byteLength : CODEX_SSE_SCAN_BYTES;
+          const scan = value.subarray(0, scanBytes);
+          const windowText = tail + decoder.decode(scan, { stream: true });
+          const lowerText = windowText.toLowerCase();
+          const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(pattern => lowerText.includes(pattern));
+          const retryHit = CODEX_SSE_RETRY_PATTERNS.find(pattern => lowerText.includes(pattern));
+          userOutput ||= CODEX_SSE_USER_OUTPUT_PATTERNS.some(pattern => lowerText.includes(pattern));
+          tail = windowText.slice(-CODEX_SSE_MARKER_TAIL_BYTES);
+          if (!userOutput && (accountHit || retryHit)) {
+            cancelled = true;
+            await reader.cancel();
+            reader.releaseLock();
+            dbg("CODEX", `SSE transient error before output: ${accountHit || retryHit}`);
+            controller.close();
+            return;
+          }
+          controller.enqueue(value);
+        } catch (error) {
+          dbg("CODEX", `SSE pass-through read error: ${error.message}`);
+          controller.error(error);
+        }
+      },
+      async cancel(reason) {
+        cancelled = true;
+        await reader.cancel(reason);
+        reader.releaseLock();
+      },
+    });
     return { matched: null, message: null, accountFallback: false, replacementBody };
   }
 

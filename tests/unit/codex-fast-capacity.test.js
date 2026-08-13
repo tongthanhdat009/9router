@@ -36,23 +36,7 @@ describe("Codex fast tier and capacity handling", () => {
     expect(headers["ChatGPT-Account-ID"]).toBe("acct_1");
   });
 
-  it("classifies 200-SSE model capacity as account fallback", async () => {
-    const executor = new CodexExecutor();
-    const response = new Response(streamFromText([
-      "event: error",
-      'data: {"error":{"message":"Selected model is at capacity. Please try a different model."}}',
-      "",
-    ].join("\n")), {
-      status: 200,
-      headers: { "Content-Type": "text/event-stream" },
-    });
-
-    const peek = await executor._peekSseTransientError(response);
-    expect(peek.accountFallback).toBe(true);
-    expect(peek.message).toBe("Selected model is at capacity. Please try a different model.");
-  });
-
-  it("reassembles normal SSE after peeking", async () => {
+  it("passes normal SSE through unchanged", async () => {
     const executor = new CodexExecutor();
     const text = [
       "event: response.output_text.delta",
@@ -64,8 +48,8 @@ describe("Codex fast tier and capacity handling", () => {
       headers: { "Content-Type": "text/event-stream" },
     });
 
-    const peek = await executor._peekSseTransientError(response);
-    expect(peek.matched).toBeNull();
+    const peek = executor._peekSseTransientError(response);
+    expect(peek.replacementBody).toBeInstanceOf(ReadableStream);
     await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
   });
 });
