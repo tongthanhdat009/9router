@@ -11,6 +11,7 @@ import { getModelUpstreamId } from "../config/providerModels.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
 const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
@@ -143,6 +144,59 @@ function normalizeReasoningEffort(model, value) {
  * Codex Executor - handles OpenAI Codex API (Responses API format)
  * Automatically injects default instructions if missing
  */
+
+// Search nested error payloads for a human-readable message (depth-capped).
+function findNestedMessage(value, depth = 0) {
+  if (!value || depth > 6 || typeof value === "string") return null;
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const found = findNestedMessage(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof value !== "object") return null;
+  if (typeof value.message === "string" && value.message.trim()) return value.message;
+  if (typeof value.error?.message === "string" && value.error.message.trim()) return value.error.message;
+  if (typeof value.response?.error?.message === "string" && value.response.error.message.trim()) return value.response.error.message;
+  for (const child of Object.values(value)) {
+    const found = findNestedMessage(child, depth + 1);
+    if (found) return found;
+  }
+  return null;
+}
+
+// Extract a human-readable error message from the peeked SSE text.
+function extractSseErrorMessage(text, fallback) {
+  const exact = text?.match(/Selected model is at capacity\. Please try a different model\./i)?.[0];
+  if (exact) return exact;
+  for (const line of String(text || "").split(/\r?\n/)) {
+    if (!line.startsWith("data:")) continue;
+    const data = line.slice(5).trim();
+    if (!data || data === "[DONE]") continue;
+    try {
+      const message = findNestedMessage(JSON.parse(data));
+      if (message) return message;
+    } catch {
+      // Ignore non-JSON SSE data lines.
+    }
+  }
+  return fallback || CODEX_MODEL_CAPACITY_MESSAGE;
+}
+
+// Build a synthetic JSON 503 so chatCore/combo classify + rotate as before.
+function codexSseErrorResponse(status, message) {
+  return new Response(JSON.stringify({
+    error: {
+      message,
+      type: status >= 500 ? "server_error" : "invalid_request_error",
+      code: status === HTTP_STATUS.SERVICE_UNAVAILABLE ? "service_unavailable" : "upstream_error",
+    }
+  }), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
 export class CodexExecutor extends BaseExecutor {
   constructor() {
     super("codex", PROVIDERS.codex);
@@ -221,66 +275,97 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
-    const result = await super.execute(args);
-    const peek = this._peekSseTransientError(result.response);
-    if (peek.replacementBody) {
-      result.response = new Response(peek.replacementBody, {
-        status: result.response.status,
-        statusText: result.response.statusText,
-        headers: result.response.headers,
-      });
+    // Retry 200-OK SSE transient errors before exposing a response. The bounded
+    // peek buffers at most 8 KiB, then replays it into the client stream.
+    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
+    const { attempts, delayMs } = resolveRetryEntry(retryConfig[HTTP_STATUS.SERVICE_UNAVAILABLE]);
+    let attempt = 0;
+    while (true) {
+      const result = await super.execute(args);
+      const peek = await this._peekSseTransientError(result.response);
+      if (!peek.matched) {
+        if (peek.replacementBody) {
+          result.response = new Response(peek.replacementBody, {
+            status: result.response.status,
+            statusText: result.response.statusText,
+            headers: result.response.headers,
+          });
+        }
+        return result;
+      }
+      if (peek.accountFallback || attempt >= attempts) {
+        const message = peek.message || (peek.accountFallback ? CODEX_MODEL_CAPACITY_MESSAGE : peek.matched);
+        args.log?.warn?.("RETRY", `CODEX | SSE ${peek.accountFallback ? "account fallback" : "overloaded"} \"${message}\"`);
+        result.response = codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, message);
+        return result;
+      }
+      attempt++;
+      args.log?.debug?.("RETRY", `CODEX | SSE \"${peek.matched}\" retry ${attempt}/${attempts} after ${delayMs / 1000}s`);
+      await new Promise(resolve => setTimeout(resolve, delayMs));
     }
-    return result;
   }
 
-  // Pass SSE bytes through without tee buffering. Markers span at most the rolling
-  // tail plus current chunk; only transient errors before user-visible output abort.
-  _peekSseTransientError(response) {
+  // Peek no more than 8 KiB before exposing a response. This preserves the
+  // retry/fallback contract without repeatedly scanning an accumulated body.
+  async _peekSseTransientError(response) {
     if (!response || !response.ok || !response.body) return { matched: null, message: null, accountFallback: false, replacementBody: null };
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
-    let tail = "";
-    let userOutput = false;
-    let cancelled = false;
+    const chunks = [];
+    let text = "";
+    let scannedBytes = 0;
+    let matched = null;
+    let accountFallback = false;
+    try {
+      while (scannedBytes < CODEX_SSE_SCAN_BYTES) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        scannedBytes += value.byteLength;
+        text += decoder.decode(value, { stream: true });
+        const lowerText = text.toLowerCase();
+        const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(pattern => lowerText.includes(pattern));
+        if (accountHit) {
+          matched = accountHit;
+          accountFallback = true;
+          break;
+        }
+        const retryHit = CODEX_SSE_RETRY_PATTERNS.find(pattern => lowerText.includes(pattern));
+        if (retryHit) {
+          matched = retryHit;
+          break;
+        }
+        if (CODEX_SSE_USER_OUTPUT_PATTERNS.some(pattern => lowerText.includes(pattern))) break;
+      }
+    } catch (error) {
+      dbg("CODEX", `SSE peek read error: ${error.message}`);
+    }
 
+    if (matched) {
+      try { await reader.cancel(); } catch { /* noop */ }
+      try { reader.releaseLock(); } catch { /* noop */ }
+      return { matched, message: extractSseErrorMessage(text, matched), accountFallback, replacementBody: null };
+    }
+
+    reader.releaseLock();
+    const upstream = response.body;
+    let upstreamReader;
     const replacementBody = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(chunk);
+        upstreamReader = upstream.getReader();
+      },
       async pull(controller) {
-        if (cancelled) return controller.close();
         try {
-          const { done, value } = await reader.read();
-          if (done) {
-            controller.close();
-            reader.releaseLock();
-            return;
-          }
-          // Scan at most the marker tail plus the first 8 KiB of this chunk; a
-          // marker can span at most the previous tail and the chunk prefix.
-          const scanBytes = value.byteLength < CODEX_SSE_SCAN_BYTES ? value.byteLength : CODEX_SSE_SCAN_BYTES;
-          const scan = value.subarray(0, scanBytes);
-          const windowText = tail + decoder.decode(scan, { stream: true });
-          const lowerText = windowText.toLowerCase();
-          const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(pattern => lowerText.includes(pattern));
-          const retryHit = CODEX_SSE_RETRY_PATTERNS.find(pattern => lowerText.includes(pattern));
-          userOutput ||= CODEX_SSE_USER_OUTPUT_PATTERNS.some(pattern => lowerText.includes(pattern));
-          tail = windowText.slice(-CODEX_SSE_MARKER_TAIL_BYTES);
-          if (!userOutput && (accountHit || retryHit)) {
-            cancelled = true;
-            await reader.cancel();
-            reader.releaseLock();
-            dbg("CODEX", `SSE transient error before output: ${accountHit || retryHit}`);
-            controller.close();
-            return;
-          }
+          const { done, value } = await upstreamReader.read();
+          if (done) return controller.close();
           controller.enqueue(value);
         } catch (error) {
-          dbg("CODEX", `SSE pass-through read error: ${error.message}`);
           controller.error(error);
         }
       },
-      async cancel(reason) {
-        cancelled = true;
-        await reader.cancel(reason);
-        reader.releaseLock();
+      cancel(reason) {
+        return upstreamReader?.cancel(reason);
       },
     });
     return { matched: null, message: null, accountFallback: false, replacementBody };

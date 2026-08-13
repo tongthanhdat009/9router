@@ -48,9 +48,46 @@ describe("Codex fast tier and capacity handling", () => {
       headers: { "Content-Type": "text/event-stream" },
     });
 
-    const peek = executor._peekSseTransientError(response);
+    const peek = await executor._peekSseTransientError(response);
     expect(peek.replacementBody).toBeInstanceOf(ReadableStream);
     await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
+  });
+});
+
+describe("Codex SSE transient error surfacing", () => {
+  it.each([
+    ["server_is_overloaded", "server_is_overloaded"],
+    ["service_unavailable_error", "service_unavailable_error"],
+    ["selected model is at capacity", "model_at_capacity"],
+  ])("surfaces 200-OK SSE marker %s as 503 (not truncated)", async (marker, expectedMatch) => {
+    const executor = new CodexExecutor();
+    const text = ["event: error", `data: {"type":"error","code":"${marker}"}`, ""].join("\n");
+    const response = new Response(streamFromText(text), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+
+    const peek = await executor._peekSseTransientError(response);
+    expect(peek.matched).toBeTruthy();
+    expect(peek.replacementBody).toBeNull();
+  });
+
+  it("returns 503 for capacity marker via codexSseErrorResponse path", async () => {
+    const executor = new CodexExecutor();
+    const text = [
+      "event: error",
+      'data: {"type":"error","code":"selected model is at capacity"}',
+      "",
+    ].join("\n");
+    const response = new Response(streamFromText(text), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+
+    const peek = await executor._peekSseTransientError(response);
+    expect(peek.accountFallback).toBe(true);
+    expect(peek.matched).toBeTruthy();
+    expect(peek.replacementBody).toBeNull();
   });
 });
 
