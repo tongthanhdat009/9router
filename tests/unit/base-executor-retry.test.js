@@ -56,6 +56,19 @@ describe("BaseExecutor.execute — baseUrls fallback", () => {
     expect(out.url).toBe("https://b/api");
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
+
+  it("serializes one transformed body for every fallback", async () => {
+    const ex = makeExec({ baseUrls: ["https://a/api", "https://b/api"], retry: { 429: { attempts: 0 } } });
+    const transformRequest = vi.fn(() => ({ requestId: Math.random() }));
+    ex.transformRequest = transformRequest;
+    fetchMock.mockResolvedValueOnce(res(429)).mockResolvedValueOnce(res(200));
+
+    await ex.execute({ model: "m", body: {}, stream: false, credentials: creds });
+
+    expect(transformRequest).toHaveBeenCalledTimes(1);
+    const sentBodies = fetchMock.mock.calls.map(([, options]) => options.body);
+    expect(sentBodies[0]).toBe(sentBodies[1]);
+  });
 });
 
 describe("BaseExecutor.execute — network error retry/fallback", () => {
