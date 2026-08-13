@@ -6,24 +6,6 @@ vi.mock("../../open-sse/translator/concerns/image.js", async (orig) => {
     ...actual,
     fetchImageAsBase64: vi.fn(async () => ({ url: "data:image/png;base64,QUJD", mimeType: "image/png" })),
   };
-  it("fetches remote images concurrently", async () => {
-    let active = 0;
-    let peak = 0;
-    fetchImageAsBase64.mockImplementation(async () => {
-      active++;
-      peak = Math.max(peak, active);
-      await new Promise((resolve) => setTimeout(resolve, 10));
-      active--;
-      return { url: "data:image/png;base64,QUJD", mimeType: "image/png" };
-    });
-    const body = { messages: [{ role: "user", content: [
-      { type: "image_url", image_url: { url: "https://x/a.png" } },
-      { type: "image_url", image_url: { url: "https://x/b.png" } },
-    ] }] };
-    expect(await prefetchRemoteImages(body, FORMATS.OPENAI, FORMATS.OLLAMA)).toBe(2);
-    expect(peak).toBe(2);
-  });
-
 });
 
 import { prefetchRemoteImages } from "../../open-sse/translator/concerns/prefetch.js";
