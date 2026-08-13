@@ -22,7 +22,7 @@ const CODEX_SSE_USER_OUTPUT_PATTERNS = [
   '"type":"response.output_text.delta"',
   '"type":"response.function_call_arguments.delta"',
 ];
-const CODEX_SSE_PEEK_BYTES = 256 * 1024;
+const CODEX_SSE_PEEK_BYTES = 8 * 1024;
 const CODEX_MODEL_CAPACITY_MESSAGE = "Selected model is at capacity. Please try a different model.";
 
 // Server-generated item id prefixes that Codex /responses cannot resolve when store=false
@@ -319,7 +319,7 @@ export class CodexExecutor extends BaseExecutor {
         const { done, value } = await reader.read();
         if (done) break;
         chunks.push(value);
-        text += decoder.decode(value, { stream: true });
+        text = (text + decoder.decode(value, { stream: true })).slice(-CODEX_SSE_PEEK_BYTES);
         const lowerText = text.toLowerCase();
         const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(p => lowerText.includes(p));
         if (accountHit) { matched = accountHit; accountFallback = true; break; }

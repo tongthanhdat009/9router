@@ -13,6 +13,7 @@ export { SSE_DONE, SSE_HEADERS, SSE_HEADERS_NO_BUFFER };
 
 // sharedEncoder is stateless — safe to share across streams
 const sharedEncoder = new TextEncoder();
+const ACCUMULATE_CONTENT = process.env.ACCUMULATE_STREAM_CONTENT === "true";
 
 /**
  * Stream modes
@@ -63,8 +64,8 @@ export function createSSEStream(options = {}) {
     : null;
 
   let totalContentLength = 0;
-  let accumulatedContent = "";
-  let accumulatedThinking = "";
+  let accumulatedContent;
+  let accumulatedThinking;
   let ttftAt = null;
   let sseLineCount = 0;
   let sseEmittedCount = 0;
@@ -159,11 +160,11 @@ export function createSSEStream(options = {}) {
               const reasoning = delta?.reasoning_content;
               if (content && typeof content === "string") {
                 totalContentLength += content.length;
-                accumulatedContent += content;
+                if (ACCUMULATE_CONTENT) accumulatedContent = (accumulatedContent || "") + content;
               }
               if (reasoning && typeof reasoning === "string") {
                 totalContentLength += reasoning.length;
-                accumulatedThinking += reasoning;
+                if (ACCUMULATE_CONTENT) accumulatedThinking = (accumulatedThinking || "") + reasoning;
               }
 
               const extracted = extractUsage(parsed);
@@ -248,23 +249,23 @@ export function createSSEStream(options = {}) {
         // Claude format - content
         if (parsed.delta?.text) {
           totalContentLength += parsed.delta.text.length;
-          accumulatedContent += parsed.delta.text;
+          if (ACCUMULATE_CONTENT) accumulatedContent = (accumulatedContent || "") + parsed.delta.text;
         }
         // Claude format - thinking
         if (parsed.delta?.thinking) {
           totalContentLength += parsed.delta.thinking.length;
-          accumulatedThinking += parsed.delta.thinking;
+          if (ACCUMULATE_CONTENT) accumulatedThinking = (accumulatedThinking || "") + parsed.delta.thinking;
         }
         
         // OpenAI format - content
         if (parsed.choices?.[0]?.delta?.content) {
           totalContentLength += parsed.choices[0].delta.content.length;
-          accumulatedContent += parsed.choices[0].delta.content;
+          if (ACCUMULATE_CONTENT) accumulatedContent = (accumulatedContent || "") + parsed.choices[0].delta.content;
         }
         // OpenAI format - reasoning
         if (parsed.choices?.[0]?.delta?.reasoning_content) {
           totalContentLength += parsed.choices[0].delta.reasoning_content.length;
-          accumulatedThinking += parsed.choices[0].delta.reasoning_content;
+          if (ACCUMULATE_CONTENT) accumulatedThinking = (accumulatedThinking || "") + parsed.choices[0].delta.reasoning_content;
         }
         
         // Gemini format
@@ -274,9 +275,9 @@ export function createSSEStream(options = {}) {
               totalContentLength += part.text.length;
               // Check if this is thinking content
               if (part.thought === true) {
-                accumulatedThinking += part.text;
+                if (ACCUMULATE_CONTENT) accumulatedThinking = (accumulatedThinking || "") + part.text;
               } else {
-                accumulatedContent += part.text;
+                if (ACCUMULATE_CONTENT) accumulatedContent = (accumulatedContent || "") + part.text;
               }
             }
           }
@@ -379,10 +380,7 @@ export function createSSEStream(options = {}) {
           }
 
           if (onStreamComplete) {
-            onStreamComplete({
-              content: accumulatedContent,
-              thinking: accumulatedThinking
-            }, usage, ttftAt);
+            onStreamComplete(ACCUMULATE_CONTENT ? { content: accumulatedContent, thinking: accumulatedThinking } : undefined, usage, ttftAt);
           }
           return;
         }
@@ -455,10 +453,7 @@ export function createSSEStream(options = {}) {
         }
         
         if (onStreamComplete) {
-          onStreamComplete({
-            content: accumulatedContent,
-            thinking: accumulatedThinking
-          }, state?.usage, ttftAt);
+          onStreamComplete(ACCUMULATE_CONTENT ? { content: accumulatedContent, thinking: accumulatedThinking } : undefined, state?.usage, ttftAt);
         }
       } catch (error) {
         console.log("Error in flush:", error);

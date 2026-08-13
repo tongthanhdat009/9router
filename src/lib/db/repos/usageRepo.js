@@ -25,6 +25,7 @@ if (!global._pendingTimers) global._pendingTimers = {};
 if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
+if (!global._usageStatsCache) global._usageStatsCache = { value: null, pending: null, version: 0 };
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
@@ -32,10 +33,15 @@ const pendingTimers = global._pendingTimers;
 const recentRing = global._recentRing;
 const connCache = global._connectionMapCache;
 const statsEmitTimers = global._statsEmitTimers;
+const usageStatsCache = global._usageStatsCache;
 
 export const statsEmitter = global._statsEmitter;
 
 function scheduleStatsEvent(event, delayMs = 150) {
+  if (event === "update") {
+    usageStatsCache.value = null;
+    usageStatsCache.version++;
+  }
   const key = event === "update" ? "update" : "pending";
   if (statsEmitTimers[key]) return;
   statsEmitTimers[key] = setTimeout(() => {
@@ -341,6 +347,18 @@ function loadDaysInRange(adapter, maxDays) {
   const cutoff = new Date(today.getFullYear(), today.getMonth(), today.getDate() - maxDays + 1);
   const cutoffKey = `${cutoff.getFullYear()}-${String(cutoff.getMonth() + 1).padStart(2, "0")}-${String(cutoff.getDate()).padStart(2, "0")}`;
   return adapter.all(`SELECT dateKey, data FROM usageDaily WHERE dateKey >= ?`, [cutoffKey]);
+}
+
+export async function getCachedUsageStats() {
+  if (usageStatsCache.value) return usageStatsCache.value;
+  if (!usageStatsCache.pending) {
+    const version = usageStatsCache.version;
+    usageStatsCache.pending = getUsageStats().then((stats) => ({ stats, version })).finally(() => { usageStatsCache.pending = null; });
+  }
+  const { stats, version } = await usageStatsCache.pending;
+  if (version !== usageStatsCache.version) return await getCachedUsageStats();
+  usageStatsCache.value = stats;
+  return stats;
 }
 
 export async function getUsageStats(period = "all") {
