@@ -94,6 +94,47 @@ describe("Codex SSE transient error surfacing", () => {
     await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
   });
 
+  it("passes through output-then-capacity in the same chunk without rotating", async () => {
+    const executor = new CodexExecutor();
+    const text = [
+      "event: response.output_text.delta",
+      'data: {"type":"response.output_text.delta","delta":"partial"}',
+      "",
+      "event: error",
+      'data: {"type":"error","code":"model_at_capacity"}',
+      "",
+    ].join("\n");
+    const response = new Response(streamFromText(text), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+
+    const peek = await executor._peekSseTransientError(response);
+    expect(peek.matched).toBeNull();
+    expect(peek.accountFallback).toBe(false);
+    await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
+  });
+
+  it("passes through a refusal before a same-chunk capacity error", async () => {
+    const executor = new CodexExecutor();
+    const text = [
+      "event: response.refusal.delta",
+      'data: {"type":"response.refusal.delta","delta":"cannot comply"}',
+      "",
+      "event: error",
+      'data: {"type":"error","code":"model_at_capacity"}',
+      "",
+    ].join("\n");
+    const response = new Response(streamFromText(text), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+
+    const peek = await executor._peekSseTransientError(response);
+    expect(peek.matched).toBeNull();
+    await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
+  });
+
   it("surfaces a pre-output response.failed in a later chunk as fallback (not passthrough)", async () => {
     const executor = new CodexExecutor();
     const encoder = new TextEncoder();

@@ -24,9 +24,21 @@ const CODEX_SSE_ERROR_EVENT_PATTERNS = [
 ];
 const CODEX_SSE_USER_OUTPUT_PATTERNS = [
   "event: response.output_text.delta",
+  "event: response.output_text.done",
+  "event: response.output_item.done",
+  "event: response.refusal.delta",
+  "event: response.refusal.done",
   "event: response.function_call_arguments.delta",
+  "event: response.custom_tool_call_input.delta",
+  "event: response.reasoning_summary_text.delta",
   '"type":"response.output_text.delta"',
+  '"type":"response.output_text.done"',
+  '"type":"response.output_item.done"',
+  '"type":"response.refusal.delta"',
+  '"type":"response.refusal.done"',
   '"type":"response.function_call_arguments.delta"',
+  '"type":"response.custom_tool_call_input.delta"',
+  '"type":"response.reasoning_summary_text.delta"',
 ];
 const CODEX_SSE_SCAN_BYTES = 8 * 1024;
 
@@ -322,6 +334,19 @@ export class CodexExecutor extends BaseExecutor {
         scannedBytes += value.byteLength;
         text += decoder.decode(value, { stream: true });
         const lowerText = text.toLowerCase();
+        // Determine the earliest position of ANY output or terminal error marker in the
+        // accumulated text BEFORE classifying, so a chunk that coalesces output and a
+        // capacity/overload/error marker keeps committed output as stream content.
+        const errorMatches = CODEX_SSE_ERROR_EVENT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0);
+        const outputMatches = CODEX_SSE_USER_OUTPUT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0);
+        const errorIndex = errorMatches.length ? Math.min(...errorMatches) : -1;
+        const outputIndex = outputMatches.length ? Math.min(...outputMatches) : -1;
+        if (outputIndex >= 0 && outputIndex <= errorIndex) break;
+        if (errorIndex >= 0) {
+          matched = "response.failed";
+          accountFallback = true;
+          break;
+        }
         const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(pattern => lowerText.includes(pattern));
         if (accountHit) {
           matched = accountHit;
@@ -333,17 +358,6 @@ export class CodexExecutor extends BaseExecutor {
           matched = retryHit;
           break;
         }
-        // Only pre-output error events trigger fallback; upstream may coalesce output and failure.
-        const errorMatches = CODEX_SSE_ERROR_EVENT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0);
-        const outputMatches = CODEX_SSE_USER_OUTPUT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0);
-        const errorIndex = errorMatches.length ? Math.min(...errorMatches) : -1;
-        const outputIndex = outputMatches.length ? Math.min(...outputMatches) : -1;
-        if (errorIndex >= 0 && (outputIndex < 0 || errorIndex < outputIndex)) {
-          matched = "response.failed";
-          accountFallback = true;
-          break;
-        }
-        if (outputIndex >= 0) break;
       }
     } catch (error) {
       dbg("CODEX", `SSE peek read error: ${error.message}`);
