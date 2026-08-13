@@ -26,7 +26,8 @@ if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
 if (!global._usageStatsCache) global._usageStatsCache = { value: null, pending: null, version: 0 };
-if (!global._usageWriteQueue) global._usageWriteQueue = { entries: [], scheduled: false };
+if (!global._usageWriteQueue) global._usageWriteQueue = { entries: [], scheduled: false, lastTimestampMs: 0 };
+if (!Number.isFinite(global._usageWriteQueue.lastTimestampMs)) global._usageWriteQueue.lastTimestampMs = 0;
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
@@ -247,6 +248,13 @@ export async function getActiveRequests() {
 }
 
 export function saveRequestUsage(entry) {
+  // Dedup keys include timestamp. Assign before queueing so parallel independent
+  // requests cannot receive the same flush-time timestamp and collapse.
+  if (!entry.timestamp) {
+    const next = Math.max(Date.now(), usageWriteQueue.lastTimestampMs + 1);
+    usageWriteQueue.lastTimestampMs = next;
+    entry.timestamp = new Date(next).toISOString();
+  }
   // Defer better-sqlite3 work until after response flush. Process exit before the
   // flush may lose usage stats; callers awaiting this still get completion.
   return new Promise((resolve) => {
@@ -274,7 +282,6 @@ async function flushUsageEntry(entry) {
   try {
     const db = await getAdapter();
 
-    if (!entry.timestamp) entry.timestamp = new Date().toISOString();
     entry.cost = await calculateCost(entry.provider, entry.model, entry.tokens);
 
     const tokens = entry.tokens || {};
