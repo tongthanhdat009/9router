@@ -11,7 +11,7 @@ import { handleEmbeddingsCore } from "open-sse/handlers/embeddingsCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
-import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
 import { saveRequestUsage } from "@/lib/usageDb.js";
 
 function exactEmbeddingUsage(raw) {
@@ -123,6 +123,7 @@ export async function handleEmbeddings(request) {
       credentials: refreshedCredentials,
       log,
       onCredentialsRefreshed: async (newCreds) => {
+        if (newCreds.__terminalRefreshFailure) { await recordUnrecoverableRefreshFailure(credentials.connectionId, newCreds.__terminalRefreshFailure); return; }
         await persistRefreshedCredentials(credentials.connectionId, { ...newCreds, testStatus: "active" }, credentials.providerSpecificData);
       },
       onRequestSuccess: async () => {

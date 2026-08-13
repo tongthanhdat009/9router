@@ -80,6 +80,27 @@ describe("selectConnectionsNeedingRefresh", () => {
     expect(list).toHaveLength(0);
   });
 
+  it("skips rows marked for reauth while other active rows remain eligible", async () => {
+    const { selectConnectionsNeedingRefresh } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+    const marked = conn({
+      id: "marked",
+      reauthRequiredAt: new Date(NOW - 60 * 1000).toISOString(),
+    });
+    const markedLegacy = conn({
+      id: "marked-legacy",
+      lastErrorType: "token_refresh_failed",
+    });
+    const healthy = conn({
+      id: "healthy",
+      expiresAt: new Date(NOW + 10 * 60 * 1000).toISOString(),
+    });
+    const list = selectConnectionsNeedingRefresh([marked, markedLegacy, healthy], NOW);
+    expect(list).toHaveLength(1);
+    expect(list[0].id).toBe("healthy");
+  });
+
   it("selects already-expired oauth connection", async () => {
     const { selectConnectionsNeedingRefresh } = await import(
       "../../src/sse/services/backgroundTokenRefresh.js"

@@ -149,6 +149,29 @@ function _refreshProjectId(provider, connectionId, accessToken) {
 
 const unrecoverableRefreshCounts = new Map();
 
+export function clearUnrecoverableRefreshFailures(connectionId) {
+  unrecoverableRefreshCounts.delete(connectionId);
+}
+
+export function resetUnrecoverableRefreshFailuresForTests() {
+  unrecoverableRefreshCounts.clear();
+}
+
+export async function recordUnrecoverableRefreshFailure(connectionId, result) {
+  const count = (unrecoverableRefreshCounts.get(connectionId) || 0) + 1;
+  unrecoverableRefreshCounts.set(connectionId, count);
+  if (count < 2 || !connectionId) return false;
+
+  const now = new Date().toISOString();
+  await updateProviderCredentials(connectionId, {
+    lastErrorType: "token_refresh_failed",
+    reauthRequiredAt: now,
+    lastErrorAt: now,
+    lastError: result?.code || result?.error,
+  });
+  return true;
+}
+
 // ─── Local-specific: persist credentials to localDb ──────────────────────────
 
 /**
@@ -227,6 +250,7 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
  */
 export async function persistRefreshedCredentials(connectionId, refreshed, existingProviderSpecificData) {
   const successfulOAuth = refreshed?.accessToken || refreshed?.refreshToken || refreshed?.apiKey || refreshed?.copilotToken;
+  if (successfulOAuth) clearUnrecoverableRefreshFailures(connectionId);
   return updateProviderCredentials(connectionId, {
     ...refreshed,
     ...(successfulOAuth ? { lastErrorType: null, reauthRequiredAt: null } : {}),
@@ -257,17 +281,13 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
 
     const newCreds = await _refreshProviderCredentials(provider, creds, log);
     if (isUnrecoverableRefreshError(newCreds)) {
-      const count = (unrecoverableRefreshCounts.get(creds.connectionId) || 0) + 1;
-      unrecoverableRefreshCounts.set(creds.connectionId, count);
-      if (count >= 2 && creds.connectionId) {
-        const now = new Date().toISOString();
-        await updateProviderCredentials(creds.connectionId, { lastErrorType: "token_refresh_failed", reauthRequiredAt: now, lastErrorAt: now, lastError: newCreds.code || newCreds.error });
+      if (await recordUnrecoverableRefreshFailure(creds.connectionId, newCreds)) {
         return { ...creds, _needsReauth: true, _reauthCode: newCreds.code };
       }
       return creds;
     }
     // Any non-terminal result breaks the consecutive-unrecoverable sequence.
-    unrecoverableRefreshCounts.delete(creds.connectionId);
+    clearUnrecoverableRefreshFailures(creds.connectionId);
     if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken || newCreds?.refreshToken) {
       const mergedCreds = {
         ...newCreds,

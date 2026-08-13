@@ -4,7 +4,7 @@ import { applyThinking, extractThinking, stripThinkingSuffix } from "../translat
 import { FORMATS } from "../translator/formats.js";
 import { normalizeClaudePassthrough } from "../translator/formats/claude.js";
 import { createStreamController } from "../utils/streamHandler.js";
-import { refreshWithRetry } from "../services/tokenRefresh.js";
+import { refreshWithRetry, isUnrecoverableRefreshError } from "../services/tokenRefresh.js";
 import { createRequestLogger } from "../utils/requestLogger.js";
 import { getModelTargetFormat, getModelStrip, getModelUpstreamId, getModelType, PROVIDER_ID_TO_ALIAS } from "../config/providerModels.js";
 import { PROVIDERS } from "../config/providers.js";
@@ -380,8 +380,15 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         }
         return result;
       }, 3, log);
-      if (newCredentials?.error === "unrecoverable_refresh_error" || newCredentials?.error === "refresh_token_reused" || newCredentials?.error === "invalid_grant") {
+      if (isUnrecoverableRefreshError(newCredentials)) {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | permanent refresh failure: ${newCredentials.code || newCredentials.error}`);
+        // Same consecutive-count semantics as the proactive path: a second real
+        // 401 with a permanent refresh failure marks the connection for reauth
+        // (lastErrorType=token_refresh_failed / reauthRequiredAt), so the
+        // background scheduler and request path stop selecting it.
+        if (connectionId && onCredentialsRefreshed) {
+          try { await onCredentialsRefreshed({ __terminalRefreshFailure: newCredentials }); } catch (e) { log?.warn?.("TOKEN", `terminal refresh failure callback failed: ${e.message}`); }
+        }
         // Do not retry the upstream — the chain is dead; fall through to error handling with 401
       } else if (newCredentials?.accessToken || newCredentials?.refreshToken || newCredentials?.copilotToken) {
         if (log?.line) log.line(reqTag, "🔑", `TOKEN REFRESHED · ${provider}/${model}`);

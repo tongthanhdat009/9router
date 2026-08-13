@@ -20,7 +20,7 @@ import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
-import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 
 /**
@@ -287,6 +287,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {
+        if (newCreds.__terminalRefreshFailure) {
+          await recordUnrecoverableRefreshFailure(credentials.connectionId, newCreds.__terminalRefreshFailure);
+          return;
+        }
         await persistRefreshedCredentials(credentials.connectionId, { ...newCreds, testStatus: "active" }, credentials.providerSpecificData);
       },
       onRequestSuccess: async () => {

@@ -10,7 +10,7 @@ import { getModelInfo } from "../services/model.js";
 import { handleVideoProxyCore, getVideoConfig, sanitizeSecrets } from "open-sse/handlers/videoCore.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
-import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
+import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
 import * as log from "../utils/logger.js";
 
 // Video generation is xAI-only today; requests without a provider prefix
@@ -143,6 +143,7 @@ export async function handleVideoCreate(request, action) {
       signal: request.signal,
       log,
       onCredentialsRefreshed: async (newCreds) => {
+        if (newCreds.__terminalRefreshFailure) { await recordUnrecoverableRefreshFailure(credentials.connectionId, newCreds.__terminalRefreshFailure); return; }
         await persistRefreshedCredentials(credentials.connectionId, { ...newCreds, testStatus: "active" }, credentials.providerSpecificData);
       },
     });
@@ -197,7 +198,8 @@ export async function handleVideoGet(request, requestId) {
     signal: request.signal,
     log,
     onCredentialsRefreshed: async (newCreds) => {
-      await persistRefreshedCredentials(credentials.connectionId, { ...newCreds, testStatus: "active" }, credentials.providerSpecificData);
+      if (newCreds.__terminalRefreshFailure) { await recordUnrecoverableRefreshFailure(credentials.connectionId, newCreds.__terminalRefreshFailure); return; }
+        await persistRefreshedCredentials(credentials.connectionId, { ...newCreds, testStatus: "active" }, credentials.providerSpecificData);
     },
   });
 
