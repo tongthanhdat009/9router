@@ -70,9 +70,12 @@ describe("token-refresh sticky terminal state", () => {
 
   it("success clears marker via persist helper", async () => {
     const spy2 = updateSpy;
+    const callsBefore = spy2.mock.calls.length;
     // call helpers directly
     await wrapper.persistRefreshedCredentials("c3", { accessToken: "a", refreshToken: "rt" }, { chatgptAccountId: "w1" });
     expect(spy2).toHaveBeenCalledWith("c3", expect.objectContaining({ accessToken: "a" }));
+    const arg = spy2.mock.calls[callsBefore][1];
+    for (const k of ["lastErrorType", "reauthRequiredAt", "lastError", "lastErrorAt", "errorCode"]) expect(arg[k]).toBeNull();
   });
 });
 

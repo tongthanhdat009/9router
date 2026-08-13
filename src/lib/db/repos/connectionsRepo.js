@@ -154,6 +154,7 @@ export async function createProviderConnection(data) {
           reauthRequiredAt: null,
           lastError: null,
           lastErrorAt: null,
+          errorCode: null,
         });
       }
       upsert(db, merged);

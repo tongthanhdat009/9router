@@ -6,7 +6,7 @@ function monitorFile() {
   return process.env.OAUTH_REFRESH_MONITOR_FILE || path.join(DATA_DIR, "logs", "oauth-refresh-monitor.jsonl");
 }
 
-const SENSITIVE_KEY = /^(accessToken|refreshToken|idToken|token|cookie|authorization|email|secret|password|header)$/i;
+const SENSITIVE_KEY = /^(access_token|refresh_token|id_token|access_token_secret|token_type|bearer|api_key|apikey|accessToken|refreshToken|idToken|token|cookie|authorization|email|secret|password|header)$/i;
 
 function safeValue(value, key = "") {
   if (SENSITIVE_KEY.test(key)) return value == null ? value : "[redacted]";

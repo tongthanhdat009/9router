@@ -43,8 +43,8 @@ export const MAX_RATE_LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
 
 // Cooldown durations (ms)
 const COOLDOWN = {
-  // Terminal auth failures must outlive max rate-limit backoff; routing also excludes sticky reauth rows.
-  long: 30 * 60 * 1000,
+  long: 2 * 60 * 1000,
+  terminalAuth: 30 * 60 * 1000,
   short: 5 * 1000,
 };
 
@@ -69,7 +69,7 @@ export const ERROR_RULES = [
   { text: "overloaded",               backoff: true },
 
   // --- Status-based rules (fallback when text doesn't match) ---
-  { status: 401, cooldownMs: COOLDOWN.long },
+  { status: 401, cooldownMs: COOLDOWN.terminalAuth },
   { status: 402, cooldownMs: COOLDOWN.long },
   { status: 403, cooldownMs: COOLDOWN.long },
   { status: 404, cooldownMs: COOLDOWN.long },
@@ -78,7 +78,7 @@ export const ERROR_RULES = [
 
 // Backward compat: COOLDOWN_MS object (used by index.js re-export)
 export const COOLDOWN_MS = {
-  unauthorized: COOLDOWN.long,
+  unauthorized: COOLDOWN.terminalAuth,
   paymentRequired: COOLDOWN.long,
   notFound: COOLDOWN.long,
   transient: TRANSIENT_COOLDOWN_MS,

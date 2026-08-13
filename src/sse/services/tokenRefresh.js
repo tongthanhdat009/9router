@@ -253,9 +253,25 @@ export async function persistRefreshedCredentials(connectionId, refreshed, exist
   if (successfulOAuth) clearUnrecoverableRefreshFailures(connectionId);
   return updateProviderCredentials(connectionId, {
     ...refreshed,
-    ...(successfulOAuth ? { lastErrorType: null, reauthRequiredAt: null } : {}),
+    ...(successfulOAuth ? {
+      lastErrorType: null,
+      reauthRequiredAt: null,
+      lastError: null,
+      lastErrorAt: null,
+      errorCode: null,
+    } : {}),
     existingProviderSpecificData,
   });
+}
+
+function getConnectionProxyOptions(credentials) {
+  const data = credentials?.providerSpecificData || {};
+  return {
+    connectionProxyEnabled: data.connectionProxyEnabled === true,
+    connectionProxyUrl: data.connectionProxyUrl || "",
+    connectionNoProxy: data.connectionNoProxy || "",
+    vercelRelayUrl: data.vercelRelayUrl || "",
+  };
 }
 
 export async function checkAndRefreshToken(provider, credentials, options = {}) {
@@ -279,7 +295,15 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
       lastRefreshAt: creds.lastRefreshAt || null,
     });
 
-    const newCreds = await _refreshProviderCredentials(provider, creds, log);
+    const proxyOptions = getConnectionProxyOptions(creds);
+    // Thread the connection proxy through to provider refresh handlers (e.g. Codex)
+    // via a temp alias; handlers read credentials.__proxyOptions. Never persisted:
+    // updateProviderCredentials only writes whitelisted fields, and mergeRefreshedCredentials
+    // drops the alias when building the refreshed result.
+    const credsForRefresh = proxyOptions.connectionProxyUrl || proxyOptions.vercelRelayUrl
+      ? { ...creds, __proxyOptions: proxyOptions }
+      : creds;
+    const newCreds = await _refreshProviderCredentials(provider, credsForRefresh, log);
     if (isUnrecoverableRefreshError(newCreds)) {
       if (await recordUnrecoverableRefreshFailure(creds.connectionId, newCreds)) {
         return { ...creds, _needsReauth: true, _reauthCode: newCreds.code };
