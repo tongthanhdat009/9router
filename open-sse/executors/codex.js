@@ -308,18 +308,22 @@ export class CodexExecutor extends BaseExecutor {
   // Caller must use replacementBody when no error matched (original body has been read).
   async _peekSseTransientError(response) {
     if (!response || !response.ok || !response.body) return { matched: null, message: null, accountFallback: false, replacementBody: null };
-    const reader = response.body.getReader();
+    const [peekBody, replacementBody] = response.body.tee();
+    const reader = peekBody.getReader();
     const decoder = new TextDecoder();
-    const chunks = [];
+    let peeked = 0;
     let text = "";
     let matched = null;
     let accountFallback = false;
     try {
-      while (text.length < CODEX_SSE_PEEK_BYTES) {
+      while (peeked < CODEX_SSE_PEEK_BYTES) {
         const { done, value } = await reader.read();
         if (done) break;
-        chunks.push(value);
-        text = (text + decoder.decode(value, { stream: true })).slice(-CODEX_SSE_PEEK_BYTES);
+        // Read/decode only the bounded peek prefix; the tee branch preserves the
+        // untouched body for replay without retaining a large upstream chunk.
+        const prefix = value.subarray(0, CODEX_SSE_PEEK_BYTES - peeked);
+        peeked += prefix.byteLength;
+        text += decoder.decode(prefix, { stream: true });
         const lowerText = text.toLowerCase();
         const accountHit = CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS.find(p => lowerText.includes(p));
         if (accountHit) { matched = accountHit; accountFallback = true; break; }
@@ -332,32 +336,15 @@ export class CodexExecutor extends BaseExecutor {
     }
 
     if (matched) {
-      try { await reader.cancel(); } catch { /* noop */ }
+      // Both tee branches must cancel together; awaiting either one first blocks.
+      try { reader.cancel(); } catch { /* noop */ }
+      try { replacementBody.cancel(); } catch { /* noop */ }
       try { reader.releaseLock(); } catch { /* noop */ }
       return { matched, message: extractSseErrorMessage(text, matched), accountFallback, replacementBody: null };
     }
 
     reader.releaseLock();
-
-    // Re-assemble stream: prefix chunks + remaining upstream body
-    const upstream = response.body;
-    let upstreamReader = null;
-    const replacementBody = new ReadableStream({
-      start(controller) {
-        for (const c of chunks) controller.enqueue(c);
-        upstreamReader = upstream.getReader();
-      },
-      async pull(controller) {
-        try {
-          const { done, value } = await upstreamReader.read();
-          if (done) { controller.close(); return; }
-          controller.enqueue(value);
-        } catch (e) { controller.error(e); }
-      },
-      cancel(reason) {
-        try { upstreamReader?.cancel(reason); } catch { /* noop */ }
-      },
-    });
+    // No match: replay the untouched tee branch (byte-exact full body) downstream.
     return { matched: null, message: null, accountFallback: false, replacementBody };
   }
 
