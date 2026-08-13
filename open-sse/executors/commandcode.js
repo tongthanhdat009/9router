@@ -120,10 +120,27 @@ function peekNdjsonError(originalResponse) {
         }
       }
     } catch (error) {
-      // Stream read failed — fall through and let the transform surface it.
+      // Stream read failed after buffering bytes — propagate the failure through the
+      // replay stream (controller.error after enqueuing buffered chunks) rather than
+      // discarding them and returning an empty 200.
       try { await reader.cancel(); } catch { /* noop */ }
       try { reader.releaseLock(); } catch { /* noop */ }
-      return { errorMessage: null, replayResponse: replayResponse(originalResponse, null, []) };
+      return { errorMessage: null, replayResponse: replayResponse(originalResponse, null, chunks, error) };
+    }
+
+    // Check the trailing partial line left in the buffer (no final newline).
+    const trailing = text.trim();
+    if (trailing) {
+      try {
+        const event = JSON.parse(trailing);
+        if (event && typeof event === "object" && event.type === "error") {
+          const errVal = event.error ?? event.message ?? "unknown";
+          const errStr = typeof errVal === "string" ? errVal : JSON.stringify(errVal);
+          try { await reader.cancel(); } catch { /* noop */ }
+          try { reader.releaseLock(); } catch { /* noop */ }
+          return { errorMessage: `Command Code upstream error: ${errStr}`, replayResponse: null };
+        }
+      } catch { /* not JSON — leave in buffer */ }
     }
 
     // Reached the preflight byte cap with no error/output: replay every buffered
@@ -133,13 +150,21 @@ function peekNdjsonError(originalResponse) {
 }
 
 // Build a Response whose body emits the preflight-buffered raw chunks first, then
-// streams the rest of the upstream body (using `reader` if still locked, else empty).
-function replayResponse(originalResponse, reader, chunks) {
+// streams the rest of the upstream body. `readError` preserves an upstream failure
+// instead of turning it into an empty successful stream.
+function replayResponse(originalResponse, reader, chunks, readError = null) {
+  let pendingError = readError;
   const body = new ReadableStream({
     start(controller) {
       for (const chunk of chunks) controller.enqueue(chunk);
     },
     async pull(controller) {
+      if (pendingError) {
+        const error = pendingError;
+        pendingError = null;
+        controller.error(error);
+        return;
+      }
       if (!reader) { controller.close(); return; }
       try {
         const { done, value } = await reader.read();

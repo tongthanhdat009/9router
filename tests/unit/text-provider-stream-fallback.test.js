@@ -48,6 +48,31 @@ describe("text provider pre-output stream failures", () => {
     });
   });
 
+  it("turns an unterminated Command Code pre-output error into a synthetic 503", async () => {
+    mockUpstream(new Response(streamFromText('{"type":"error","error":"no newline"}'), { status: 200 }));
+
+    const result = await new CommandCodeExecutor().execute({ body: {}, model: "command-model" });
+
+    expect(result.response.status).toBe(503);
+    await expect(result.response.json()).resolves.toMatchObject({
+      error: { message: expect.stringContaining("no newline") },
+    });
+  });
+
+  it("does not turn a preflight read failure into an empty successful stream", async () => {
+    const body = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode('{"type":"start"}\n'));
+        controller.error(new Error("upstream dropped"));
+      },
+    });
+    mockUpstream(new Response(body, { status: 200 }));
+
+    const result = await new CommandCodeExecutor().execute({ body: {}, model: "command-model" });
+
+    await expect(result.response.text()).rejects.toThrow("upstream dropped");
+  });
+
   it("replays normal Command Code NDJSON unchanged through the existing transform", async () => {
     mockUpstream(new Response(streamFromText([
       '{"type":"text-delta","text":"hello"}',
