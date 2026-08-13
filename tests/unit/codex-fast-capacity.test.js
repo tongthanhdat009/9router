@@ -72,6 +72,28 @@ describe("Codex SSE transient error surfacing", () => {
     expect(peek.replacementBody).toBeNull();
   });
 
+  it("passes through a same-chunk output-then-failed stream (error marker after output)", async () => {
+    const executor = new CodexExecutor();
+    const text = [
+      "event: response.output_text.delta",
+      'data: {"type":"response.output_text.delta","delta":"partial"}',
+      "",
+      "event: response.failed",
+      'data: {"type":"response.failed","response":{"error":{"message":"boom"}}}',
+      "",
+    ].join("\n");
+    const response = new Response(streamFromText(text), {
+      status: 200,
+      headers: { "Content-Type": "text/event-stream" },
+    });
+
+    const peek = await executor._peekSseTransientError(response);
+    expect(peek.matched).toBeNull();
+    expect(peek.accountFallback).toBe(false);
+    expect(peek.replacementBody).toBeInstanceOf(ReadableStream);
+    await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
+  });
+
   it("returns 503 for capacity marker via codexSseErrorResponse path", async () => {
     const executor = new CodexExecutor();
     const text = [
