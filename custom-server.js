@@ -52,9 +52,9 @@ http.createServer = (...args) => {
     const isLoopbackProxy = socketIp === "127.0.0.1" || socketIp === "::1" || socketIp === "::ffff:127.0.0.1";
     // Trust forwarding headers only when the TCP peer is a local reverse proxy.
     // Direct/public sockets remain keyed by the unspoofable peer address.
-    const proxyIp = xRealIp || (xff ? String(xff).split(",")[0].trim() : "");
-    const ip = isLoopbackProxy && proxyIp ? proxyIp : socketIp;
-    delete req.headers["x-9r-real-ip"];
+    const proxyIp = isLoopbackProxy ? xRealIp || (xff ? String(xff).split(",")[0].trim() : "") : "";
+    const ip = proxyIp || socketIp;
+    if (req.headers["x-9r-real-ip"] !== undefined) delete req.headers["x-9r-real-ip"];
     delete req.headers["x-forwarded-for"];
     delete req.headers["x-9r-via-proxy"];
     req.headers["x-9r-real-ip"] = ip;
