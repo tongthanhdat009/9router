@@ -1,5 +1,16 @@
 import { v4 as uuidv4 } from "uuid";
 import { getAdapter } from "../driver.js";
+import { makeTtlCache } from "../cache.js";
+
+// Revoked keys may remain valid for at most 10s; writes invalidate every key because keys are mutable.
+const apiKeyCache = makeTtlCache({
+  ttlMs: 10000,
+  loader: async (key) => {
+    const db = await getAdapter();
+    const row = db.get(`SELECT isActive FROM apiKeys WHERE key = ?`, [key]);
+    return !!row && (row.isActive === 1 || row.isActive === true);
+  },
+});
 
 function rowToKey(row) {
   if (!row) return null;
@@ -42,6 +53,7 @@ export async function createApiKey(name, machineId) {
     `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
     [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]
   );
+  apiKeyCache.invalidateAll();
   return apiKey;
 }
 
@@ -58,18 +70,17 @@ export async function updateApiKey(id, data) {
     );
     result = merged;
   });
+  apiKeyCache.invalidateAll();
   return result;
 }
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
   const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
+  apiKeyCache.invalidateAll();
   return (res?.changes ?? 0) > 0;
 }
 
 export async function validateApiKey(key) {
-  const db = await getAdapter();
-  const row = db.get(`SELECT isActive FROM apiKeys WHERE key = ?`, [key]);
-  if (!row) return false;
-  return row.isActive === 1 || row.isActive === true;
+  return await apiKeyCache.get(key);
 }

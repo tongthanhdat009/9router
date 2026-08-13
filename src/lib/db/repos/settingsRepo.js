@@ -1,5 +1,6 @@
 import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
+import { makeTtlCache } from "../cache.js";
 
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787";
@@ -62,6 +63,8 @@ async function readRaw() {
   return row ? parseJson(row.data, {}) : {};
 }
 
+const settingsCache = makeTtlCache({ ttlMs: 5000, loader: readRaw });
+
 // Merge raw settings with defaults; backward-compat for missing keys
 function mergeWithDefaults(raw) {
   const merged = { ...DEFAULT_SETTINGS, ...(raw || {}) };
@@ -82,7 +85,7 @@ function mergeWithDefaults(raw) {
 }
 
 export async function getSettings() {
-  const raw = await readRaw();
+  const raw = await settingsCache.get();
   return mergeWithDefaults(raw);
 }
 
@@ -99,6 +102,7 @@ export async function updateSettings(updates) {
       [stringifyJson(next)],
     );
   });
+  settingsCache.invalidate();
   return mergeWithDefaults(next);
 }
 
