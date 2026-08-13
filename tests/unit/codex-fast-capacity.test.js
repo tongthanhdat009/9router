@@ -94,6 +94,27 @@ describe("Codex SSE transient error surfacing", () => {
     await expect(new Response(peek.replacementBody).text()).resolves.toBe(text);
   });
 
+  it("surfaces a pre-output response.failed in a later chunk as fallback (not passthrough)", async () => {
+    const executor = new CodexExecutor();
+    const encoder = new TextEncoder();
+    const chunks = [
+      ["event: response.created", 'data: {"type":"response.created"}', ""].join("\n"),
+      ["event: response.failed", 'data: {"type":"response.failed","response":{"error":{"message":"boom"}}}', ""].join("\n"),
+    ];
+    const response = new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(chunks[0]));
+        controller.enqueue(encoder.encode(chunks[1]));
+        controller.close();
+      },
+    }), { status: 200, headers: { "Content-Type": "text/event-stream" } });
+
+    const peek = await executor._peekSseTransientError(response);
+    expect(peek.matched).toBe("response.failed");
+    expect(peek.accountFallback).toBe(true);
+    expect(peek.replacementBody).toBeNull();
+  });
+
   it("returns 503 for capacity marker via codexSseErrorResponse path", async () => {
     const executor = new CodexExecutor();
     const text = [

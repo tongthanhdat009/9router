@@ -334,8 +334,10 @@ export class CodexExecutor extends BaseExecutor {
           break;
         }
         // Only pre-output error events trigger fallback; upstream may coalesce output and failure.
-        const errorIndex = Math.min(...CODEX_SSE_ERROR_EVENT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0));
-        const outputIndex = Math.min(...CODEX_SSE_USER_OUTPUT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0));
+        const errorMatches = CODEX_SSE_ERROR_EVENT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0);
+        const outputMatches = CODEX_SSE_USER_OUTPUT_PATTERNS.map(pattern => lowerText.indexOf(pattern)).filter(index => index >= 0);
+        const errorIndex = errorMatches.length ? Math.min(...errorMatches) : -1;
+        const outputIndex = outputMatches.length ? Math.min(...outputMatches) : -1;
         if (errorIndex >= 0 && (outputIndex < 0 || errorIndex < outputIndex)) {
           matched = "response.failed";
           accountFallback = true;
