@@ -70,6 +70,9 @@ export function createSSEStream(options = {}) {
   let sseEmittedCount = 0;
   const eventTypeCounts = {};
 
+  const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
+  const keepsOpenAIResponsesFormat = isOpenAIResponsesStream && sourceFormat === FORMATS.OPENAI_RESPONSES;
+
   // Track Responses API event framing for same-format passthrough (codex)
   let currentOpenAIResponsesEvent = null;
   let openAIResponsesTerminalSeen = false;
@@ -212,8 +215,6 @@ export function createSSEStream(options = {}) {
         if (!parsed) continue;
 
         // Responses API same-format passthrough: preserve event framing + track terminal state
-        const isOpenAIResponsesStream = targetFormat === FORMATS.OPENAI_RESPONSES;
-        const keepsOpenAIResponsesFormat = isOpenAIResponsesStream && sourceFormat === FORMATS.OPENAI_RESPONSES;
         const openAIResponsesEventName = isOpenAIResponsesStream
           ? getOpenAIResponsesEventName(currentOpenAIResponsesEvent, parsed)
           : null;
