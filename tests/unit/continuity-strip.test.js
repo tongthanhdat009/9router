@@ -56,6 +56,17 @@ describe("stripContinuityFields (outbound boundary)", () => {
     expect(assistant.tool_calls[0].function.name).toBe("shell");
   });
 
+  it("removes explicitly undefined continuity fields", () => {
+    const assistant = {
+      role: "assistant",
+      encrypted_content: undefined,
+      reasoning_encrypted_content: undefined
+    };
+    stripContinuityFields({ messages: [assistant] });
+    expect(assistant).not.toHaveProperty("encrypted_content");
+    expect(assistant).not.toHaveProperty("reasoning_encrypted_content");
+  });
+
   it("is a no-op for bodies without a messages array", () => {
     const body = { input: [], instructions: "x" };
     expect(stripContinuityFields(body)).toBe(body);
