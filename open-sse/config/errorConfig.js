@@ -43,7 +43,8 @@ export const MAX_RATE_LIMIT_COOLDOWN_MS = 30 * 60 * 1000;
 
 // Cooldown durations (ms)
 const COOLDOWN = {
-  long: 2 * 60 * 1000,
+  // Terminal auth failures must outlive max rate-limit backoff; routing also excludes sticky reauth rows.
+  long: 30 * 60 * 1000,
   short: 5 * 1000,
 };
 
