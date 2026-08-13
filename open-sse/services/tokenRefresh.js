@@ -18,6 +18,7 @@ import {
   refreshWindsurfToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
+import { monitorOAuthRefresh } from "../../src/lib/oauthRefreshMonitor.js";
 
 // Re-export all provider refresh functions (preserves public API for all consumers)
 export {
@@ -176,8 +177,22 @@ async function _getAccessTokenInternal(provider, credentials, log) {
 
 export async function refreshTokenByProvider(provider, credentials, log) {
   if (!credentials.refreshToken) return null;
+  monitorOAuthRefresh("REFRESH_BEGIN", {
+    provider,
+    connectionId: credentials.connectionId || credentials.id || null,
+    hasRefreshToken: true,
+  });
   const handler = REFRESH_HANDLERS[provider];
-  return handler ? handler(credentials, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log);
+  const result = await (handler ? handler(credentials, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log));
+  monitorOAuthRefresh("REFRESH_RESULT", {
+    provider,
+    connectionId: credentials.connectionId || credentials.id || null,
+    success: !!result && !isUnrecoverableRefreshError(result),
+    unrecoverable: isUnrecoverableRefreshError(result),
+    hasAccessToken: !!result?.accessToken,
+    hasIdToken: !!result?.idToken,
+  });
+  return result;
 }
 
 export function formatProviderCredentials(provider, credentials, log) {

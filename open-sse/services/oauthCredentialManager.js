@@ -4,6 +4,7 @@ import {
   refreshTokenByProvider,
 } from "./tokenRefresh.js";
 import { PROVIDER_OAUTH } from "../providers/index.js";
+import { monitorOAuthRefresh } from "../../src/lib/oauthRefreshMonitor.js";
 
 // Single source: codex.oauth.maxRefreshAgeMs (8 days) — proactive refresh window
 export const CODEX_MAX_REFRESH_AGE_MS = PROVIDER_OAUTH["codex"]?.maxRefreshAgeMs;
@@ -151,6 +152,39 @@ export async function refreshProviderCredentials(provider, credentials, log) {
 
   return withCredentialRefreshLock(provider, credentials, async () => {
     const refreshed = await refreshTokenByProvider(provider, credentials, log);
-    return mergeRefreshedCredentials(provider, credentials, refreshed);
+    const merged = mergeRefreshedCredentials(provider, credentials, refreshed);
+
+    if (provider === "codex") {
+      const preIdTokenAccountId = decodeIdTokenAccountId(credentials?.idToken);
+      const postIdTokenAccountId = decodeIdTokenAccountId(merged?.idToken);
+      const preStoredAccountId = credentials?.providerSpecificData?.chatgptAccountId || null;
+      const postStoredAccountId = merged?.providerSpecificData?.chatgptAccountId || null;
+      monitorOAuthRefresh("CODEX_ACCOUNT_DRIFT", {
+        provider,
+        connectionId: credentials.connectionId || credentials.id || null,
+        preIdTokenAccountId,
+        postIdTokenAccountId,
+        idTokenAccountIdChanged: preIdTokenAccountId !== postIdTokenAccountId,
+        preStoredAccountId,
+        postStoredAccountId,
+        storedAccountIdChanged: preStoredAccountId !== postStoredAccountId,
+      });
+    }
+
+    return merged;
   });
+}
+
+function decodeIdTokenAccountId(idToken) {
+  if (!idToken || typeof idToken !== "string") return null;
+  const parts = idToken.split(".");
+  if (parts.length !== 3) return null;
+  try {
+    const b64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const pad = (4 - (b64.length % 4)) % 4;
+    const payload = JSON.parse(Buffer.from(b64 + "=".repeat(pad), "base64").toString("utf8"));
+    return payload?.["https://api.openai.com/auth"]?.chatgpt_account_id || payload?.account_id || null;
+  } catch {
+    return null;
+  }
 }

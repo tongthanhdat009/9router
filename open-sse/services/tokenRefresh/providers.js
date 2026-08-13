@@ -3,6 +3,7 @@ import { OAUTH_ENDPOINTS, GITHUB_COPILOT, buildKimiHeaders } from "../../config/
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { dedupRefresh } from "./dedup.js";
 import { buildExternalIdpRefreshParams } from "../../../src/lib/oauth/kiroExternalIdp.js";
+import { monitorOAuthRefresh } from "../../../src/lib/oauthRefreshMonitor.js";
 
 let _xaiServiceSingleton = null;
 export async function refreshXaiToken(refreshToken, log) {
@@ -210,6 +211,7 @@ export function classifyOAuthRefreshError(errorText = "", status = 0) {
 export async function refreshCodexToken(refreshToken, log) {
   if (!refreshToken) return null;
   return dedupRefresh("codex", refreshToken, async () => {
+    const usesProxy = !!(process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY);
     try {
       const response = await fetch(OAUTH_ENDPOINTS.openai.token, {
         method: "POST",
@@ -227,6 +229,15 @@ export async function refreshCodexToken(refreshToken, log) {
       if (!response.ok) {
         const errorText = await response.text();
         const failure = classifyOAuthRefreshError(errorText, response.status);
+        monitorOAuthRefresh("CODEX_HTTP_RESULT", {
+          provider: "codex",
+          endpoint: OAUTH_ENDPOINTS.openai.token,
+          status: response.status,
+          ok: false,
+          usesProxy,
+          errorCategory: failure.permanent ? "permanent" : "transient",
+          errorCode: failure.code,
+        });
         if (failure.permanent) {
           log?.error?.("TOKEN_REFRESH", "Codex refresh token already used or invalid. Re-auth required.", {
             status: response.status,
@@ -246,6 +257,19 @@ export async function refreshCodexToken(refreshToken, log) {
 
       const tokens = await response.json();
 
+      monitorOAuthRefresh("CODEX_HTTP_RESULT", {
+        provider: "codex",
+        endpoint: OAUTH_ENDPOINTS.openai.token,
+        status: response.status,
+        ok: true,
+        usesProxy,
+        errorCategory: "none",
+        hasNewAccessToken: !!tokens.access_token,
+        hasNewRefreshToken: !!tokens.refresh_token,
+        hasIdToken: !!tokens.id_token,
+        expiresIn: tokens.expires_in,
+      });
+
       log?.info?.("TOKEN_REFRESH", "Successfully refreshed Codex token", {
         hasNewAccessToken: !!tokens.access_token,
         hasNewRefreshToken: !!tokens.refresh_token,
@@ -260,6 +284,15 @@ export async function refreshCodexToken(refreshToken, log) {
         expiresIn: tokens.expires_in,
       };
     } catch (error) {
+      monitorOAuthRefresh("CODEX_HTTP_RESULT", {
+        provider: "codex",
+        endpoint: OAUTH_ENDPOINTS.openai.token,
+        status: 0,
+        ok: false,
+        usesProxy,
+        errorCategory: "network",
+        errorName: error.name,
+      });
       log?.error?.("TOKEN_REFRESH", `Network error refreshing Codex token: ${error.message}`);
       return null;
     }

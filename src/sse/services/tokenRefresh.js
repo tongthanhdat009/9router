@@ -1,6 +1,7 @@
 // Re-export from open-sse with local logger
 import * as log from "../utils/logger.js";
 import { updateProviderConnection } from "../../lib/localDb.js";
+import { monitorOAuthRefresh } from "../../lib/oauthRefreshMonitor.js";
 import {
   getProjectIdForConnection,
   invalidateProjectId,
@@ -190,12 +191,14 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
     if (newCredentials.projectId)            updates.projectId = newCredentials.projectId;
 
     const result = await updateProviderConnection(connectionId, updates);
+    monitorOAuthRefresh("PERSIST_RESULT", { connectionId, success: !!result });
     log.info("TOKEN_REFRESH", "Credentials updated in localDb", {
       connectionId,
       success: !!result
     });
     return !!result;
   } catch (error) {
+    monitorOAuthRefresh("PERSIST_RESULT", { connectionId, success: false });
     log.error("TOKEN_REFRESH", "Error updating credentials in localDb", {
       connectionId,
       error: error.message,
