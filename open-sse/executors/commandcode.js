@@ -3,6 +3,7 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { commandCodeToOpenAIResponse } from "../translator/response/commandcode-to-openai.js";
 import { SSE_DONE } from "../utils/sseConstants.js";
+import { HTTP_STATUS } from "../config/runtimeConfig.js";
 
 /**
  * CommandCodeExecutor — talks to https://api.commandcode.ai/alpha/generate
@@ -42,9 +43,121 @@ export class CommandCodeExecutor extends BaseExecutor {
   async execute(opts) {
     const result = await super.execute(opts);
     if (!result?.response?.ok || !result.response.body) return result;
-    result.response = wrapNdjsonAsOpenAISse(result.response, opts.model);
+    const preflight = await peekNdjsonError(result.response);
+    if (preflight.errorMessage) {
+      try { await result.response.body.cancel(); } catch { /* noop */ }
+      result.response = new Response(JSON.stringify({
+        error: {
+          message: preflight.errorMessage,
+          type: "server_error",
+          code: "upstream_error",
+        }
+      }), {
+        status: HTTP_STATUS.SERVICE_UNAVAILABLE,
+        headers: { "Content-Type": "application/json" },
+      });
+      return result;
+    }
+    result.response = wrapNdjsonAsOpenAISse(preflight.replayResponse, opts.model);
     return result;
   }
+}
+
+// Bounded preflight: read just enough NDJSON to detect a pre-output `{type:"error"}`
+// line before any user-visible content. On error, return its message so execute()
+// swaps in a synthetic 503 (chatCore/chat account loop then rotates the connection).
+// On success, return a fresh Response whose body replays the exact buffered bytes
+// followed by the remaining upstream tail. Errors after a text-delta/reasoning-delta/
+// tool line stay in-stream: headers are already committed downstream, so rotation
+// would be unsafe.
+const COMMANDCODE_PREFLIGHT_BYTES = 8 * 1024;
+
+function peekNdjsonError(originalResponse) {
+  const reader = originalResponse.body.getReader();
+  const decoder = new TextDecoder();
+  const chunks = [];
+  let text = "";
+  let scannedBytes = 0;
+
+  return (async () => {
+    try {
+      while (scannedBytes < COMMANDCODE_PREFLIGHT_BYTES) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        chunks.push(value);
+        scannedBytes += value.byteLength;
+        text += decoder.decode(value, { stream: true });
+        const lines = text.split("\n");
+        text = lines.pop() || "";
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+          let event;
+          try {
+            event = JSON.parse(trimmed);
+          } catch {
+            continue;
+          }
+          if (!event || typeof event !== "object") continue;
+          if (event.type === "error") {
+            const errVal = event.error ?? event.message ?? "unknown";
+            const errStr = typeof errVal === "string" ? errVal : JSON.stringify(errVal);
+            try { await reader.cancel(); } catch { /* noop */ }
+            try { reader.releaseLock(); } catch { /* noop */ }
+            return { errorMessage: `Command Code upstream error: ${errStr}`, replayResponse: null };
+          }
+          // Any user-visible output starts the commit point — stop preflighting and
+          // replay buffered bytes verbatim ahead of the still-readable upstream tail.
+          if (
+            event.type === "text-delta" ||
+            event.type === "reasoning-delta" ||
+            event.type === "tool-input-start" ||
+            event.type === "tool-input-delta" ||
+            event.type === "tool-call"
+          ) {
+            return { errorMessage: null, replayResponse: replayResponse(originalResponse, reader, chunks) };
+          }
+        }
+      }
+    } catch (error) {
+      // Stream read failed — fall through and let the transform surface it.
+      try { await reader.cancel(); } catch { /* noop */ }
+      try { reader.releaseLock(); } catch { /* noop */ }
+      return { errorMessage: null, replayResponse: replayResponse(originalResponse, null, []) };
+    }
+
+    // Reached the preflight byte cap with no error/output: replay every buffered
+    // raw chunk (the partial trailing line is already inside the last chunk).
+    return { errorMessage: null, replayResponse: replayResponse(originalResponse, reader, chunks) };
+  })();
+}
+
+// Build a Response whose body emits the preflight-buffered raw chunks first, then
+// streams the rest of the upstream body (using `reader` if still locked, else empty).
+function replayResponse(originalResponse, reader, chunks) {
+  const body = new ReadableStream({
+    start(controller) {
+      for (const chunk of chunks) controller.enqueue(chunk);
+    },
+    async pull(controller) {
+      if (!reader) { controller.close(); return; }
+      try {
+        const { done, value } = await reader.read();
+        if (done) { controller.close(); return; }
+        controller.enqueue(value);
+      } catch (error) {
+        controller.error(error);
+      }
+    },
+    cancel(reason) {
+      return reader?.cancel(reason);
+    },
+  });
+  return new Response(body, {
+    status: originalResponse.status,
+    statusText: originalResponse.statusText,
+    headers: originalResponse.headers,
+  });
 }
 
 function wrapNdjsonAsOpenAISse(originalResponse, model) {

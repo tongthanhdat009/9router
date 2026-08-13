@@ -16,21 +16,19 @@ import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
 const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
 const CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS = ["selected model is at capacity", "model_at_capacity"];
+const CODEX_SSE_ERROR_EVENT_PATTERNS = [
+  "event: response.failed",
+  "event: error",
+  '"type":"response.failed"',
+  '"type":"error"',
+];
 const CODEX_SSE_USER_OUTPUT_PATTERNS = [
   "event: response.output_text.delta",
   "event: response.function_call_arguments.delta",
   '"type":"response.output_text.delta"',
   '"type":"response.function_call_arguments.delta"',
 ];
-const CODEX_SSE_MARKER_PATTERNS = [
-  ...CODEX_SSE_ACCOUNT_FALLBACK_PATTERNS,
-  ...CODEX_SSE_RETRY_PATTERNS,
-  ...CODEX_SSE_USER_OUTPUT_PATTERNS,
-];
 const CODEX_SSE_SCAN_BYTES = 8 * 1024;
-// Longest marker length - 1; rolling tail detects split markers without buffering
-// prior chunks or decoded SSE text.
-const CODEX_SSE_MARKER_TAIL_BYTES = Math.max(...CODEX_SSE_MARKER_PATTERNS.map(pattern => pattern.length)) - 1;
 
 // Server-generated item id prefixes that Codex /responses cannot resolve when store=false
 const SERVER_ID_PATTERN = /^(rs|fc|resp|msg)_/;
@@ -333,6 +331,14 @@ export class CodexExecutor extends BaseExecutor {
         const retryHit = CODEX_SSE_RETRY_PATTERNS.find(pattern => lowerText.includes(pattern));
         if (retryHit) {
           matched = retryHit;
+          break;
+        }
+        // Pre-output error events (response.failed / type:error) → account fallback.
+        // Retained capacity patterns above match first, so they keep their exact semantics.
+        const errorHit = CODEX_SSE_ERROR_EVENT_PATTERNS.some(pattern => lowerText.includes(pattern));
+        if (errorHit) {
+          matched = "response.failed";
+          accountFallback = true;
           break;
         }
         if (CODEX_SSE_USER_OUTPUT_PATTERNS.some(pattern => lowerText.includes(pattern))) break;
