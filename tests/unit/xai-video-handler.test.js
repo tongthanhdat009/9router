@@ -209,6 +209,20 @@ describe("handleVideoGet", () => {
     expect(global.fetch.mock.calls[0][0]).toBe("https://api.x.ai/v1/videos/req-1");
   });
 
+  it("does not send a stale token upstream when refresh requires re-authentication", async () => {
+    authMocks.getProviderCredentials.mockResolvedValueOnce(account());
+    tokenMocks.checkAndRefreshToken.mockResolvedValueOnce({ ...account(), _needsReauth: true });
+
+    const res = await handleVideoGet(new Request("http://localhost/v1/videos/req-1"), "req-1");
+
+    expect(res.status).toBe(401);
+    expect(await res.text()).toContain("re-authentication required");
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(authMocks.markAccountUnavailable).toHaveBeenCalledWith(
+      "conn-1", 401, "Token refresh failed, re-authentication required", "xai"
+    );
+  });
+
   it("records the failure when polling hits a terminal auth error", async () => {
     authMocks.getProviderCredentials.mockResolvedValueOnce(account({ refreshToken: null }));
     global.fetch.mockResolvedValueOnce(jsonResponse({ error: "unauthorized" }, 401));

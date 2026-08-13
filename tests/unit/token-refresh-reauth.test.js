@@ -76,6 +76,46 @@ describe("token-refresh sticky terminal state", () => {
   });
 });
 
+describe("createProviderConnection fresh-OAuth merge-clear", () => {
+  let db;
+  let tempDir;
+  const originalDataDir = process.env.DATA_DIR;
+
+  beforeEach(async () => {
+    tempDir = (await import("node:fs")).default.mkdtempSync((await import("node:path")).default.join((await import("node:os")).default.tmpdir(), "9router-merge-clear-"));
+    process.env.DATA_DIR = tempDir;
+    vi.resetModules();
+    db = await import("@/lib/db/index.js");
+    await db.initDb();
+  });
+
+  afterEach(async () => {
+    const fs = await import("node:fs");
+    if (tempDir) fs.rmSync(tempDir, { recursive: true, force: true });
+    if (originalDataDir === undefined) delete process.env.DATA_DIR;
+    else process.env.DATA_DIR = originalDataDir;
+    vi.resetModules();
+  });
+
+  it("clears lastError*/reauth markers when OAuth merges with testStatus:active", async () => {
+    const email = "reauth@example.com";
+    const row = await db.createProviderConnection({ provider: "codex", authType: "oauth", email, accessToken: "old-access", providerSpecificData: { chatgptAccountId: "ws-9" } });
+    await db.updateProviderConnection(row.id, { lastErrorType: "token_refresh_failed", reauthRequiredAt: new Date().toISOString(), lastError: "expired", lastErrorAt: new Date().toISOString(), testStatus: "unavailable" });
+    const refreshed = await db.createProviderConnection({ provider: "codex", authType: "oauth", email, accessToken: "new-access", refreshToken: "rt-new", testStatus: "active", providerSpecificData: { chatgptAccountId: "ws-9" } });
+    expect(refreshed.id).toBe(row.id);
+    for (const k of ["lastErrorType", "reauthRequiredAt", "lastError", "lastErrorAt"]) expect(refreshed[k]).toBeNull();
+  });
+
+  it("does not clear markers when OAuth merges without testStatus:active", async () => {
+    const email = "no-clear@example.com";
+    const row = await db.createProviderConnection({ provider: "codex", authType: "oauth", email, accessToken: "old", providerSpecificData: { chatgptAccountId: "ws-clear-2" } });
+    await db.updateProviderConnection(row.id, { lastErrorType: "token_refresh_failed", reauthRequiredAt: new Date().toISOString(), testStatus: "unavailable" });
+    const refreshed = await db.createProviderConnection({ provider: "codex", authType: "oauth", email, providerSpecificData: { chatgptAccountId: "ws-clear-2" } });
+    expect(refreshed.id).toBe(row.id);
+    expect(refreshed.lastErrorType).toBe("token_refresh_failed");
+  });
+});
+
 describe("reactive 401 terminal refresh failure", () => {
   let updateSpy, wrapper, chatCore;
 

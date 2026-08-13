@@ -148,6 +148,14 @@ export async function createProviderConnection(data) {
 
     if (existing) {
       const merged = { ...existing, ...data, updatedAt: now };
+      if (data.authType === "oauth" && data.testStatus === "active") {
+        Object.assign(merged, {
+          lastErrorType: null,
+          reauthRequiredAt: null,
+          lastError: null,
+          lastErrorAt: null,
+        });
+      }
       upsert(db, merged);
       result = merged;
       return;

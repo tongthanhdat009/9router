@@ -117,6 +117,16 @@ export async function handleEmbeddings(request) {
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
+    if (refreshedCredentials._needsReauth) {
+      const reauthError = "Token refresh failed, re-authentication required";
+      await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.UNAUTHORIZED, reauthError, provider, model);
+      log.warn("AUTH", `Account ${credentials.connectionName} token refresh failed, needs re-auth (401)`);
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = "Token refresh failed, re-authentication required";
+      lastStatus = HTTP_STATUS.UNAUTHORIZED;
+      continue;
+    }
+
     const result = await handleEmbeddingsCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },

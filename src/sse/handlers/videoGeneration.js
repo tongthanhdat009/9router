@@ -133,6 +133,16 @@ export async function handleVideoCreate(request, action) {
 
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
+    if (refreshedCredentials._needsReauth) {
+      const reauthError = "Token refresh failed, re-authentication required";
+      await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.UNAUTHORIZED, reauthError, provider, model);
+      log.warn("AUTH", `Account ${credentials.connectionName} token refresh failed, needs re-auth (401)`);
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = "Token refresh failed, re-authentication required";
+      lastStatus = HTTP_STATUS.UNAUTHORIZED;
+      continue;
+    }
+
     const result = await handleVideoProxyCore({
       provider,
       action,
@@ -190,6 +200,10 @@ export async function handleVideoGet(request, requestId) {
   }
 
   const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
+  if (refreshedCredentials?._needsReauth) {
+    await markAccountUnavailable(credentials.connectionId, 401, "Token refresh failed, re-authentication required", provider);
+    return errorResponse(401, "Token refresh failed, re-authentication required");
+  }
 
   const result = await handleVideoProxyCore({
     provider,

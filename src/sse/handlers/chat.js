@@ -246,6 +246,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Account selection shown in the unified "▶" line (acc:...)
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
 
+    if (refreshedCredentials._needsReauth) {
+      const reauthError = "Token refresh failed, re-authentication required";
+      await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.UNAUTHORIZED, reauthError, provider, model);
+      log.warn("AUTH", `Account ${credentials.connectionName} token refresh failed, needs re-auth (401)`);
+      excludeConnectionIds.add(credentials.connectionId);
+      lastError = "Token refresh failed, re-authentication required";
+      lastStatus = HTTP_STATUS.UNAUTHORIZED;
+      continue;
+    }
+
     // Ensure real project ID is available for providers that need it (P0 fix: cold miss)
     if ((provider === "antigravity" || provider === "gemini-cli") && !refreshedCredentials.projectId) {
       const pid = await getProjectIdForConnection(credentials.connectionId, refreshedCredentials.accessToken, provider);
