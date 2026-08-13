@@ -135,7 +135,7 @@ const REFRESH_HANDLERS = {
   "gemini-cli": (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS["gemini-cli"].clientId, PROVIDERS["gemini-cli"].clientSecret, log),
   antigravity: (c, log) => refreshGoogleToken(c.refreshToken, PROVIDERS.antigravity.clientId, PROVIDERS.antigravity.clientSecret, log),
   claude: (c, log) => refreshClaudeOAuthToken(c.refreshToken, log),
-  codex: (c, log) => refreshCodexToken(c.refreshToken, log),
+  codex: (c, log) => refreshCodexToken(c.refreshToken, log, c),
   iflow: (c, log) => refreshIflowToken(c.refreshToken, log),
   github: (c, log) => refreshGitHubToken(c.refreshToken, log),
   kiro: (c, log) => refreshKiroToken(c.refreshToken, c.providerSpecificData, log),
@@ -175,7 +175,7 @@ async function _getAccessTokenInternal(provider, credentials, log) {
   return handler(credentials, log);
 }
 
-export async function refreshTokenByProvider(provider, credentials, log) {
+export async function refreshTokenByProvider(provider, credentials, log, proxyOptions = null) {
   if (!credentials.refreshToken) return null;
   monitorOAuthRefresh("REFRESH_BEGIN", {
     provider,
@@ -183,7 +183,8 @@ export async function refreshTokenByProvider(provider, credentials, log) {
     hasRefreshToken: true,
   });
   const handler = REFRESH_HANDLERS[provider];
-  const result = await (handler ? handler(credentials, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log));
+  const credsForHandler = proxyOptions ? { ...credentials, __proxyOptions: proxyOptions } : credentials;
+  const result = await (handler ? handler(credsForHandler, log) : refreshAccessToken(provider, credentials.refreshToken, credentials, log));
   monitorOAuthRefresh("REFRESH_RESULT", {
     provider,
     connectionId: credentials.connectionId || credentials.id || null,
@@ -274,6 +275,7 @@ export async function refreshWithRetry(refreshFn, maxRetries = 3, log = null) {
 
     try {
       const result = await refreshFn();
+      if (result?.error === "unrecoverable_refresh_error" || result?.error === "refresh_token_reused" || result?.error === "invalid_grant") return result;
       if (result) return result;
     } catch (error) {
       log?.warn?.("TOKEN_REFRESH", `Attempt ${attempt + 1}/${maxRetries} failed: ${error.message}`);

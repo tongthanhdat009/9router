@@ -301,11 +301,7 @@ const PROVIDER_MODELS_CONFIG = {
           log: console,
           onCredentialsRefreshed: async (refreshed) => {
             if (refreshed?.accessToken) {
-              await updateProviderCredentials(connection.id, {
-                accessToken: refreshed.accessToken,
-                refreshToken: refreshed.refreshToken || connection.refreshToken,
-                expiresIn: refreshed.expiresIn,
-              });
+              await updateProviderCredentials(connection.id, { ...refreshed, existingProviderSpecificData: connection.providerSpecificData });
               connection.accessToken = refreshed.accessToken;
               if (refreshed.refreshToken) connection.refreshToken = refreshed.refreshToken;
             }

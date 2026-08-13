@@ -151,7 +151,9 @@ export async function refreshProviderCredentials(provider, credentials, log) {
   if (!credentials) return null;
 
   return withCredentialRefreshLock(provider, credentials, async () => {
-    const refreshed = await refreshTokenByProvider(provider, credentials, log);
+    const proxyOpt = credentials?.__proxyOptions || null;
+    // Thread proxyOptions through to provider handler via a temporary alias; handlers read credentials.__proxyOptions
+    const refreshed = await refreshTokenByProvider(provider, credentials, log, proxyOpt);
     const merged = mergeRefreshedCredentials(provider, credentials, refreshed);
 
     if (provider === "codex") {

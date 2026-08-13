@@ -7,6 +7,8 @@ import { getCredentialExpiryMs } from "open-sse/services/oauthCredentialManager.
 
 /** Refresh when expiry is within 30 minutes (or the provider on-request lead, whichever larger). */
 export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
+/** Minimum gap between forced refreshes per connection — prevents force:true from spinning on dead tokens. */
+export const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 10 * 1000;
 
@@ -57,6 +59,11 @@ export function selectConnectionsNeedingRefresh(connections, nowMs = Date.now())
 
     const expiresAtMs = getCredentialExpiryMs(conn);
     if (expiresAtMs === null) continue;
+
+    // Throttle forced refreshes: never refresh the same connection more than
+    // once per MIN_REFRESH_INTERVAL_MS unless the access token is already dead.
+    const lastRefreshMs = conn.lastRefreshAt ? new Date(conn.lastRefreshAt).getTime() : null;
+    if (lastRefreshMs && nowMs - lastRefreshMs < MIN_REFRESH_INTERVAL_MS && expiresAtMs > nowMs) continue;
 
     const providerLead = getRefreshLeadMs(conn.provider);
     const leadMs = Math.max(

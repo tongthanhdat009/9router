@@ -208,12 +208,13 @@ export function classifyOAuthRefreshError(errorText = "", status = 0) {
   return { status, code, description, permanent };
 }
 
-export async function refreshCodexToken(refreshToken, log) {
+export async function refreshCodexToken(refreshToken, log, _credentials) {
   if (!refreshToken) return null;
   return dedupRefresh("codex", refreshToken, async () => {
-    const usesProxy = !!(process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY);
+    const usesProxy = !!(_credentials?.__proxyOptions?.connectionProxyUrl || process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.ALL_PROXY);
     try {
-      const response = await fetch(OAUTH_ENDPOINTS.openai.token, {
+      const fetchFn = (_credentials?.__proxyOptions && (await import("../../utils/proxyFetch.js")).proxyAwareFetch) || fetch;
+      const response = await fetchFn(OAUTH_ENDPOINTS.openai.token, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -224,7 +225,7 @@ export async function refreshCodexToken(refreshToken, log) {
           grant_type: "refresh_token",
           refresh_token: refreshToken,
         }),
-      });
+      }, _credentials?.__proxyOptions || null);
 
       if (!response.ok) {
         const errorText = await response.text();

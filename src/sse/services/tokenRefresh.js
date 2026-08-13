@@ -21,7 +21,8 @@ import {
   formatProviderCredentials as _formatProviderCredentials,
   getAllAccessTokens as _getAllAccessTokens,
   refreshKiroToken as _refreshKiroToken,
-  getRefreshLeadMs as _getRefreshLeadMs
+  getRefreshLeadMs as _getRefreshLeadMs,
+  isUnrecoverableRefreshError,
 } from "open-sse/services/tokenRefresh.js";
 import {
   refreshProviderCredentials as _refreshProviderCredentials,
@@ -41,8 +42,8 @@ export const refreshClaudeOAuthToken = (refreshToken) =>
 export const refreshGoogleToken = (refreshToken, clientId, clientSecret) =>
   _refreshGoogleToken(refreshToken, clientId, clientSecret, log);
 
-export const refreshCodexToken = (refreshToken) =>
-  _refreshCodexToken(refreshToken, log);
+export const refreshCodexToken = (refreshToken, _credentials) =>
+  _refreshCodexToken(refreshToken, log, _credentials);
 
 export const refreshIflowToken = (refreshToken) =>
   _refreshIflowToken(refreshToken, log);
@@ -146,6 +147,8 @@ function _refreshProjectId(provider, connectionId, accessToken) {
     });
 }
 
+const unrecoverableRefreshCounts = new Map();
+
 // ─── Local-specific: persist credentials to localDb ──────────────────────────
 
 /**
@@ -189,6 +192,9 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
       };
     }
     if (newCredentials.projectId)            updates.projectId = newCredentials.projectId;
+    for (const field of ["testStatus", "lastErrorType", "reauthRequiredAt", "lastErrorAt", "lastError", "errorCode", "isActive"]) {
+      if (newCredentials[field] !== undefined) updates[field] = newCredentials[field];
+    }
 
     const result = await updateProviderConnection(connectionId, updates);
     monitorOAuthRefresh("PERSIST_RESULT", { connectionId, success: !!result });
@@ -219,6 +225,15 @@ export async function updateProviderCredentials(connectionId, newCredentials) {
  *   (used by background scheduler which applies a larger lead). Request path omits this.
  * @returns {Promise<object>} updated credentials object
  */
+export async function persistRefreshedCredentials(connectionId, refreshed, existingProviderSpecificData) {
+  const successfulOAuth = refreshed?.accessToken || refreshed?.refreshToken || refreshed?.apiKey || refreshed?.copilotToken;
+  return updateProviderCredentials(connectionId, {
+    ...refreshed,
+    ...(successfulOAuth ? { lastErrorType: null, reauthRequiredAt: null } : {}),
+    existingProviderSpecificData,
+  });
+}
+
 export async function checkAndRefreshToken(provider, credentials, options = {}) {
   let creds = { ...credentials };
   if (!creds.connectionId && creds.id) {
@@ -241,14 +256,26 @@ export async function checkAndRefreshToken(provider, credentials, options = {}) 
     });
 
     const newCreds = await _refreshProviderCredentials(provider, creds, log);
-    if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken) {
+    if (isUnrecoverableRefreshError(newCreds)) {
+      const count = (unrecoverableRefreshCounts.get(creds.connectionId) || 0) + 1;
+      unrecoverableRefreshCounts.set(creds.connectionId, count);
+      if (count >= 2 && creds.connectionId) {
+        const now = new Date().toISOString();
+        await updateProviderCredentials(creds.connectionId, { lastErrorType: "token_refresh_failed", reauthRequiredAt: now, lastErrorAt: now, lastError: newCreds.code || newCreds.error });
+        return { ...creds, _needsReauth: true, _reauthCode: newCreds.code };
+      }
+      return creds;
+    }
+    // Any non-terminal result breaks the consecutive-unrecoverable sequence.
+    unrecoverableRefreshCounts.delete(creds.connectionId);
+    if (newCreds?.accessToken || newCreds?.apiKey || newCreds?.copilotToken || newCreds?.refreshToken) {
       const mergedCreds = {
         ...newCreds,
         existingProviderSpecificData: creds.providerSpecificData,
       };
 
       // Persist to DB (non-blocking path continues below)
-      await updateProviderCredentials(creds.connectionId, mergedCreds);
+      await persistRefreshedCredentials(creds.connectionId, mergedCreds, creds.providerSpecificData);
 
       creds = {
         ...creds,

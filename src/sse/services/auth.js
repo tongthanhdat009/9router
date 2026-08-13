@@ -78,6 +78,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     // Filter out model-locked and excluded connections
     const availableConnections = connections.filter(c => {
       if (excludeSet.has(c.id)) return false;
+      if (c.reauthRequiredAt || c.lastErrorType === "token_refresh_failed") return false;
       if (isModelLockActive(c, model)) return false;
       return true;
     });
@@ -197,6 +198,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,
+      lastErrorType: connection.lastErrorType,
+      reauthRequiredAt: connection.reauthRequiredAt,
       // Pass full connection for clearAccountError to read modelLock_* keys
       _connection: connection
     };
@@ -306,6 +309,8 @@ export async function clearAccountError(connectionId, currentConnection, model =
       lastError: null,
       errorCode: null,
       lastErrorAt: null,
+      lastErrorType: null,
+      reauthRequiredAt: null,
       backoffLevel: 0
     });
   }

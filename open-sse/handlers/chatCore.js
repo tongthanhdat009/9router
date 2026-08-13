@@ -370,27 +370,34 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       // refreshWithRetry's 2nd/3rd attempt reuses the already-consumed RT →
       // invalid_grant → auth_failed retryable=false.
       const newCredentials = await refreshWithRetry(async () => {
-        const result = await executor.refreshCredentials(credentials, log);
+        const result = await executor.refreshCredentials(credentials, log, proxyOptions);
         if (result?.refreshToken && result.refreshToken !== credentials.refreshToken) {
           if (result.accessToken) credentials.accessToken = result.accessToken;
           credentials.refreshToken = result.refreshToken;
+          if (onCredentialsRefreshed) {
+            try { await onCredentialsRefreshed({ refreshToken: result.refreshToken, accessToken: result.accessToken, idToken: result.idToken, expiresAt: result.expiresAt, expiresIn: result.expiresIn, lastRefreshAt: result.lastRefreshAt, providerSpecificData: result.providerSpecificData }); } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
+          }
         }
         return result;
       }, 3, log);
-      if (newCredentials?.accessToken || newCredentials?.copilotToken) {
+      if (newCredentials?.error === "unrecoverable_refresh_error" || newCredentials?.error === "refresh_token_reused" || newCredentials?.error === "invalid_grant") {
+        log?.warn?.("TOKEN", `${provider.toUpperCase()} | permanent refresh failure: ${newCredentials.code || newCredentials.error}`);
+        // Do not retry the upstream — the chain is dead; fall through to error handling with 401
+      } else if (newCredentials?.accessToken || newCredentials?.refreshToken || newCredentials?.copilotToken) {
         if (log?.line) log.line(reqTag, "🔑", `TOKEN REFRESHED · ${provider}/${model}`);
         Object.assign(credentials, newCredentials);
         if (onCredentialsRefreshed) {
           try { await onCredentialsRefreshed(newCredentials); } catch (e) { log?.warn?.("TOKEN", `onCredentialsRefreshed failed: ${e.message}`); }
         }
+        let retryResult = null;
         try {
-          const retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
-          if (retryResult.response.ok) {
-            providerResponse = retryResult.response;
-            providerUrl = retryResult.url;
-            providerResponseFormat = retryResult.responseFormat || targetFormat;
-          }
-        } catch { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed`); }
+          // Cancel the stale body so the upstream TCP can close cleanly
+          try { if (providerResponse?.body?.cancel) await providerResponse.body.cancel(); } catch {}
+          retryResult = await executor.execute({ model, body: translatedBody, stream, credentials, signal: streamController.signal, log, proxyOptions });
+          providerResponse = retryResult.response;
+          providerUrl = retryResult.url;
+          providerResponseFormat = retryResult.responseFormat || targetFormat;
+        } catch (e) { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed: ${e.message}`); }
       } else {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
       }
