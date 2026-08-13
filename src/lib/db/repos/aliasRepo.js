@@ -9,18 +9,20 @@ const mitmKv = makeKv("mitmAlias");
 const aliasCache = makeTtlCache({ ttlMs: 10000, loader: () => aliasKv.getAll() });
 
 // modelAliases: key=alias, value=modelString
+export function invalidateModelAliasesCache() { aliasCache.invalidateAll(); }
+
 export async function getModelAliases() {
   return await aliasCache.get();
 }
 
 export async function setModelAlias(alias, model) {
   await aliasKv.set(alias, model);
-  aliasCache.invalidateAll();
+  invalidateModelAliasesCache();
 }
 
 export async function deleteModelAlias(alias) {
   await aliasKv.remove(alias);
-  aliasCache.invalidateAll();
+  invalidateModelAliasesCache();
 }
 
 // customModels: key=`${providerAlias}|${id}|${type}`, value=full model object

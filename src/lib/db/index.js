@@ -1,6 +1,9 @@
 // Public API barrel — all DB functions
 import { getAdapter } from "./driver.js";
 import { stringifyJson, parseJson } from "./helpers/jsonCol.js";
+import { invalidateSettingsCache } from "./repos/settingsRepo.js";
+import { invalidateModelAliasesCache } from "./repos/aliasRepo.js";
+import { invalidateApiKeyCache } from "./repos/apiKeysRepo.js";
 
 // Settings
 export {
@@ -161,6 +164,9 @@ export async function importDb(payload) {
       db.run(`INSERT OR REPLACE INTO kv(scope, key, value) VALUES('pricing', ?, ?)`, [provider, stringifyJson(models || {})]);
     }
   });
+  invalidateSettingsCache();
+  invalidateModelAliasesCache();
+  invalidateApiKeyCache();
 
   return await exportDb();
 }

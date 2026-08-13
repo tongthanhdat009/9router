@@ -84,6 +84,8 @@ function mergeWithDefaults(raw) {
   return merged;
 }
 
+export function invalidateSettingsCache() { settingsCache.invalidate(); }
+
 export async function getSettings() {
   const raw = await settingsCache.get();
   return mergeWithDefaults(raw);
@@ -102,7 +104,7 @@ export async function updateSettings(updates) {
       [stringifyJson(next)],
     );
   });
-  settingsCache.invalidate();
+  invalidateSettingsCache();
   return mergeWithDefaults(next);
 }
 

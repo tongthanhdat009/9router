@@ -12,6 +12,8 @@ const apiKeyCache = makeTtlCache({
   },
 });
 
+export function invalidateApiKeyCache() { apiKeyCache.invalidateAll(); }
+
 function rowToKey(row) {
   if (!row) return null;
   return {
@@ -53,7 +55,7 @@ export async function createApiKey(name, machineId) {
     `INSERT INTO apiKeys(id, key, name, machineId, isActive, createdAt) VALUES(?, ?, ?, ?, ?, ?)`,
     [apiKey.id, apiKey.key, apiKey.name, apiKey.machineId, 1, apiKey.createdAt]
   );
-  apiKeyCache.invalidateAll();
+  invalidateApiKeyCache();
   return apiKey;
 }
 
@@ -70,14 +72,14 @@ export async function updateApiKey(id, data) {
     );
     result = merged;
   });
-  apiKeyCache.invalidateAll();
+  invalidateApiKeyCache();
   return result;
 }
 
 export async function deleteApiKey(id) {
   const db = await getAdapter();
   const res = db.run(`DELETE FROM apiKeys WHERE id = ?`, [id]);
-  apiKeyCache.invalidateAll();
+  invalidateApiKeyCache();
   return (res?.changes ?? 0) > 0;
 }
 
