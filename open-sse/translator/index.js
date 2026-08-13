@@ -28,9 +28,6 @@ export function register(from, to, requestFn, responseFn) {
   }
 }
 
-// No-op: translators self-register via the static imports at the bottom of this file.
-function ensureInitialized() {}
-
 // Strip specific content types from messages (explicit opt-in via strip[] in PROVIDER_MODELS)
 function stripContentTypes(body, stripList = []) {
   if (!stripList.length || !body.messages || !Array.isArray(body.messages)) return;
@@ -50,7 +47,6 @@ function stripContentTypes(body, stripList = []) {
 
 // Translate request: source -> openai -> target
 export function translateRequest(sourceFormat, targetFormat, model, body, stream = true, credentials = null, provider = null, reqLogger = null, stripList = [], connectionId = null, clientTool = null) {
-  ensureInitialized();
   let result = body;
 
   // Strip explicit content types (opt-in via strip[] in PROVIDER_MODELS entry)
@@ -160,7 +156,6 @@ export function translateRequest(sourceFormat, targetFormat, model, body, stream
 
 // Translate response chunk: target -> openai -> source
 export function translateResponse(targetFormat, sourceFormat, chunk, state) {
-  ensureInitialized();
   // If same format, return as-is
   if (sourceFormat === targetFormat) {
     return [chunk];
@@ -267,11 +262,6 @@ export function initState(sourceFormat) {
   }
 
   return base;
-}
-
-// Kept for backward compatibility; translators are already registered at import time.
-export function initTranslators() {
-  ensureInitialized();
 }
 
 // Static side-effect imports: each module calls register() at load (works in ESM + bundler).

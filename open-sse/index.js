@@ -23,8 +23,7 @@ export {
   translateRequest, 
   translateResponse, 
   needsTranslation, 
-  initState, 
-  initTranslators 
+  initState,
 } from "./translator/index.js";
 
 // Services
