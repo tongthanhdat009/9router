@@ -81,15 +81,13 @@ export async function prefetchRemoteImages(body, sourceFormat, targetFormat, opt
   const refs = collectImageRefs(body, sourceFormat);
   if (!refs.length) return 0;
 
+  const fetched = await Promise.all(refs.map(async (ref) => ({ ref, image: parseDataUri(ref.get()) ? null : await fetchImageAsBase64(ref.get(), options) })));
   let converted = 0;
-  for (const ref of refs) {
-    const url = ref.get();
-    if (parseDataUri(url)) continue; // already inline
-    const fetched = await fetchImageAsBase64(url, options);
-    if (!fetched) continue;
-    if (ref.set) ref.set(fetched.url);
-    else if (ref.part) { delete ref.part.fileData; ref.part.inlineData = { mimeType: fetched.mimeType, data: fetched.url.split(",")[1] }; }
-    else if (ref.claudeBlock) ref.claudeBlock.source = { type: "base64", media_type: fetched.mimeType, data: fetched.url.split(",")[1] };
+  for (const { ref, image } of fetched) {
+    if (!image) continue;
+    if (ref.set) ref.set(image.url);
+    else if (ref.part) { delete ref.part.fileData; ref.part.inlineData = { mimeType: image.mimeType, data: image.url.split(",")[1] }; }
+    else if (ref.claudeBlock) ref.claudeBlock.source = { type: "base64", media_type: image.mimeType, data: image.url.split(",")[1] };
     converted++;
   }
   return converted;

@@ -16,6 +16,22 @@ import { lookup } from "node:dns/promises";
 import { Agent } from "undici";
 import { MAX_IMAGE_BYTES, FETCH_TIMEOUT_MS, IMAGE_SIGNATURES, BLOCKED_HOSTS } from "../../config/mediaConfig.js";
 
+// Single shared dispatcher for all image fetches (previously one Agent per fetch).
+// Its connect.lookup re-validates and pins the resolved IP at connect time,
+// preserving the SSRF/TOCTOU guard without per-request Agent churn.
+const imageDispatcher = new Agent({
+  connect: {
+    lookup: (hostname, _options, callback) => {
+      resolvePinnedIps(hostname)
+        .then((ips) => {
+          if (!ips) { callback(new Error("blocked host")); return; }
+          callback(null, [{ address: ips[0].address, family: ips[0].family }]);
+        })
+        .catch((err) => callback(err));
+    },
+  },
+});
+
 // True if an IPv4/IPv6 address is private/reserved (SSRF target).
 function isPrivateIp(ip) {
   if (!ip) return true;
@@ -81,21 +97,16 @@ export async function fetchImageAsBase64(imageUrl, options = {}) {
 
   let url;
   try { url = new URL(imageUrl); } catch { return null; }
-  const pinnedIps = await resolvePinnedIps(url.hostname);
-  if (!pinnedIps) return null;
+  if (!await resolvePinnedIps(url.hostname)) return null;
 
   const controller = new AbortController();
   const timeout = signal ? null : setTimeout(() => controller.abort(), timeoutMs);
   const fetchSignal = signal || controller.signal;
 
-  // Pin connect to the validated IP so no second DNS resolution can rebind (TOCTOU fix).
-  const dispatcher = new Agent({
-    connect: { lookup: (_h, _o, cb) => cb(null, [{ address: pinnedIps[0].address, family: pinnedIps[0].family }]) },
-  });
-
   try {
     // redirect:"manual" prevents a public URL redirecting to a private one (SSRF bypass).
-    const response = await fetch(imageUrl, { signal: fetchSignal, redirect: "manual", dispatcher });
+    // Connect is pinned to the validated IP by the shared dispatcher's lookup.
+    const response = await fetch(imageUrl, { signal: fetchSignal, redirect: "manual", dispatcher: imageDispatcher });
     if (!response.ok || !response.body) return null;
 
     // Stream-read with a hard byte cap to avoid loading huge payloads into memory.
@@ -119,6 +130,5 @@ export async function fetchImageAsBase64(imageUrl, options = {}) {
     return null;
   } finally {
     if (timeout) clearTimeout(timeout);
-    dispatcher.close().catch(() => {});
   }
 }

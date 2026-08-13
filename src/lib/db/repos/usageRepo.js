@@ -26,6 +26,7 @@ if (!global._recentRing) global._recentRing = { items: [], initialized: false };
 if (!global._connectionMapCache) global._connectionMapCache = { map: {}, ts: 0 };
 if (!global._statsEmitTimers) global._statsEmitTimers = { pending: null, update: null };
 if (!global._usageStatsCache) global._usageStatsCache = { value: null, pending: null, version: 0 };
+if (!global._usageWriteQueue) global._usageWriteQueue = { entries: [], scheduled: false };
 
 const pendingRequests = global._pendingRequests;
 const lastErrorProvider = global._lastErrorProvider;
@@ -34,6 +35,7 @@ const recentRing = global._recentRing;
 const connCache = global._connectionMapCache;
 const statsEmitTimers = global._statsEmitTimers;
 const usageStatsCache = global._usageStatsCache;
+const usageWriteQueue = global._usageWriteQueue;
 
 export const statsEmitter = global._statsEmitter;
 
@@ -244,7 +246,31 @@ export async function getActiveRequests() {
   return { activeRequests, recentRequests, errorProvider };
 }
 
-export async function saveRequestUsage(entry) {
+export function saveRequestUsage(entry) {
+  // Defer better-sqlite3 work until after response flush. Process exit before the
+  // flush may lose usage stats; callers awaiting this still get completion.
+  return new Promise((resolve) => {
+    usageWriteQueue.entries.push({ entry, resolve });
+    if (usageWriteQueue.scheduled) return;
+    usageWriteQueue.scheduled = true;
+    setImmediate(flushUsageWriteQueue);
+  });
+}
+
+async function flushUsageWriteQueue() {
+  while (usageWriteQueue.entries.length) {
+    const { entry, resolve } = usageWriteQueue.entries.shift();
+    await flushUsageEntry(entry);
+    resolve();
+  }
+  usageWriteQueue.scheduled = false;
+  if (usageWriteQueue.entries.length) {
+    usageWriteQueue.scheduled = true;
+    setImmediate(flushUsageWriteQueue);
+  }
+}
+
+async function flushUsageEntry(entry) {
   try {
     const db = await getAdapter();
 

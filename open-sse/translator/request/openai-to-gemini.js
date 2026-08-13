@@ -241,22 +241,6 @@ export function openaiToGeminiCLIRequest(model, body, stream) {
   const gemini = openaiToGeminiBase(model, body, stream, DEFAULT_THINKING_GEMINI_CLI_SIGNATURE);
   // Thinking is normalized centrally by applyThinking (thinkingUnified.js) after translation.
 
-  // Clean schema for tools
-  if (gemini.tools?.[0]?.functionDeclarations) {
-    for (const fn of gemini.tools[0].functionDeclarations) {
-      if (fn.parameters) {
-        const cleanedSchema = cleanJSONSchemaForAntigravity(fn.parameters);
-        fn.parameters = cleanedSchema;
-        // if (isClaude) {
-        //   fn.parameters = cleanedSchema;
-        // } else {
-        //   fn.parametersJsonSchema = cleanedSchema;
-        //   delete fn.parameters;
-        // }
-      }
-    }
-  }
-
   return gemini;
 }
 

@@ -133,98 +133,23 @@ export function generateProjectId() {
   return `${adj}-${noun}-${crypto.randomUUID().slice(0, 5)}`;
 }
 
-// Helper: Remove unsupported keywords recursively from object/array
-// Also strips all vendor extension fields (x- prefixed) not supported by Gemini
-function removeUnsupportedKeywords(obj, keywords) {
-  if (!obj || typeof obj !== "object") return;
-
-  if (Array.isArray(obj)) {
-    for (const item of obj) {
-      removeUnsupportedKeywords(item, keywords);
-    }
-    return;
-  }
-
-  for (const key of Object.keys(obj)) {
-    if (keywords.includes(key) || key.startsWith("x-")) {
-      delete obj[key];
-      continue;
-    }
-
-    const value = obj[key];
-    if (value && typeof value === "object") {
-      removeUnsupportedKeywords(value, keywords);
-    }
-  }
-}
-
-// Convert const to enum
-function convertConstToEnum(obj) {
-  if (!obj || typeof obj !== "object") return;
-
-  if (obj.const !== undefined && !obj.enum) {
-    obj.enum = [obj.const];
-    delete obj.const;
-  }
-
-  for (const value of Object.values(obj)) {
-    if (value && typeof value === "object") {
-      convertConstToEnum(value);
-    }
-  }
-}
-
-// Convert enum values to strings (Gemini requires string enum values + explicit type:"string")
-function convertEnumValuesToStrings(obj) {
-  if (!obj || typeof obj !== "object") return;
-
-  if (obj.enum && Array.isArray(obj.enum)) {
-    obj.enum = obj.enum.map(v => String(v));
-    // Gemini API requires type:"string" when enum is present — without it returns 400
-    if (!obj.type) {
-      obj.type = "string";
-    }
-  }
-
-  for (const value of Object.values(obj)) {
-    if (value && typeof value === "object") {
-      convertEnumValuesToStrings(value);
-    }
-  }
-}
-
-// Merge allOf schemas
+// Merge allOf schemas at one node.
 function mergeAllOf(obj) {
-  if (!obj || typeof obj !== "object") return;
-
-  if (obj.allOf && Array.isArray(obj.allOf)) {
-    const merged = {};
-
-    for (const item of obj.allOf) {
-      if (item.properties) {
-        if (!merged.properties) merged.properties = {};
-        Object.assign(merged.properties, item.properties);
-      }
-      if (item.required && Array.isArray(item.required)) {
-        if (!merged.required) merged.required = [];
-        for (const req of item.required) {
-          if (!merged.required.includes(req)) {
-            merged.required.push(req);
-          }
-        }
-      }
+  if (!obj.allOf || !Array.isArray(obj.allOf)) return;
+  const merged = {};
+  for (const item of obj.allOf) {
+    if (item.properties) {
+      if (!merged.properties) merged.properties = {};
+      Object.assign(merged.properties, item.properties);
     }
-
-    delete obj.allOf;
-    if (merged.properties) obj.properties = { ...obj.properties, ...merged.properties };
-    if (merged.required) obj.required = [...(obj.required || []), ...merged.required];
-  }
-
-  for (const value of Object.values(obj)) {
-    if (value && typeof value === "object") {
-      mergeAllOf(value);
+    if (item.required && Array.isArray(item.required)) {
+      if (!merged.required) merged.required = [];
+      for (const req of item.required) if (!merged.required.includes(req)) merged.required.push(req);
     }
   }
+  delete obj.allOf;
+  if (merged.properties) obj.properties = { ...obj.properties, ...merged.properties };
+  if (merged.required) obj.required = [...(obj.required || []), ...merged.required];
 }
 
 // Select best schema from anyOf/oneOf
@@ -254,146 +179,71 @@ function selectBest(items) {
   return bestIdx;
 }
 
-// Flatten anyOf/oneOf
+// Flatten anyOf/oneOf at one node.
 function flattenAnyOfOneOf(obj) {
-  if (!obj || typeof obj !== "object") return;
-
-  if (obj.anyOf && Array.isArray(obj.anyOf) && obj.anyOf.length > 0) {
-    const nonNullSchemas = obj.anyOf.filter(s => s && s.type !== "null");
-    if (nonNullSchemas.length > 0) {
-      const bestIdx = selectBest(nonNullSchemas);
-      const selected = nonNullSchemas[bestIdx];
-      delete obj.anyOf;
+  for (const key of ["anyOf", "oneOf"]) {
+    if (!Array.isArray(obj[key]) || obj[key].length === 0) continue;
+    const schemas = obj[key].filter(s => s && s.type !== "null");
+    if (schemas.length > 0) {
+      const selected = schemas[selectBest(schemas)];
+      delete obj[key];
       Object.assign(obj, selected);
     }
   }
+}
 
-  if (obj.oneOf && Array.isArray(obj.oneOf) && obj.oneOf.length > 0) {
-    const nonNullSchemas = obj.oneOf.filter(s => s && s.type !== "null");
-    if (nonNullSchemas.length > 0) {
-      const bestIdx = selectBest(nonNullSchemas);
-      const selected = nonNullSchemas[bestIdx];
-      delete obj.oneOf;
-      Object.assign(obj, selected);
-    }
-  }
+function cleanupRequired(obj) {
+  if (!Array.isArray(obj.required) || !obj.properties) return;
+  const validRequired = obj.required.filter(field => Object.prototype.hasOwnProperty.call(obj.properties, field));
+  if (validRequired.length === 0) delete obj.required;
+  else obj.required = validRequired;
+}
 
-  for (const value of Object.values(obj)) {
-    if (value && typeof value === "object") {
-      flattenAnyOfOneOf(value);
-    }
+function addPlaceholder(obj) {
+  if (Object.keys(obj).length === 0) {
+    obj.type = "object";
+    obj.properties = { reason: { type: "string", description: "Brief explanation of why you are calling this tool" } };
+    obj.required = ["reason"];
+  } else if (obj.type === "object" && (!obj.properties || Object.keys(obj.properties).length === 0)) {
+    obj.properties = { reason: { type: "string", description: "Brief explanation of why you are calling this tool" } };
+    obj.required = ["reason"];
   }
 }
 
-// Flatten type arrays
-function flattenTypeArrays(obj) {
-  if (!obj || typeof obj !== "object") return;
-
-  if (obj.type && Array.isArray(obj.type)) {
-    const nonNullTypes = obj.type.filter(t => t !== "null");
-    obj.type = nonNullTypes.length > 0 ? nonNullTypes[0] : "string";
-  }
-
-  for (const value of Object.values(obj)) {
-    if (value && typeof value === "object") {
-      flattenTypeArrays(value);
-    }
-  }
-}
-
-// Infer missing type=object when properties exist (Gemini requires explicit type)
-function ensureObjectType(obj) {
-  if (!obj || typeof obj !== "object") return;
-  if (obj.properties && !obj.type) obj.type = "object";
-  for (const v of Object.values(obj)) if (v && typeof v === "object") ensureObjectType(v);
-}
-
-// Clean JSON Schema for Antigravity API compatibility - removes unsupported keywords recursively
+// Clean JSON Schema for Antigravity API compatibility in one recursive walk.
 export function cleanJSONSchemaForAntigravity(schema) {
   if (!schema || typeof schema !== "object") return schema;
 
-  // Mutate directly (schema is only used once per request)
-  let cleaned = schema;
-
-  // Phase 1: Convert and prepare
-  convertConstToEnum(cleaned);
-  convertEnumValuesToStrings(cleaned);
-
-  // Phase 2: Flatten complex structures
-  mergeAllOf(cleaned);
-  flattenAnyOfOneOf(cleaned);
-  flattenTypeArrays(cleaned);
-
-  // Phase 2.5: Infer missing type=object when properties exist (Gemini requirement)
-  ensureObjectType(cleaned);
-
-  // Phase 3: Remove all unsupported keywords at ALL levels (including inside arrays)
-  removeUnsupportedKeywords(cleaned, UNSUPPORTED_SCHEMA_CONSTRAINTS);
-
-  // Phase 4: Cleanup required fields recursively
-  function cleanupRequired(obj) {
+  function visit(obj) {
     if (!obj || typeof obj !== "object") return;
-
-    if (obj.required && Array.isArray(obj.required) && obj.properties) {
-      const validRequired = obj.required.filter(field =>
-        Object.prototype.hasOwnProperty.call(obj.properties, field)
-      );
-      if (validRequired.length === 0) {
-        delete obj.required;
-      } else {
-        obj.required = validRequired;
-      }
-    }
-
-    // Recurse into nested objects
-    for (const value of Object.values(obj)) {
-      if (value && typeof value === "object") {
-        cleanupRequired(value);
-      }
-    }
-  }
-
-  cleanupRequired(cleaned);
-
-  // Phase 5: Add placeholder for empty object schemas (Antigravity requirement)
-  function addPlaceholders(obj) {
-    if (!obj || typeof obj !== "object") return;
-
-    // Empty schema {} (no type, no properties) after $ref removal — treat as object with placeholder
-    if (Object.keys(obj).length === 0) {
-      obj.type = "object";
-      obj.properties = {
-        reason: {
-          type: "string",
-          description: "Brief explanation of why you are calling this tool"
-        }
-      };
-      obj.required = ["reason"];
+    if (Array.isArray(obj)) {
+      for (const item of obj) visit(item);
       return;
     }
 
-    if (obj.type === "object") {
-      if (!obj.properties || Object.keys(obj.properties).length === 0) {
-        obj.properties = {
-          reason: {
-            type: "string",
-            description: "Brief explanation of why you are calling this tool"
-          }
-        };
-        obj.required = ["reason"];
-      }
+    if (obj.const !== undefined && !obj.enum) {
+      obj.enum = [obj.const];
+      delete obj.const;
     }
-
-    // Recurse into nested objects
-    for (const value of Object.values(obj)) {
-      if (value && typeof value === "object") {
-        addPlaceholders(value);
-      }
+    if (Array.isArray(obj.enum)) {
+      obj.enum = obj.enum.map(v => String(v));
+      if (!obj.type) obj.type = "string";
     }
+    mergeAllOf(obj);
+    flattenAnyOfOneOf(obj);
+    if (Array.isArray(obj.type)) {
+      const nonNullTypes = obj.type.filter(t => t !== "null");
+      obj.type = nonNullTypes.length > 0 ? nonNullTypes[0] : "string";
+    }
+    if (obj.properties && !obj.type) obj.type = "object";
+    for (const key of Object.keys(obj)) {
+      if (UNSUPPORTED_SCHEMA_CONSTRAINTS.includes(key) || key.startsWith("x-")) delete obj[key];
+    }
+    cleanupRequired(obj);
+    for (const value of Object.values(obj)) visit(value);
+    addPlaceholder(obj);
   }
 
-  addPlaceholders(cleaned);
-
-  return cleaned;
+  visit(schema);
+  return schema;
 }
-
