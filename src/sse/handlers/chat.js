@@ -136,7 +136,7 @@ export async function handleChat(request, clientRawRequest = null) {
         async (b, m) => {
           const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId);
           if (response.ok) bindRouteAffinity(affinitySessionId, modelStr, m);
-          else invalidateRouteAffinity(affinitySessionId, modelStr);
+          else if (m === preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
           return response;
         },
         adapterAdded
