@@ -192,10 +192,18 @@ describe("resolveClientAffinitySessionId", () => {
     expect(resolveClientAffinitySessionId({ headers: {}, body: bodyWithUserOnly, scope: "codex" })).toBeNull();
   });
 
-  it("excludes Kiro request-id and raw metadata.user_id from affinity identity", () => {
-    // x-client-request-id and metadata.user_id are ephemeral for Kiro scope — must yield no affinity.
-    expect(resolveClientAffinitySessionId({ headers: { "x-client-request-id": "req-1" }, body: {}, scope: "kiro" })).toBeNull();
-    expect(resolveClientAffinitySessionId({ headers: {}, body: { metadata: { user_id: "user-1" } }, scope: "kiro" })).toBeNull();
+  it.each([
+    ["Kiro", ["kiro/claude-opus-5"]],
+    ["Kiro/Codex", ["kiro/claude-opus-5", "codex/gpt-5.6"]],
+    ["Kiro/Claude", ["kiro/claude-opus-5", "claude/sonnet"]],
+  ])("excludes ephemeral identity for %s affinity", (_name, _routes) => {
+    expect(resolveClientAffinitySessionId({ headers: { "x-client-request-id": "req-1" }, body: {} })).toBeNull();
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { metadata: { user_id: "router-generated-user" } } })).toBeNull();
+  });
+
+  it("keeps explicit client session and conversation identity for affinity", () => {
+    expect(resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-h" }, body: {} })).toBe("sess-h");
+    expect(resolveClientAffinitySessionId({ body: { conversation_id: "conversation-1" } })).toBe("conversation-1");
   });
 
   it("never derives from assistant-text or workspaceId fallbacks", () => {

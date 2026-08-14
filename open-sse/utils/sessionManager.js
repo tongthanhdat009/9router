@@ -134,23 +134,32 @@ function extractAntigravitySession(body) {
     return m ? normalizeSessionId(m[1]) : null;
 }
 
+// Stable client-origin session identity regardless of provider scope/combo composition.
+// Never router-generated/ephemeral fields: x-client-request-id, raw metadata.user_id,
+// assistant-text hash, workspace/connection-derived ids. Kiro (native or mixed combo)
+// must never get affinity from per-request or generated identity.
+function stableClientSessionId(headers, body) {
+  const claude = extractClaudeCodeSession(body?.metadata?.user_id);
+  if (claude) return `claude:${claude}`;
+  const antigravity = extractAntigravitySession(body);
+  if (antigravity) return `antigravity:${antigravity}`;
+  for (const key of SESSION_HEADER_KEYS) {
+    const v = headerValue(headers, key);
+    if (v) return v;
+  }
+  return normalizeSessionId(body?.prompt_cache_key) ||
+    normalizeSessionId(body?.session_id) ||
+    normalizeSessionId(body?.conversation_id) ||
+    null;
+}
+
 function extractClientSessionId(headers, body, scope = "") {
-    const claude = extractClaudeCodeSession(body?.metadata?.user_id);
-    if (claude) return `claude:${claude}`;
-    const antigravity = extractAntigravitySession(body);
-    if (antigravity) return `antigravity:${antigravity}`;
-    for (const key of SESSION_HEADER_KEYS) {
-        const v = headerValue(headers, key);
-        if (v) return v;
-    }
-    const requestId = scope === "kiro" ? null : headerValue(headers, "x-client-request-id");
-    if (requestId) return requestId;
-    const fromBody =
-        normalizeSessionId(body?.prompt_cache_key) ||
-        normalizeSessionId(body?.session_id) ||
-        normalizeSessionId(body?.conversation_id) ||
-        (scope === "kiro" ? null : normalizeSessionId(body?.metadata?.user_id));
-    return fromBody || null;
+  const stable = stableClientSessionId(headers, body);
+  if (stable) return stable;
+  if (scope === "kiro") return null;
+  const requestId = headerValue(headers, "x-client-request-id");
+  if (requestId) return requestId;
+  return normalizeSessionId(body?.metadata?.user_id) || null;
 }
 
 function requestMessages(body) {
@@ -198,8 +207,8 @@ function assistantTextSessionId(scope, body) {
  * This deliberately excludes assistant-text, workspace, account-derived, and Kiro
  * ephemeral fallbacks. No stable client identity means no affinity.
  */
-export function resolveClientAffinitySessionId({ headers, body, scope = "" } = {}) {
-  return extractClientSessionId(headers, body, scope);
+export function resolveClientAffinitySessionId({ headers, body } = {}) {
+  return stableClientSessionId(headers, body);
 }
 
 /**
