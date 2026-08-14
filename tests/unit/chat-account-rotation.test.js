@@ -5,14 +5,27 @@ const mocks = vi.hoisted(() => ({
   getProviderCredentials: vi.fn(), markAccountUnavailable: vi.fn(), clearAccountError: vi.fn(),
   getComboModels: vi.fn(), getModelInfo: vi.fn(), handleChatCore: vi.fn(), checkAndRefreshToken: vi.fn(),
   detectRequiredCapabilities: vi.fn(() => new Set()), augmentModelsWithCapacityAdapter: vi.fn(),
+  modelSatisfiesHardCapabilities: vi.fn(() => true), handleComboChat: vi.fn(),
 }));
 
 vi.mock("@/sse/services/auth.js", () => ({ getProviderCredentials: mocks.getProviderCredentials, markAccountUnavailable: mocks.markAccountUnavailable, clearAccountError: mocks.clearAccountError, extractApiKey: mocks.extractApiKey, isValidApiKey: mocks.isValidApiKey }));
 vi.mock("@/lib/localDb", () => ({ getSettings: mocks.getSettings }));
 vi.mock("@/sse/services/model.js", () => ({ getModelInfo: mocks.getModelInfo, getComboModels: mocks.getComboModels, parseModel: () => ({ provider: "codex", model: "gpt-5" }) }));
 vi.mock("open-sse/handlers/chatCore.js", () => ({ handleChatCore: mocks.handleChatCore }));
-vi.mock("open-sse/services/combo.js", () => ({ handleComboChat: vi.fn(), handleFusionChat: vi.fn(), detectRequiredCapabilities: mocks.detectRequiredCapabilities }));
-vi.mock("open-sse/services/capacityAdapter.js", () => ({ augmentModelsWithCapacityAdapter: mocks.augmentModelsWithCapacityAdapter, withCapacityAdapterStripping: vi.fn((fn) => fn), getActiveAdapterStrategy: vi.fn() }));
+vi.mock("open-sse/services/combo.js", () => ({ handleComboChat: mocks.handleComboChat, handleFusionChat: vi.fn(), detectRequiredCapabilities: mocks.detectRequiredCapabilities }));
+vi.mock("open-sse/services/capacityAdapter.js", () => ({ augmentModelsWithCapacityAdapter: mocks.augmentModelsWithCapacityAdapter, withCapacityAdapterStripping: vi.fn((fn) => fn), getActiveAdapterStrategy: vi.fn(), modelSatisfiesHardCapabilities: mocks.modelSatisfiesHardCapabilities }));
+vi.mock("open-sse/services/sessionAffinity.js", () => {
+  const store = new Map();
+  return {
+    getRouteAffinity: (sessionId, scope) => (sessionId ? store.get(sessionId + "\x00" + scope) || null : null),
+    bindRouteAffinity: (sessionId, scope, route) => { if (sessionId && route) store.set(sessionId + "\x00" + scope, { route }); },
+    invalidateRouteAffinity: (sessionId, scope) => { if (sessionId) store.delete(sessionId + "\x00" + scope); },
+    getAccountAffinity: vi.fn(() => null),
+    bindAccountAffinity: vi.fn(),
+    invalidateAccountAffinity: vi.fn(),
+    clearSessionAffinity: () => store.clear(),
+  };
+});
 vi.mock("open-sse/utils/bypassHandler.js", () => ({ handleBypassRequest: vi.fn(() => null) }));
 vi.mock("@/sse/services/tokenRefresh.js", () => ({ updateProviderCredentials: vi.fn(), checkAndRefreshToken: mocks.checkAndRefreshToken }));
 vi.mock("open-sse/services/projectId.js", () => ({ getProjectIdForConnection: vi.fn() }));
@@ -48,6 +61,30 @@ describe("chat account-loop rotation on synthetic 503", () => {
     expect(response.status).toBe(200);
     expect(mocks.markAccountUnavailable).toHaveBeenCalledWith("conn-a", 503, expect.any(String), "codex", "gpt-5", undefined);
     expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5", { preferredConnectionId: null });
+  });
+
+  it("invalidates stored route affinity when it misses required hard capabilities", async () => {
+    mocks.getComboModels.mockResolvedValue(["openai/gpt-5", "anthropic/claude-sonnet-4-6"]);
+    mocks.getModelInfo.mockResolvedValue({ provider: null, model: null });
+    mocks.detectRequiredCapabilities.mockReturnValue(new Set(["vision"]));
+    mocks.augmentModelsWithCapacityAdapter.mockImplementation((models) => models);
+    // stored route "openai/gpt-5" (no vision) — must NOT be passed as preferredRoute
+    mocks.modelSatisfiesHardCapabilities.mockReturnValue(false);
+    const { bindRouteAffinity, clearSessionAffinity } = await import("@/sse/services/sessionAffinity.js");
+    clearSessionAffinity();
+    bindRouteAffinity("session-1", "my-combo", "openai/gpt-5");
+    const { handleComboChat } = await import("open-sse/services/combo.js");
+    handleComboChat.mockResolvedValue(new Response("ok", { status: 200 }));
+
+    const response = await handleChat(new Request("https://router.test/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-session-id": "session-1" },
+      body: JSON.stringify({ model: "my-combo", messages: [{ role: "user", content: [{ type: "image_url", image_url: { url: "x" } }] }] }),
+    }));
+
+    expect(response.status).toBe(200);
+    expect(handleComboChat).toHaveBeenCalledTimes(1);
+    expect(handleComboChat.mock.calls[0][0].preferredRoute).toBeNull();
   });
 
   it("returns 503 only after every account is exhausted", async () => {

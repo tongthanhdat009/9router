@@ -192,6 +192,12 @@ describe("resolveClientAffinitySessionId", () => {
     expect(resolveClientAffinitySessionId({ headers: {}, body: bodyWithUserOnly, scope: "codex" })).toBeNull();
   });
 
+  it("excludes Kiro request-id and raw metadata.user_id from affinity identity", () => {
+    // x-client-request-id and metadata.user_id are ephemeral for Kiro scope — must yield no affinity.
+    expect(resolveClientAffinitySessionId({ headers: { "x-client-request-id": "req-1" }, body: {}, scope: "kiro" })).toBeNull();
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { metadata: { user_id: "user-1" } }, scope: "kiro" })).toBeNull();
+  });
+
   it("never derives from assistant-text or workspaceId fallbacks", () => {
     expect(resolveClientAffinitySessionId({ headers: {}, body: bodyWithAssistant })).toBeNull();
   });

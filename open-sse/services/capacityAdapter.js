@@ -83,6 +83,15 @@ function modelSatisfies(modelStr, requiredHard) {
   return requiredHard.every((c) => caps[c] === true);
 }
 
+// Single-model hard-capability check. Used to validate a stored affinity route
+// against the CURRENT request's required capabilities before honoring it.
+// No hard capability required → always eligible.
+export function modelSatisfiesHardCapabilities(modelStr, requiredCapabilities) {
+  const hard = [...(requiredCapabilities || [])].filter((c) => HARD_CAPS.has(c));
+  if (hard.length === 0) return true;
+  return modelSatisfies(String(modelStr || ""), hard);
+}
+
 // Prepend capacity-adapter models as priority candidates when NONE of the
 // original models (combo members, or the single target model) can satisfy the
 // request's required capabilities. Adapter models go FIRST (priority); the

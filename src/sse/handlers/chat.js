@@ -15,7 +15,7 @@ import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { handleComboChat, handleFusionChat, detectRequiredCapabilities } from "open-sse/services/combo.js";
-import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy } from "open-sse/services/capacityAdapter.js";
+import { augmentModelsWithCapacityAdapter, withCapacityAdapterStripping, getActiveAdapterStrategy, modelSatisfiesHardCapabilities } from "open-sse/services/capacityAdapter.js";
 import { handleBypassRequest } from "open-sse/utils/bypassHandler.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
@@ -87,13 +87,15 @@ export async function handleChat(request, clientRawRequest = null) {
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
   const requiredCapabilities = detectRequiredCapabilities(body);
-  const affinitySessionId = resolveClientAffinitySessionId({
-    headers: Object.fromEntries(request.headers.entries()),
-    body,
-  });
 
   // Check if model is a combo (has multiple models with fallback)
   const comboModels = await getComboModels(modelStr);
+  const affinityScope = modelStr.startsWith("kiro/") || comboModels?.every((m) => m.startsWith("kiro/")) ? "kiro" : "";
+  const affinitySessionId = resolveClientAffinitySessionId({
+    headers: Object.fromEntries(request.headers.entries()),
+    body,
+    scope: affinityScope,
+  });
   if (comboModels) {
     // Check for combo-specific strategy first, fallback to global
     const comboStrategies = settings.comboStrategies || {};
@@ -124,7 +126,11 @@ export async function handleChat(request, clientRawRequest = null) {
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     const routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
-    const preferredRoute = routeAffinity?.route && augmentedModels.includes(routeAffinity.route)
+    // A stored route is only honored if it still satisfies the current request's
+    // hard capabilities. Otherwise it falls through to normal combo rotation.
+    const preferredRoute = routeAffinity?.route &&
+      augmentedModels.includes(routeAffinity.route) &&
+      modelSatisfiesHardCapabilities(routeAffinity.route, requiredCapabilities)
       ? routeAffinity.route
       : null;
     if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
