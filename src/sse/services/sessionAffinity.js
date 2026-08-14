@@ -17,6 +17,7 @@ function createStore(limit) {
       store.delete(entryKey);
       return null;
     }
+    entry.lastUsedAt = Date.now();
     store.delete(entryKey);
     store.set(entryKey, entry);
     return entry;
@@ -28,7 +29,7 @@ function createStore(limit) {
     while (store.size >= limit) store.delete(store.keys().next().value);
     store.set(entryKey, { ...value, expiresAt: now + TTL_MS, lastUsedAt: now });
   }
-  return { get, bind, invalidate: (entryKey) => store.delete(entryKey), sweep };
+  return { get, bind, invalidate: (entryKey) => store.delete(entryKey), sweep, clear: () => store.clear() };
 }
 
 const routes = createStore(ROUTE_LIMIT);
@@ -59,6 +60,6 @@ export function invalidateAccountAffinity(sessionId, provider, model) {
 }
 
 export function clearSessionAffinity() {
-  routes.sweep(0);
-  accounts.sweep(0);
+  routes.clear();
+  accounts.clear();
 }

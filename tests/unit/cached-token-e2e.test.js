@@ -59,6 +59,22 @@ describe("cached-token end-to-end (persist + aggregate + cost)", () => {
     expect(hist[0].tokens.cache_creation_input_tokens).toBe(30);
   });
 
+  it("persists affinity metadata into usageHistory.meta", async () => {
+    await db.saveRequestUsage({
+      provider: "codex",
+      model: "gpt-5",
+      connectionId: "c-aff",
+      tokens: { prompt_tokens: 10, completion_tokens: 5 },
+      status: "ok",
+      meta: { affinitySession: "abc123", accountAffinityHit: true },
+    });
+
+    const hist = await db.getUsageHistory({ provider: "codex" });
+    expect(hist.length).toBe(1);
+    expect(hist[0].meta?.affinitySession).toBe("abc123");
+    expect(hist[0].meta?.accountAffinityHit).toBe(true);
+  });
+
   it("OpenAI cache usage: inclusive prompt passes through, cached counted once", async () => {
     const canonical = canonicalizeUsage({
       prompt_tokens: 1000,        // already includes cached

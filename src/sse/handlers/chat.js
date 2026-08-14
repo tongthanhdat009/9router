@@ -22,7 +22,7 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
-import { resolveClientAffinitySessionId } from "open-sse/utils/sessionManager.js";
+import { resolveClientAffinitySessionId, sha16 } from "open-sse/utils/sessionManager.js";
 import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, getRouteAffinity, bindRouteAffinity, invalidateRouteAffinity } from "../services/sessionAffinity.js";
 
 /**
@@ -318,6 +318,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
+      affinity: {
+        sessionHash: affinitySessionId ? sha16(affinitySessionId) : null,
+        accountAffinityHit: Boolean(affinity && credentials.connectionId === affinity.connectionId),
+      },
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
       onCredentialsRefreshed: async (newCreds) => {

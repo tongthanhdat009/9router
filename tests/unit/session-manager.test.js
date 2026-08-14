@@ -1,6 +1,6 @@
 // A2: locks resolveSessionId priority/stickiness (codex/kiro/antigravity centralization).
 import { describe, it, expect, beforeEach } from "vitest";
-import { resolveContinuationId, resolveSessionId, resolveSessionIdentity, deriveSessionId, clearSessionStore } from "../../open-sse/utils/sessionManager.js";
+import { resolveClientAffinitySessionId, resolveContinuationId, resolveSessionId, resolveSessionIdentity, deriveSessionId, clearSessionStore } from "../../open-sse/utils/sessionManager.js";
 
 // Assistant text must reach ASSISTANT_MIN_LEN (80) to use assistant anchor; else first user message.
 const longAssistant = "x".repeat(80);
@@ -179,6 +179,21 @@ describe("resolveSessionId", () => {
     const a = resolveSessionId({ body: withAssistant, connectionId: "conn1", scope: "kiro" });
     const b = resolveSessionId({ body: withAssistant, connectionId: "conn1", scope: "kiro" });
     expect(a).not.toBe(b);
+  });
+});
+
+describe("resolveClientAffinitySessionId", () => {
+  it("reuses client-origin identity: header wins over derived fallbacks", () => {
+    expect(resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-h" }, body: {} })).toBe("sess-h");
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { metadata: { user_id: "user_X_session_abc" } } })).toBe("claude:abc");
+  });
+
+  it("returns null when no stable client identity exists (no affinity)", () => {
+    expect(resolveClientAffinitySessionId({ headers: {}, body: bodyWithUserOnly, scope: "codex" })).toBeNull();
+  });
+
+  it("never derives from assistant-text or workspaceId fallbacks", () => {
+    expect(resolveClientAffinitySessionId({ headers: {}, body: bodyWithAssistant })).toBeNull();
   });
 });
 

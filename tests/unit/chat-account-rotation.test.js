@@ -47,7 +47,7 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.markAccountUnavailable).toHaveBeenCalledWith("conn-a", 503, expect.any(String), "codex", "gpt-5", undefined);
-    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5");
+    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5", { preferredConnectionId: null });
   });
 
   it("returns 503 only after every account is exhausted", async () => {
@@ -59,6 +59,6 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect(response.status).toBe(503);
     expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(3);
-    expect(mocks.getProviderCredentials).toHaveBeenLastCalledWith("codex", new Set(["conn-a", "conn-b"]), "gpt-5");
+    expect(mocks.getProviderCredentials).toHaveBeenLastCalledWith("codex", new Set(["conn-a", "conn-b"]), "gpt-5", { preferredConnectionId: null });
   });
 });
