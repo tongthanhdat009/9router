@@ -95,7 +95,7 @@ const MAX_CONTINUATION_SESSIONS = 5000;
 const SESSION_HEADER_KEYS = ["x-session-id", "session-id", "session_id", "x-amp-thread-id"];
 const CLAUDE_CODE_SESSION_RE = /_session_([a-f0-9-]+)$/;
 
-function sha16(text) {
+export function sha16(text) {
     return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
 }
 
@@ -194,6 +194,15 @@ function assistantTextSessionId(scope, body) {
 }
 
 /**
+ * Resolve a client-origin session id for affinity purposes (account/route pinning).
+ * This deliberately excludes assistant-text, workspace, account-derived, and Kiro
+ * ephemeral fallbacks. No stable client identity means no affinity.
+ */
+export function resolveClientAffinitySessionId({ headers, body, scope = "" } = {}) {
+  return extractClientSessionId(headers, body, scope);
+}
+
+/**
  * Resolve a conversation-stable session id (generalizes Codex resolveCacheSessionId).
  * Priority: client session → accumulated-assistant-text hash → workspaceId → per-connection.
  *
@@ -205,6 +214,7 @@ function assistantTextSessionId(scope, body) {
  * @param {string} [opts.scope] - Provider scope to isolate cache keys across providers
  * @returns {{sessionId: string, ephemeral: boolean}} A session id plus whether it is one-shot
  */
+
 export function resolveSessionIdentity({ headers, body, connectionId, workspaceId, scope = "" } = {}) {
     const client = extractClientSessionId(headers, body, scope);
     if (client) return { sessionId: client, ephemeral: false };

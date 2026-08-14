@@ -22,6 +22,8 @@ import { detectFormatByEndpoint } from "open-sse/translator/formats.js";
 import * as log from "../utils/logger.js";
 import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
+import { resolveClientAffinitySessionId } from "open-sse/utils/sessionManager.js";
+import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, getRouteAffinity, bindRouteAffinity, invalidateRouteAffinity } from "../services/sessionAffinity.js";
 
 /**
  * Handle chat completion request
@@ -85,6 +87,10 @@ export async function handleChat(request, clientRawRequest = null) {
   if (bypassResponse) return bypassResponse.response || bypassResponse;
 
   const requiredCapabilities = detectRequiredCapabilities(body);
+  const affinitySessionId = resolveClientAffinitySessionId({
+    headers: Object.fromEntries(request.headers.entries()),
+    body,
+  });
 
   // Check if model is a combo (has multiple models with fallback)
   const comboModels = await getComboModels(modelStr);
@@ -107,7 +113,7 @@ export async function handleChat(request, clientRawRequest = null) {
             const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
             cleanRawReq = { ...clientRawRequest, body: cleanBody };
           }
-          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+          return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, affinitySessionId);
         },
         log,
         comboName: modelStr,
@@ -117,18 +123,29 @@ export async function handleChat(request, clientRawRequest = null) {
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
+    const routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
+    const preferredRoute = routeAffinity?.route && augmentedModels.includes(routeAffinity.route)
+      ? routeAffinity.route
+      : null;
+    if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({
       body,
       models: augmentedModels,
       handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+        async (b, m) => {
+          const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId);
+          if (response.ok) bindRouteAffinity(affinitySessionId, modelStr, m);
+          else invalidateRouteAffinity(affinitySessionId, modelStr);
+          return response;
+        },
         adapterAdded
       ),
       log,
       comboName: modelStr,
       comboStrategy,
-      comboStickyLimit
+      comboStickyLimit,
+      preferredRoute,
     });
   }
 
@@ -142,7 +159,7 @@ export async function handleChat(request, clientRawRequest = null) {
       body,
       models: soloAugmented,
       handleSingleModel: withCapacityAdapterStripping(
-        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+        (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId),
         adapterAdded
       ),
       log,
@@ -151,13 +168,13 @@ export async function handleChat(request, clientRawRequest = null) {
     });
   }
 
-  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey);
+  return handleSingleModelChat(body, modelStr, clientRawRequest, request, apiKey, affinitySessionId);
 }
 
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, affinitySessionId = null) {
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -184,7 +201,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               const { tools, tool_choice, ...cleanBody } = clientRawRequest.body || {};
               cleanRawReq = { ...clientRawRequest, body: cleanBody };
             }
-            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey);
+            return handleSingleModelChat(b, m, cleanRawReq, request, apiKey, affinitySessionId);
           },
           log,
           comboName: modelStr,
@@ -199,7 +216,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         body,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey),
+          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId),
           adapterAdded
         ),
         log,
@@ -225,7 +242,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
 
   while (true) {
-    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model);
+    const affinity = getAccountAffinity(affinitySessionId, provider, model);
+    const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
+      preferredConnectionId: affinity?.connectionId || null,
+    });
+    if (affinity && credentials?.connectionId !== affinity.connectionId) {
+      invalidateAccountAffinity(affinitySessionId, provider, model);
+    }
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -248,6 +271,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
     if (refreshedCredentials._needsReauth) {
       const reauthError = "Token refresh failed, re-authentication required";
+      invalidateAccountAffinity(affinitySessionId, provider, model);
       await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.UNAUTHORIZED, reauthError, provider, model);
       log.warn("AUTH", `Account ${credentials.connectionName} token refresh failed, needs re-auth (401)`);
       excludeConnectionIds.add(credentials.connectionId);
@@ -305,12 +329,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       },
       onRequestSuccess: async () => {
         await clearAccountError(credentials.connectionId, credentials, model);
+        bindAccountAffinity(affinitySessionId, provider, model, credentials.connectionId);
       }
     });
 
     if (result.success) return result.response;
 
     // Mark account unavailable (auto-calculates cooldown with exponential backoff, or precise resetsAtMs)
+    invalidateAccountAffinity(affinitySessionId, provider, model);
     const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, provider, model, result.resetsAtMs);
 
     if (shouldFallback) {
