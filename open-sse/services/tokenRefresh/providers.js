@@ -232,6 +232,7 @@ export async function refreshCodexToken(refreshToken, log, _credentials) {
         const failure = classifyOAuthRefreshError(errorText, response.status);
         monitorOAuthRefresh("CODEX_HTTP_RESULT", {
           provider: "codex",
+          connectionId: _credentials?.connectionId || _credentials?.id || null,
           endpoint: OAUTH_ENDPOINTS.openai.token,
           status: response.status,
           ok: false,
@@ -260,6 +261,7 @@ export async function refreshCodexToken(refreshToken, log, _credentials) {
 
       monitorOAuthRefresh("CODEX_HTTP_RESULT", {
         provider: "codex",
+        connectionId: _credentials?.connectionId || _credentials?.id || null,
         endpoint: OAUTH_ENDPOINTS.openai.token,
         status: response.status,
         ok: true,
@@ -287,6 +289,7 @@ export async function refreshCodexToken(refreshToken, log, _credentials) {
     } catch (error) {
       monitorOAuthRefresh("CODEX_HTTP_RESULT", {
         provider: "codex",
+        connectionId: _credentials?.connectionId || _credentials?.id || null,
         endpoint: OAUTH_ENDPOINTS.openai.token,
         status: 0,
         ok: false,
