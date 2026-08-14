@@ -251,11 +251,13 @@ function isCodexSseTransientError(modelStr, errorText) {
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, onSelection = null }) {
   // Preferred affinity deliberately bypasses rotation; cursor remains unchanged.
   let rotatedModels = preferredRoute && models.includes(preferredRoute)
     ? [preferredRoute, ...models.filter((model) => model !== preferredRoute)]
     : getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
+  // Diagnostics-only hook: whether the initial ordering consumed rotation state.
+  onSelection?.({ rotationUsed: !(preferredRoute && models.includes(preferredRoute)) });
 
   // Auto-switch: float models that satisfy the request's required capabilities to the front.
   if (autoSwitch) {

@@ -29,4 +29,17 @@ describe("combo route affinity", () => {
     expect(calls).toEqual(["anthropic/claude-sonnet-4-6", "anthropic/claude-sonnet-4-6"]);
     expect(getRotatedModels(models, "combo", "round-robin")[0]).toBe("perplexity/sonar");
   });
+
+  it("reports rotation only when the combo cursor was used", async () => {
+    const selected = [];
+    const run = (preferredRoute = null) => handleComboChat({
+      body: { messages: [{ role: "user", content: "q" }] }, models: ["a/x", "b/y"], preferredRoute,
+      comboName: "combo", comboStrategy: "round-robin", log,
+      onSelection: (selection) => selected.push(selection),
+      handleSingleModel: async () => new Response("ok", { status: 200 }),
+    });
+    await run();
+    await run("a/x");
+    expect(selected).toEqual([{ rotationUsed: true }, { rotationUsed: false }]);
+  });
 });

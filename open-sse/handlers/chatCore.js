@@ -353,7 +353,8 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
     })).catch(() => { });
 
     if (error.name === "AbortError") {
-      streamController.handleError(error);
+      // Non-streaming abort returns 499; outer response finalization owns its status.
+      streamController.handleComplete();
       return createErrorResult(499, "Request aborted");
     }
     const errMsg = formatProviderError(error, provider, model, HTTP_STATUS.BAD_GATEWAY);
