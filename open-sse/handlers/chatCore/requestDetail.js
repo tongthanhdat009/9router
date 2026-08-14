@@ -60,7 +60,7 @@ export function extractUsageFromResponse(responseBody) {
 function sanitizeAffinityMeta(affinity) {
   if (!affinity || typeof affinity !== "object") return undefined;
   const meta = {};
-  for (const key of ["sessionHash", "routeAffinityHit", "accountAffinityHit", "routeSwitched", "accountSwitched", "rebindReason"]) {
+  for (const key of ["sessionHash", "routeAffinityHit", "accountAffinityHit", "routeSwitch", "accountSwitch", "rebindReason"]) {
     const value = affinity[key];
     if (typeof value === "string" || typeof value === "boolean" || value == null) meta[key] = value;
   }

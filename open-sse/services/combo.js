@@ -261,11 +261,19 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   if (autoSwitch) {
     const required = detectRequiredCapabilities(body);
     if (required.size > 0) {
+      const preferredActive = Boolean(preferredRoute && rotatedModels[0] === preferredRoute);
       const reordered = reorderByCapabilities(rotatedModels, required);
-      if (reordered[0] !== rotatedModels[0]) {
-        log.info("COMBO", `auto-switch for [${[...required].join(",")}] → ${reordered[0]}`);
+      if (preferredActive && reordered[0] !== preferredRoute) {
+        // Affinity hit: preferredRoute already passed hard-capability validation
+        // in chat.js, so a soft-tier win by another model must not demote it.
+        log.info("COMBO", `affinity keeps preferred route ${preferredRoute} ahead of auto-switch ${reordered[0]}`);
+        rotatedModels = [preferredRoute, ...reordered.filter((model) => model !== preferredRoute)];
+      } else {
+        if (reordered[0] !== rotatedModels[0]) {
+          log.info("COMBO", `auto-switch for [${[...required].join(",")}] → ${reordered[0]}`);
+        }
+        rotatedModels = reordered;
       }
-      rotatedModels = reordered;
     }
   }
   

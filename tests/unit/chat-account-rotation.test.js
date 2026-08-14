@@ -87,6 +87,22 @@ describe("chat account-loop rotation on synthetic 503", () => {
     expect(handleComboChat.mock.calls[0][0].preferredRoute).toBeNull();
   });
 
+  it("passes all safe affinity diagnostics into chatCore", async () => {
+    mocks.getProviderCredentials.mockResolvedValue({ connectionId: "conn-a", connectionName: "Acc A", providerSpecificData: {} });
+    mocks.handleChatCore.mockResolvedValue({ success: true, response: new Response("ok", { status: 200 }) });
+    await handleChat(new Request("https://router.test/v1/chat/completions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-session-id": "session-1" },
+      body: JSON.stringify({ model: "codex/gpt-5", messages: [{ role: "user", content: "hi" }] }),
+    }));
+    expect(mocks.handleChatCore).toHaveBeenCalledWith(expect.objectContaining({
+      affinity: expect.objectContaining({
+        sessionHash: expect.any(String), routeAffinityHit: false, accountAffinityHit: false,
+        routeSwitch: false, accountSwitch: false, rebindReason: null,
+      }),
+    }));
+  });
+
   it("returns 503 only after every account is exhausted", async () => {
     mocks.getProviderCredentials.mockResolvedValueOnce({ connectionId: "conn-a", connectionName: "Acc A", providerSpecificData: {} }).mockResolvedValueOnce({ connectionId: "conn-b", connectionName: "Acc B", providerSpecificData: {} }).mockResolvedValueOnce(null);
     mocks.handleChatCore.mockResolvedValue({ success: false, status: 503, error: "capacity", response: new Response("err", { status: 503 }) });

@@ -140,7 +140,14 @@ export async function handleChat(request, clientRawRequest = null) {
       models: augmentedModels,
       handleSingleModel: withCapacityAdapterStripping(
         async (b, m) => {
-          const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId);
+          // Route-affinity diagnostics for this combo attempt; account fields are
+          // owned by the account loop inside handleSingleModelChat.
+          const routePrior = routeAffinity?.route || null;
+          const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId, {
+            routeAffinityHit: Boolean(preferredRoute) && m === preferredRoute,
+            routeSwitch: Boolean(routePrior && routePrior !== m),
+            rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
+          });
           if (response.ok) bindRouteAffinity(affinitySessionId, modelStr, m);
           else if (m === preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
           return response;
@@ -180,7 +187,7 @@ export async function handleChat(request, clientRawRequest = null) {
 /**
  * Handle single model chat request
  */
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, affinitySessionId = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, affinitySessionId = null, affinityMeta = null) {
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -217,18 +224,36 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
 
       const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
+      const routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
+      const preferredRoute = routeAffinity?.route &&
+        augmentedModels.includes(routeAffinity.route) &&
+        modelSatisfiesHardCapabilities(routeAffinity.route, requiredCapabilities)
+        ? routeAffinity.route
+        : null;
+      if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       return handleComboChat({
         body,
         models: augmentedModels,
         handleSingleModel: withCapacityAdapterStripping(
-          (b, m) => handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId),
+          async (b, m) => {
+            const routePrior = routeAffinity?.route || null;
+            const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId, {
+              routeAffinityHit: Boolean(preferredRoute) && m === preferredRoute,
+              routeSwitch: Boolean(routePrior && routePrior !== m),
+              rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
+            });
+            if (response.ok) bindRouteAffinity(affinitySessionId, modelStr, m);
+            else if (m === preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
+            return response;
+          },
           adapterAdded
         ),
         log,
         comboName: modelStr,
         comboStrategy,
-        comboStickyLimit
+        comboStickyLimit,
+        preferredRoute,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
@@ -244,6 +269,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   // Try with available accounts (fallback on errors)
   const excludeConnectionIds = new Set();
+  const accountPrior = getAccountAffinity(affinitySessionId, provider, model);
   let lastError = null;
   let lastStatus = null;
 
@@ -326,7 +352,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       providerThinking,
       affinity: {
         sessionHash: affinitySessionId ? sha16(affinitySessionId) : null,
+        routeAffinityHit: false,
         accountAffinityHit: Boolean(affinity && credentials.connectionId === affinity.connectionId),
+        routeSwitch: false,
+        accountSwitch: Boolean(accountPrior?.connectionId && credentials.connectionId !== accountPrior.connectionId),
+        rebindReason: accountPrior?.connectionId && credentials.connectionId !== accountPrior.connectionId ? "account-fallback" : null,
+        // Combo route-affinity diagnostics (when invoked from the combo loop)
+        // refine the route fields above; account fields stay owned here.
+        ...(affinityMeta || {}),
       },
       // Detect source format by endpoint + body
       sourceFormatOverride: request?.url ? detectFormatByEndpoint(new URL(request.url).pathname, body) : null,
