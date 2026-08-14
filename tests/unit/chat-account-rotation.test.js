@@ -63,6 +63,31 @@ describe("chat account-loop rotation on synthetic 503", () => {
     expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5", { preferredConnectionId: null });
   });
 
+  it("honors fill-first account affinity, clears it after failure, then rebinds the fallback", async () => {
+    const { bindAccountAffinity, getAccountAffinity, clearSessionAffinity } = await import("@/sse/services/sessionAffinity.js");
+    clearSessionAffinity();
+    bindAccountAffinity("session-1", "codex", "gpt-5", "conn-a");
+    const selectorCalls = [];
+    const accounts = [{ connectionId: "conn-a", connectionName: "Acc A", providerSpecificData: {} }, { connectionId: "conn-b", connectionName: "Acc B", providerSpecificData: {} }, { connectionId: "conn-b", connectionName: "Acc B", providerSpecificData: {} }];
+    mocks.getProviderCredentials.mockImplementation(async (provider, excluded, model, options) => {
+      selectorCalls.push({ provider, excluded: new Set(excluded), model, options });
+      return accounts.shift();
+    });
+    mocks.handleChatCore.mockResolvedValueOnce({ success: false, status: 503, error: "capacity", response: new Response("err", { status: 503 }) }).mockImplementation(async ({ onRequestSuccess }) => { await onRequestSuccess(); return { success: true, response: new Response("ok", { status: 200 }) }; });
+    mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true });
+    const request = () => new Request("https://router.test/v1/chat/completions", { method: "POST", headers: { "Content-Type": "application/json", "x-session-id": "session-1" }, body: JSON.stringify({ model: "codex/gpt-5", messages: [{ role: "user", content: "hi" }] }) });
+
+    expect((await handleChat(request())).status).toBe(200);
+    expect(selectorCalls).toEqual([
+      { provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-a" } },
+      { provider: "codex", excluded: new Set(["conn-a"]), model: "gpt-5", options: { preferredConnectionId: null } },
+    ]);
+    expect(getAccountAffinity("session-1", "codex", "gpt-5")?.connectionId).toBe("conn-b");
+
+    expect((await handleChat(request())).status).toBe(200);
+    expect(selectorCalls.at(-1)).toEqual({ provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-b" } });
+  });
+
   it("invalidates stored route affinity when it misses required hard capabilities", async () => {
     mocks.getComboModels.mockResolvedValue(["openai/gpt-5", "anthropic/claude-sonnet-4-6"]);
     mocks.getModelInfo.mockResolvedValue({ provider: null, model: null });
