@@ -104,7 +104,7 @@ export function formatDoneLine({ usage, latency }) {
   return `DONE ${latency?.total ?? 0}ms${ttftStr} · ${inStr} · OUT ${outTok}`;
 }
 
-export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, affinity, label = "USAGE", silent = false }) {
+export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, endpoint, affinity, affinityDiagnostics, finalizeAffinityRequest, label = "USAGE", silent = false }) {
   // affinity → usageHistory.meta diagnostics (sessionHash only, never raw session ids)
   if (!tokens || typeof tokens !== "object") return;
 
@@ -119,12 +119,25 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
     console.log(`${COLORS.green}[${time}] 📊 [${label}] ${provider.toUpperCase()} | in=${inTokens} | out=${outTokens}${accountSuffix}${COLORS.reset}`);
   }
 
+  const rawCachedPresent = tokens.cached_tokens !== undefined || tokens.cache_read_input_tokens !== undefined;
+  const rawCacheCreatePresent = tokens.cache_creation_input_tokens !== undefined;
+
   // Canonicalize to one storage convention (prompt_tokens cache-inclusive) so
   // cached/cache-creation tokens survive to cost calc + stats. See canonicalizeUsage.
   const normalized = canonicalizeUsage(tokens) || {
     prompt_tokens: tokens.prompt_tokens ?? tokens.input_tokens ?? 0,
     completion_tokens: tokens.completion_tokens ?? tokens.output_tokens ?? 0
   };
+
+  if (affinityDiagnostics && finalizeAffinityRequest && !affinityDiagnostics.finalized) {
+    affinityDiagnostics.usage = {
+      inputTokens: normalized.prompt_tokens ?? null,
+      cachedTokens: rawCachedPresent ? (normalized.cached_tokens ?? null) : null,
+      cacheCreationTokens: rawCacheCreatePresent ? (normalized.cache_creation_input_tokens ?? null) : null,
+      outputTokens: normalized.completion_tokens ?? null,
+    };
+    finalizeAffinityRequest({ status: 200, usage: affinityDiagnostics.usage });
+  }
 
   saveRequestUsage({
     provider: provider || "unknown",
