@@ -201,6 +201,27 @@ describe("resolveClientAffinitySessionId", () => {
     expect(resolveClientAffinitySessionId({ headers: {}, body: { metadata: { user_id: "router-generated-user" } } })).toBeNull();
   });
 
+  it("accepts stable harness identities", () => {
+    expect(resolveClientAffinitySessionId({ headers: { "x-mux-workspace-id": "mux-workspace-1" }, body: {} })).toBe("mux-workspace-1");
+    expect(resolveClientAffinitySessionId({ headers: { "X-Session-Affinity": "opencode-session-1" }, body: {} })).toBe("opencode-session-1");
+    expect(resolveClientAffinitySessionId({ headers: { "x-claude-code-session-id": "claude-session-1" }, body: {} })).toBe("claude-session-1");
+    expect(resolveClientAffinitySessionId({ body: { thread_id: "zed-thread-1" } })).toBe("zed-thread-1");
+    expect(resolveClientAffinitySessionId({ headers: { "x-mux-workspace-id": "x".repeat(257) }, body: {} })).toBeNull();
+    expect(resolveClientAffinitySessionId({ headers: { "x-mux-workspace-id": "   " }, body: {} })).toBeNull();
+  });
+
+  it("prefers harness header precedence over thread_id and respects existing order", () => {
+    expect(resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-generic" }, body: { thread_id: "zed-thread-1" } })).toBe("sess-generic");
+    expect(resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-generic", "x-session-affinity": "opencode-session-1", "x-mux-workspace-id": "mux-workspace-1" }, body: {} })).toBe("sess-generic");
+    expect(resolveClientAffinitySessionId({ headers: { "x-claude-code-session-id": "claude-session-1", "x-session-affinity": "opencode-session-1" }, body: {} })).toBe("claude-session-1");
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { prompt_cache_key: "cache-key-1", thread_id: "zed-thread-1", conversation_id: "conv-1" } })).toBe("cache-key-1");
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { conversation_id: "conv-1", thread_id: "zed-thread-1" } })).toBe("conv-1");
+  });
+
+  it("does not treat x-client-request-id as a stable harness session id", () => {
+    expect(resolveClientAffinitySessionId({ headers: { "x-client-request-id": "req-1" }, body: {} })).toBeNull();
+  });
+
   it("keeps explicit client session and conversation identity for affinity", () => {
     expect(resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-h" }, body: {} })).toBe("sess-h");
     expect(resolveClientAffinitySessionId({ body: { conversation_id: "conversation-1" } })).toBe("conversation-1");

@@ -91,8 +91,10 @@ const ASSISTANT_CAP_LEN = 50;
 const MAX_ASSISTANT_SESSIONS = 5000;
 const MAX_CONTINUATION_SESSIONS = 5000;
 
-// Client headers/body fields that carry an upstream session id (priority order)
-const SESSION_HEADER_KEYS = ["x-session-id", "session-id", "session_id", "x-amp-thread-id"];
+// Client headers/body fields that carry an upstream session id (priority order).
+// Generic client headers first; then per-harness stable ids (Claude Code, opencode, Mux)
+// — every harness sends exactly one of these, so appended order cannot shadow.
+const SESSION_HEADER_KEYS = ["x-session-id", "session-id", "session_id", "x-amp-thread-id", "x-claude-code-session-id", "x-session-affinity", "x-mux-workspace-id"];
 const CLAUDE_CODE_SESSION_RE = /_session_([a-f0-9-]+)$/;
 
 export function sha16(text) {
@@ -121,7 +123,10 @@ function extractClaudeCodeSession(userId) {
 // Lowercase-key lookup for raw client headers
 function headerValue(headers, key) {
     if (!headers || typeof headers !== "object") return null;
-    return normalizeSessionId(headers[key] ?? headers[key.toLowerCase()]);
+    const direct = headers[key] ?? headers[key.toLowerCase()];
+    if (direct != null) return normalizeSessionId(direct);
+    const matchedKey = Object.keys(headers).find((name) => name.toLowerCase() === key);
+    return matchedKey ? normalizeSessionId(headers[matchedKey]) : null;
 }
 
 // Read client-provided session id from headers/body (no generation)
@@ -150,6 +155,7 @@ function stableClientSessionId(headers, body) {
   return normalizeSessionId(body?.prompt_cache_key) ||
     normalizeSessionId(body?.session_id) ||
     normalizeSessionId(body?.conversation_id) ||
+    normalizeSessionId(body?.thread_id) ||
     null;
 }
 

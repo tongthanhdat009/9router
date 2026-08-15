@@ -25,8 +25,19 @@ describe("affinity logger", () => {
   it("redacts raw secrets and request identifiers", async () => {
     process.env.ENABLE_AFFINITY_LOG = "1";
     const { logAffinity } = await import("../../src/lib/affinityLogger.js");
-    await logAffinity("affinity.request", { session: "raw-session", api_key: "key", authorization: "Bearer x", prompt: "hello", prompt_cache_key: "cache", previous_response_id: "resp", safeHash: "sha16", present: true });
+    await logAffinity("affinity.request", { session: "raw-session", api_key: "key", authorization: "Bearer x", prompt: "hello", prompt_cache_key: "cache", previous_response_id: "resp", thread_id: "zed-thread-raw", safeHash: "sha16", present: true });
     const text = fs.readFileSync(file, "utf8");
-    expect(text).not.toContain("raw-session"); expect(text).not.toContain("Bearer x"); expect(text).not.toContain('"cache"'); expect(text).toContain("sha16"); expect(text).toContain('"present":true');
+    expect(text).not.toContain("raw-session"); expect(text).not.toContain("Bearer x"); expect(text).not.toContain('"cache"'); expect(text).not.toContain("zed-thread-raw"); expect(text).toContain("sha16"); expect(text).toContain('"present":true');
+  });
+
+  it("sha16-hashes harness session ids before logging", async () => {
+    process.env.ENABLE_AFFINITY_LOG = "1";
+    const { logAffinity } = await import("../../src/lib/affinityLogger.js");
+    const { sha16 } = await import("../../open-sse/utils/sessionManager.js");
+    const sessionHash = sha16("mux-workspace-1");
+    await logAffinity("affinity.request", { sessionHash, requestId: "req-h" });
+    const text = fs.readFileSync(file, "utf8");
+    expect(text).not.toContain("mux-workspace-1");
+    expect(text).toContain(sessionHash);
   });
 });
