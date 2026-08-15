@@ -29,7 +29,7 @@ Data-driven coverage of the provider/translator surface + unit tests for routing
 
 ### Working In This Directory
 - Run from `tests/`: `npx vitest run` (all) or `npx vitest run unit/capabilities.test.js` (single file, path relative to `tests/`).
-- **The suite is NOT expected to be all-green on a plain checkout** (~938 pass, ~64 fail). Expected red: 26 catalogued in `__baseline__/known-fails.txt`, `unit/embeddings.cloud.test.js` (imports `cloud/` dir not in this repo), `unit/xai-oauth-service.test.js` (timeout when xAI discovery unreachable), `real/*.real.test.js` (need live credentials).
+- **The suite is NOT expected to be all-green on a plain checkout** (~1736 pass, ~86 fail). Expected red: catalogued in `__baseline__/known-fails.txt` (86 @ 2026-08-16, refreshed at 224c05eb+; includes network-flaky cursor tests), `unit/embeddings.cloud.test.js` (imports `cloud/` dir not in this repo), `unit/xai-oauth-service.test.js` (timeout when xAI discovery unreachable), `real/*.real.test.js` (need live credentials).
 - Judge regressions with `tests/__baseline__/verify-no-regression.mjs`, never a raw run.
 - `tests/translator/registerAll.js` is required by any test calling `translateRequest`/`translateResponse` — `require()` silently no-ops under vitest/ESM without it (false pass).
 - Run `verify-*.mjs` after touching provider registry / alias logic.
