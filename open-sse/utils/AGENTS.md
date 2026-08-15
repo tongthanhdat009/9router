@@ -12,7 +12,7 @@ Cross-engine stream/SSE/error handling, client detection, proxy fetch, session s
 | `proxyFetch.js` | Proxy-aware fetch integration; side-effect may patch global fetch |
 | `stream.js` / `streamHandler.js` / `sse.js` | Stream construction and SSE parsing/writing |
 | `error.js` | Normalized upstream error helpers |
-| `sessionManager.js` / `clientDetector.js` | Session and client-format detection. `sessionManager.js` owns `resolveClientAffinitySessionId`/`stableClientSessionId` (SESSION_HEADER_KEYS: `x-session-id`, `session-id`, `session_id`, `x-amp-thread-id` + body `prompt_cache_key`); deliberately ignores router-generated ids — add new stable client headers there |
+| `sessionManager.js` / `clientDetector.js` | Session and client-format detection. `sessionManager.js` owns `resolveClientAffinitySessionId`/`stableClientSessionId` (SESSION_HEADER_KEYS: `x-session-id`, `session-id`, `session_id`, `x-amp-thread-id`, `x-claude-code-session-id`, `x-session-affinity`, `x-mux-workspace-id`; body chain `prompt_cache_key`/`session_id`/`conversation_id`/`thread_id`); deliberately ignores router-generated ids — add new stable client headers there |
 | `cursorProtobuf.js`, `cursorChecksum.js` | Cursor binary protocol helpers |
 
 ## For AI Agents
