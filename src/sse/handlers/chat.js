@@ -432,6 +432,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
+      requestId: diagnostics.requestId,
       affinityDiagnostics: diagnostics,
       finalizeAffinityRequest,
       affinity: {

@@ -97,7 +97,7 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null }) {
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestId = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -105,7 +105,14 @@ export class BaseExecutor {
 
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
+    // Snapshot pre-transform fields before transformRequest mutates/strips the body
+    // in place (grok-cli session ids live in fields its allowlist deletes).
+    const rawBodySnapshot = { ...body };
     const transformedBody = this.transformRequest(model, body, stream, credentials);
+    // Request-scoped context: identity derived ONCE per execute() entry (stable across
+    // URL retries + SSE/token-refresh re-entries). Optional hook — providers without
+    // deriveRequestContext get {} and ignore it.
+    const ctx = this.deriveRequestContext?.(transformedBody, credentials, requestId, rawBodySnapshot) ?? {};
     const bodyStr = JSON.stringify(transformedBody);
 
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
@@ -128,7 +135,7 @@ export class BaseExecutor {
 
     for (let urlIndex = 0; urlIndex < fallbackCount; urlIndex++) {
       const url = this.buildUrl(model, stream, urlIndex, credentials);
-      const headers = this.buildHeaders(credentials, stream, url, model);
+      const headers = this.buildHeaders(credentials, stream, url, model, ctx);
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 

@@ -340,9 +340,6 @@ function resolveEffortFromModel(modelId) {
 export class GrokCliExecutor extends BaseExecutor {
   constructor() {
     super("grok-cli", PROVIDERS["grok-cli"]);
-    this._currentSessionId = null;
-    this._currentReqId = null;
-    this._currentTurnIdx = 1;
     this._agentId = null;
   }
 
@@ -359,7 +356,36 @@ export class GrokCliExecutor extends BaseExecutor {
     return shouldRefreshCredentials("grok-cli", credentials);
   }
 
-  buildHeaders(credentials, stream = true) {
+  /**
+   * Request-scoped context (threaded by base.execute): all grok identity fields
+   * computed once per logical request. Random fallbacks minted exactly once here,
+   * so retries reuse identical ids while concurrent identical-body requests stay
+   * distinct. transformRequest still derives sessionId locally for turn-index
+   * computation (same deterministic resolver, no shared mutable state).
+   */
+  deriveRequestContext(transformedBody, credentials, requestId, rawBody = null) {
+    // Session resolves from the RAW body: transformRequest's allowlist strip
+    // deletes session_id/conversation_id, which the resolver would otherwise read.
+    const sessionId =
+      resolveGrokCliSessionId(credentials, rawBody || transformedBody) ||
+      credentials?.connectionId ||
+      crypto.randomUUID();
+    return {
+      sessionId,
+      reqId: requestId || crypto.randomUUID(),
+      agentId:
+        credentials?.providerSpecificData?.deviceId ||
+        credentials?.providerSpecificData?.agentId ||
+        this._agentId ||
+        null,
+      // Input is normalized by transformRequest (runs first in base.execute);
+      // requestKey = body object keeps retry turns stable via WeakMap.
+      turnIdx: resolveGrokCliTurnIdx(sessionId, transformedBody?.input, transformedBody),
+      model: transformedBody?.model || null,
+    };
+  }
+
+  buildHeaders(credentials, stream = true, _url = null, _model = null, ctx = {}) {
     const headers = super.buildHeaders(credentials, stream);
 
     // Static fingerprint from registry
@@ -373,18 +399,16 @@ export class GrokCliExecutor extends BaseExecutor {
     headers["x-grok-client-version"] =
       this.config.clientVersion || headers["x-grok-client-version"] || GROK_CLI_VERSION;
 
-    const sessionId = this._currentSessionId || credentials?.connectionId || crypto.randomUUID();
-    const reqId = this._currentReqId || crypto.randomUUID();
-    headers["x-grok-session-id"] = sessionId;
+    headers["x-grok-session-id"] = ctx.sessionId || credentials?.connectionId || crypto.randomUUID();
     // CLI uses the same id for conv + session on chat turns
-    headers["x-grok-conv-id"] = sessionId;
-    headers["x-grok-req-id"] = reqId;
-    headers["x-grok-turn-idx"] = String(this._currentTurnIdx || 1);
+    headers["x-grok-conv-id"] = ctx.sessionId || credentials?.connectionId || crypto.randomUUID();
+    headers["x-grok-req-id"] = ctx.reqId || crypto.randomUUID();
+    headers["x-grok-turn-idx"] = String(ctx.turnIdx ?? 1);
 
-    if (this._agentId) headers["x-grok-agent-id"] = this._agentId;
+    if (ctx.agentId) headers["x-grok-agent-id"] = ctx.agentId;
 
     // Surface model override (CLI always sets this)
-    if (this._currentModel) headers["x-grok-model-override"] = this._currentModel;
+    if (ctx.model) headers["x-grok-model-override"] = ctx.model;
 
     // Identity: mapTokens stores email top-level AND in providerSpecificData;
     // fall back either way so OAuth connections always fingerprint like the CLI.
@@ -418,13 +442,8 @@ export class GrokCliExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     // Session / request ids for headers — stable per client conversation when possible
-    const requestKey = body;
-    this._currentSessionId = resolveGrokCliSessionId(credentials, body);
-    this._currentReqId = crypto.randomUUID();
-    this._agentId =
-      credentials?.providerSpecificData?.deviceId ||
-      credentials?.providerSpecificData?.agentId ||
-      null;
+    // Session/req/turn identity now lives in deriveRequestContext (request-scoped,
+    // threaded by base.execute) — no instance fields, no re-derivation here.
 
     // Normalize Responses input
     const normalized = normalizeResponsesInput(body.input);
@@ -453,8 +472,6 @@ export class GrokCliExecutor extends BaseExecutor {
     normalizeGrokCliTools(body);
 
     // Turn index after input is finalized (user-message count, monotonic per session)
-    this._currentTurnIdx = resolveGrokCliTurnIdx(this._currentSessionId, body.input, requestKey);
-
     body.stream = true;
     body.store = false;
 
@@ -470,7 +487,6 @@ export class GrokCliExecutor extends BaseExecutor {
       resolvedModel = getModelUpstreamId("grok-cli", resolvedModel) || resolvedModel;
     }
     body.model = resolvedModel;
-    this._currentModel = resolvedModel;
 
     // Reasoning effort priority: explicit > reasoning_effort > model suffix > default high.
     // grok-build and Composer reject reasoningEffort but still accept summary/encrypted continuity.

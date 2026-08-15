@@ -33,12 +33,18 @@ function resolveOpencodeSession(body, credentials) {
 export class OpenCodeExecutor extends BaseExecutor {
   constructor() {
     super("opencode", PROVIDERS.opencode);
-    this._currentSessionId = null;
   }
 
   transformRequest(model, body, stream, credentials) {
-    this._currentSessionId = resolveOpencodeSession(body, credentials);
     return injectReasoningContent({ provider: this.provider, model, body });
+  }
+
+  /**
+   * Request-scoped context (threaded by base.execute): conversation-stable
+   * session id computed once per logical request, stable across retries.
+   */
+  deriveRequestContext(transformedBody, credentials, _requestId) {
+    return { sessionId: resolveOpencodeSession(transformedBody, credentials) };
   }
 
   buildUrl(model) {
@@ -48,7 +54,7 @@ export class OpenCodeExecutor extends BaseExecutor {
       : `${base}/zen/v1/chat/completions`;
   }
 
-  buildHeaders(credentials, stream = true) {
+  buildHeaders(credentials, stream = true, _url = null, _model = null, ctx = {}) {
     const raw = credentials?.rawHeaders || {};
     const lower = {};
     for (const [k, v] of Object.entries(raw)) lower[k.toLowerCase()] = v;
@@ -61,7 +67,7 @@ export class OpenCodeExecutor extends BaseExecutor {
       "Authorization": "Bearer public",
       "User-Agent": isOpencodeDownstream ? downstreamUa : OPENCODE_UA,
       "x-opencode-client": lower["x-opencode-client"] || "desktop",
-      "x-opencode-session": lower["x-opencode-session"] || this._currentSessionId || generateSessionId(),
+      "x-opencode-session": lower["x-opencode-session"] || ctx.sessionId || generateSessionId(),
       "x-opencode-request": lower["x-opencode-request"] || generateRequestId(),
       "x-opencode-project": lower["x-opencode-project"] || "global",
       "Accept": stream ? "text/event-stream" : "*/*",

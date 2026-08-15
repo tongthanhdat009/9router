@@ -176,6 +176,7 @@ describe("GrokCliExecutor multi-turn input", () => {
     }
     expect(out.include).toContain("reasoning.encrypted_content");
     expect(out.store).toBe(false);
-    expect(executor._currentTurnIdx).toBe(2);
+    // Turn index is request-scoped now (deriveRequestContext mirrors base.execute)
+    expect(executor.deriveRequestContext(out, { connectionId: "mt-1" }).turnIdx).toBe(2);
   });
 });
