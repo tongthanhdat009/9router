@@ -14,16 +14,24 @@ describe("normalizeClaudePassthrough — haiku adaptive thinking (docs 11 §1)",
     expect(out.thinking).toEqual({ type: "adaptive" });
   });
 
-  it("hoists mid-conversation system messages into top-level system", () => {
-    const out = normalizeClaudePassthrough({
-      messages: [
-        { role: "user", content: "hi" },
-        { role: "system", content: "be brief" },
-      ],
-    });
-    expect(out.system).toEqual([{ type: "text", text: "be brief" }]);
-    expect(out.messages.every((m) => m.role !== "system")).toBe(true);
-  });
+ it("folds mid-conversation system messages into neighbouring user turn (upstream 7e5f5a88 cache-stable prefix)", () => {
+ const out = normalizeClaudePassthrough({
+ messages: [
+ { role: "user", content: "hi" },
+ { role: "system", content: "be brief" },
+ ],
+ });
+ // Upstream v0.5.55 folds in place (prefix-cache stability) instead of hoisting into body.system.
+ expect(out.system).toBeUndefined();
+ expect(out.messages).toHaveLength(1);
+ expect(out.messages[0]).toEqual({
+ role: "user",
+ content: [
+ { type: "text", text: "hi" },
+ { type: "text", text: "be brief" },
+ ],
+ });
+ });
 });
 
 describe("parseDataUri / encodeDataUri (docs 11 §4)", () => {
