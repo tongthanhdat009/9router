@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-12 | Updated: 2026-08-12 -->
+<!-- Generated: 2026-08-12 | Updated: 2026-08-16 -->
 
 # tests
 
@@ -21,7 +21,7 @@ Data-driven coverage of the provider/translator surface + unit tests for routing
 
 | Directory | Purpose |
 |-----------|---------|
-| `unit/` | 164 unit tests: routing, oauth, token refresh, quota, auth, providers |
+| `unit/` | 176 unit test files: routing, oauth, token refresh, quota, auth, providers, affinity (`affinity-logger`, `combo-affinity`, `session-affinity`, `request-detail-affinity`) |
 | `translator/` | Translation-layer tests (see `translator/AGENTS.md` — hand-authored, detailed) |
 | `__baseline__/` | Regression baselines: providers/alias/OAuth-url snapshots + `verify-*.mjs` comparators + `known-fails.txt` |
 

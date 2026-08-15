@@ -47,6 +47,7 @@ Two published artifacts share this repo:
 - Read `docs/ARCHITECTURE.md` before request-flow work; `open-sse/AGENTS.md` before editing anything under `open-sse/`.
 - State is SQLite under `src/lib/db/` (adapter fallback chain), NOT `db.json`. `src/lib/localDb.js` is a backward-compat shim — import from `@/lib/db/index.js`.
 - `src/lib/usageDb.js` (`usage.json` + `log.txt`) still lives under `~/.9router`, not `DATA_DIR`.
+- Affinity bindings are process-local in `src/sse/services/sessionAffinity.js`; diagnostics at `77ccaae1` are opt-in JSONL (`src/lib/affinityLogger.js`: `<DATA_DIR>/logs/affinity.jsonl`), not SQLite usage metadata.
 - Commit style: Conventional Commits. Changelog in `CHANGELOG.md`.
 - `custom-server.js` IP handling is security-sensitive — preserve it when touching request/IP/rate-limit code.
 

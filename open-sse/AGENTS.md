@@ -6,7 +6,7 @@ Provider-agnostic SSE engine: one OpenAI-style request → any provider (LLM cha
 
 ## Request lifecycle (chat)
 
-`handlers/chatCore.js` → `services/model.js` `parseModel` (resolve `provider/model`) → **pre-translate hooks** (`rtk/` tool_result compress, `rtk/headroom.js` proxy compress, `rtk/caveman.js` system inject — all fail-open) → `executors/index.js` `getExecutor(provider)` → `translator/index.js` `translateRequest` (client format → provider format) → `executor.execute()` (streams upstream) → `translateResponse` (provider chunks → client format) → SSE out.
+`src/sse/handlers/chat.js` `handleChat` owns affinity/JSONL + combo/account fallback → delegates to `handlers/chatCore.js` → `services/model.js` `parseModel` (resolve `provider/model`) → **pre-translate hooks** (`rtk/` tool_result compress, `rtk/headroom.js` proxy compress, `rtk/caveman.js` system inject — all fail-open) → `executors/index.js` `getExecutor(provider)` → `translator/index.js` `translateRequest` (client format → provider format) → `executor.execute()` (streams upstream) → `translateResponse` (provider chunks → client format) → SSE out. Bindings live in `src/sse/services/sessionAffinity.js` via `src/lib/affinityLogger.js` JSONL (opt-in `ENABLE_AFFINITY_LOG=1` / `enableObservability`), not SQLite metadata.
 
 ## Directory map
 

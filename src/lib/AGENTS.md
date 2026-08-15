@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-12 | Updated: 2026-08-12 -->
+<!-- Generated: 2026-08-12 | Updated: 2026-08-16 -->
 
 # src/lib
 
@@ -19,6 +19,7 @@ Server-side libraries for the 9Router gateway: persistence (SQLite layer in `db/
 | `dataDir.js` | Resolves `DATA_DIR` (env) else `~/.9router` (Windows: `%APPDATA%/9router`); Unix path on Windows → fallback. Exports `DATA_DIR` |
 | `consoleLogBuffer.js` | Console.log/info/warn/error/debug capture into a ring buffer (`CONSOLE_LOG_CONFIG.maxLines`), batched + ANSI-stripped, emitted via `EventEmitter` for the dashboard log viewer |
 | `providerNormalization.js` | Provider-id normalization helpers (`normalizeProviderId`, `isXaiModel`, `normalizeProviderSpecificData`) against `AI_PROVIDERS` |
+| `affinityLogger.js` | Opt-in affinity JSONL logger: `ENABLE_AFFINITY_LOG=1` or `enableObservability`; `AFFINITY_LOG_FILE` override else `<DATA_DIR>/logs/affinity.jsonl`; redacts secrets/session/prompt fields |
 | `appUpdater.js` / `grokBuildConfig.js` | App-update check + Grok build config (version/binary URLs) |
 
 ## Subdirectories
