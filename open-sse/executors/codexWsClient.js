@@ -1,4 +1,6 @@
-import { WebSocket } from "undici";
+// Native WebSocket (globalThis, Node >= 22) — no undici import, no polyfill.
+// Older runtimes get a clear WsConnectError and the executor falls back to HTTP/SSE.
+const WebSocket = globalThis.WebSocket;
 
 const CLOSE_NORMAL = 1000;
 
@@ -15,7 +17,9 @@ function wsError(event) {
 }
 
 export async function connectCodexResponsesWs({ url, headers, signal, timeoutMs = 15000 }) {
-  if (typeof WebSocket !== "function") throw new WsConnectError("WebSocket unavailable");
+  if (typeof WebSocket !== "function") {
+    throw new WsConnectError("WebSocket unavailable: native globalThis.WebSocket requires Node >= 22; disable codexUpstreamWebsocket or upgrade Node to use upstream WebSocket (HTTP/SSE fallback applies otherwise)");
+  }
   if (signal?.aborted) throw signal.reason || new DOMException("Aborted", "AbortError");
   let socket;
   let timer;
