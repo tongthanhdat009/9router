@@ -1,3 +1,14 @@
+# Unreleased
+
+## Fixes
+- **Executors**: request-scoped session context — `requestId` minted once per
+  logical request (src/sse/handlers/chat.js) threads through chatCore →
+  executor.execute → buildHeaders; codex/grok-cli/opencode identity
+  (session_id, x-grok-* ids, x-opencode-session, prompt_cache_key) derived
+  once per request via deriveRequestContext instead of executor instance
+  fields — concurrent requests never cross-contaminate session state and
+  retries reuse identical ids
+
 # v0.5.55 (2026-08-14)
 
 ## Features
