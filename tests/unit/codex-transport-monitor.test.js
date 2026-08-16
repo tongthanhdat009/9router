@@ -81,8 +81,13 @@ describe("codex transport monitor", () => {
   });
 
   it("never throws into request path", async () => {
+    // Parent path is an existing regular file → mkdirSync throws ENOTDIR instantly.
+    // (/proc dead paths hang mkdirSync on Linux procfs, never reaching the catch.)
+    const blocker = path.join(os.tmpdir(), `codex-transport-blocker-${process.pid}-${Date.now()}`);
+    fs.writeFileSync(blocker, "x");
+    files.push(blocker);
     process.env.ENABLE_CODEX_TRANSPORT_LOG = "1";
-    process.env.CODEX_TRANSPORT_LOG_FILE = "/proc/definitely/not/writable/codex-transport.jsonl";
+    process.env.CODEX_TRANSPORT_LOG_FILE = path.join(blocker, "codex-transport.jsonl");
     const { monitorCodexTransport } = await import("../../src/lib/codexTransportMonitor.js");
 
     expect(() => monitorCodexTransport("CODEX_HTTP_SSE_SELECTED", { transport: "http-sse" })).not.toThrow();
