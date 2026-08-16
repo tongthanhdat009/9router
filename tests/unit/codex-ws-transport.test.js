@@ -19,13 +19,15 @@ function demask(raw) {
   const payload = raw.subarray(offset + 4);
   return Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4])).toString("utf8");
 }
-async function mockWs(onOpen) {
+async function mockWs(onOpen, delayMs = 0) {
   const server = http.createServer();
   server.on("upgrade", (request, socket) => {
     const accept = crypto.createHash("sha1").update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
-    socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
     sockets.push(socket);
-    onOpen(socket, request);
+    setTimeout(() => {
+      socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+      onOpen(socket, request);
+    }, delayMs);
   });
   await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
   servers.push(server);
@@ -117,6 +119,32 @@ describe("Codex upstream WebSocket transport", () => {
     expect(textA).not.toContain('"delta":"B"');
     expect(textB).toContain('"delta":"B"');
     expect(textB).not.toContain('"delta":"A"');
+  });
+
+  it("first caller aborting a shared connect does not break later same-account waiters", async () => {
+    let upgrades = 0;
+    const url = await mockWs(socket => {
+      upgrades++;
+      socket.on("data", raw => {
+        let text;
+        try { text = demask(raw); } catch { return; }
+        const marker = /"marker":"([^\"]+)"/.exec(text);
+        if (!marker) return;
+        socket.write(frame({ type: "response.output_text.delta", delta: marker[1] }));
+        socket.write(frame({ type: "response.completed" }));
+      });
+    }, 60);
+    const credentials = { connectionId: "shared-abort-account" };
+    const controllerA = new AbortController();
+    // A starts the shared dial then aborts mid-handshake; B rides the same pending connect.
+    const a = executeCodexWs({ ...input(url), credentials, transformedBody: { model: "gpt", input: "hi", marker: "A" }, signal: controllerA.signal });
+    await sleep(10);
+    controllerA.abort();
+    await expect(a).rejects.toMatchObject({ name: "AbortError" });
+    const b = executeCodexWs({ ...input(url), credentials, transformedBody: { model: "gpt", input: "hi", marker: "B" } });
+    const response = await b;
+    expect(await response.text()).toContain('"delta":"B"');
+    expect(upgrades).toBe(1);
   });
 
   it("uses upstream URL and settings default", () => {

@@ -24,15 +24,30 @@ async function getConnection({ key, url, headers, signal, timeoutMs }) {
   }
   let pending = connecting.get(key);
   if (!pending) {
-    // ponytail: shared connect rides the first caller's abort signal; later waiters reuse it.
-    pending = connectCodexResponsesWs({ url, headers, signal, timeoutMs }).then(socket => {
+    // Connector-owned dial: fresh AbortController + its own timeout, fully decoupled
+    // from any caller's signal — one requester aborting never kills the shared
+    // connect or the other waiters riding it. Abandoned dials that succeed simply
+    // land in the idle cache for the next request.
+    const connector = new AbortController();
+    pending = connectCodexResponsesWs({ url, headers, signal: connector.signal, timeoutMs }).then(socket => {
       const entry = { socket, tail: Promise.resolve(), busy: false, lastUsed: Date.now() };
       cache.set(key, entry);
       return entry;
     }).finally(() => connecting.delete(key));
+    pending.catch(() => {}); // every waiter may have aborted away — keep rejection observed
     connecting.set(key, pending);
   }
-  return pending;
+  // Each waiter races the shared promise with its OWN signal; abort rejects only this caller.
+  if (!signal) return pending;
+  if (signal.aborted) return Promise.reject(signal.reason || new DOMException("Aborted", "AbortError"));
+  return new Promise((resolve, reject) => {
+    const onAbort = () => reject(signal.reason || new DOMException("Aborted", "AbortError"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    pending.then(
+      value => { signal.removeEventListener("abort", onAbort); resolve(value); },
+      error => { signal.removeEventListener("abort", onAbort); reject(error); }
+    );
+  });
 }
 
 export async function executeCodexWs({ url, headers, transformedBody, credentials, signal, timeoutMs }) {
