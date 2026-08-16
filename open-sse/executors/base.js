@@ -97,7 +97,15 @@ export class BaseExecutor {
     return { status: response.status, message: bodyText || `HTTP ${response.status}` };
   }
 
-  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestId = null }) {
+  prepareRequest({ model, body, stream, credentials, requestId = null }) {
+    // Snapshot before provider transforms mutate/strip request-only identity fields.
+    const rawBodySnapshot = { ...body };
+    const transformedBody = this.transformRequest(model, body, stream, credentials);
+    const ctx = this.deriveRequestContext?.(transformedBody, credentials, { requestId }, rawBodySnapshot) ?? {};
+    return { transformedBody, ctx, bodyStr: JSON.stringify(transformedBody) };
+  }
+
+  async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestId = null, preparedRequest = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
     let lastStatus = 0;
@@ -105,13 +113,7 @@ export class BaseExecutor {
 
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
-    // Snapshot pre-transform fields before transformRequest mutates/strips body
-    // in place (codex/grok session ids live in fields the allowlist deletes).
-    const rawBodySnapshot = { ...body };
-    const transformedBody = this.transformRequest(model, body, stream, credentials);
-    // Request-scoped context: identity derived once per execute entry; URL retries reuse it.
-    const ctx = this.deriveRequestContext?.(transformedBody, credentials, { requestId }, rawBodySnapshot) ?? {};
-    const bodyStr = JSON.stringify(transformedBody);
+    const { transformedBody, ctx, bodyStr } = preparedRequest || this.prepareRequest({ model, body, stream, credentials, requestId });
 
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).

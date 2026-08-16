@@ -1524,3 +1524,7 @@ MIT License - see [LICENSE](LICENSE) for details.
 <div align="center">
   <sub>Built with ❤️ for developers who code 24/7</sub>
 </div>
+
+### Codex upstream WebSocket
+
+Codex Responses WebSocket is optional and upstream-only: clients continue using HTTP/SSE. Enable with dashboard Profile → Security → Codex upstream WebSocket, or `NINEROUTER_CODEX_WS=1`. It is off by default. Connection, 426, timeout, or pre-output stream failures fall back once to the existing upstream HTTP/SSE transport; output-started failures are never replayed.

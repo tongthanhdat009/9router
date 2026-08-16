@@ -322,6 +322,19 @@ export default function ProfilePage() {
     }
   };
 
+  const updateCodexUpstreamWebsocket = async (codexUpstreamWebsocket) => {
+    try {
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ codexUpstreamWebsocket }),
+      });
+      if (res.ok) setSettings(prev => ({ ...prev, codexUpstreamWebsocket }));
+    } catch (err) {
+      console.error("Failed to update Codex WebSocket setting:", err);
+    }
+  };
+
   const updateRequireLogin = async (requireLogin) => {
     try {
       const res = await fetch("/api/settings", {
@@ -872,6 +885,17 @@ export default function ProfilePage() {
               <Toggle
                 checked={settings.requireLogin === true}
                 onChange={() => updateRequireLogin(!settings.requireLogin)}
+                disabled={loading}
+              />
+            </div>
+            <div className="flex items-start sm:items-center justify-between gap-4 pt-4 border-t border-border/50">
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-sm sm:text-base">Codex upstream WebSocket</p>
+                <p className="text-xs sm:text-sm text-text-muted">Uses WebSocket only between 9Router and Codex; clients keep HTTP/SSE. Failed connections fall back to HTTP.</p>
+              </div>
+              <Toggle
+                checked={settings.codexUpstreamWebsocket === true}
+                onChange={() => updateCodexUpstreamWebsocket(!settings.codexUpstreamWebsocket)}
                 disabled={loading}
               />
             </div>

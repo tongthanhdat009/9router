@@ -12,6 +12,7 @@ import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
+import { executeCodexWs, WsConnectError, WsStreamError, wsUrl } from "./codexWsTransport.js";
 
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
 const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
@@ -296,13 +297,33 @@ export class CodexExecutor extends BaseExecutor {
       await this.prefetchImages(args.body);
     }
 
+    // Transform once: WebSocket and exactly-one HTTP fallback must share the same body/context.
+    const preparedRequest = this.prepareRequest(args);
+    const wsEnabled = process.env.NINEROUTER_CODEX_WS === "1" || args.codexUpstreamWebsocket === true;
+    if (wsEnabled && args.credentials?.accessToken) {
+      const httpUrl = this.buildUrl(args.model, args.stream, 0, args.credentials);
+      const headers = this.buildHeaders(args.credentials, args.stream, httpUrl, args.model, preparedRequest.ctx);
+      const sessionId = preparedRequest.ctx?.sessionId || args.credentials.connectionId || "default";
+      const requestId = args.requestId || crypto.randomUUID();
+      const wsHeaders = { ...headers, "OpenAI-Beta": "responses_websockets=2026-02-06", "session-id": sessionId, "thread-id": sessionId, "x-client-request-id": requestId };
+      const transformedBody = { ...preparedRequest.transformedBody, client_metadata: { ...preparedRequest.transformedBody.client_metadata, session_id: sessionId, thread_id: sessionId } };
+      try {
+        const response = await executeCodexWs({ url: httpUrl, headers: wsHeaders, transformedBody, credentials: args.credentials, signal: args.signal, timeoutMs: this.config?.timeoutMs });
+        return { response, url: wsUrl(httpUrl), headers: wsHeaders, transformedBody };
+      } catch (error) {
+        if (error?.name === "AbortError") throw error;
+        if (!(error instanceof WsConnectError) && !(error instanceof WsStreamError && error.framesEmitted === 0)) throw error;
+        args.log?.debug?.("CODEX", `WS fallback to HTTP: ${error.message}`);
+      }
+    }
+
     // Retry 200-OK SSE transient errors before exposing a response. The bounded
     // peek buffers at most 8 KiB, then replays it into the client stream.
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
     const { attempts, delayMs } = resolveRetryEntry(retryConfig[HTTP_STATUS.SERVICE_UNAVAILABLE]);
     let attempt = 0;
     while (true) {
-      const result = await super.execute(args);
+      const result = await super.execute({ ...args, preparedRequest });
       const peek = await this._peekSseTransientError(result.response);
       if (!peek.matched) {
         if (peek.replacementBody) {

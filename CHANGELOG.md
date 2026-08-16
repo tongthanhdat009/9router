@@ -1,4 +1,8 @@
 # Unreleased
+## Unreleased
+
+- feat(codex): optional upstream-only Responses WebSocket transport with HTTP/SSE fallback.
+
 
 ## Fixes
 - **Executors**: request-scoped session context — `requestId` minted once per

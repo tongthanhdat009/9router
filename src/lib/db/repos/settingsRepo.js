@@ -26,6 +26,7 @@ const DEFAULT_SETTINGS = {
   },
   requireLogin: true,
   requireApiKey: true,
+  codexUpstreamWebsocket: false,
   tunnelDashboardAccess: true,
   authMode: "password",
   ssoType: "oidc",
