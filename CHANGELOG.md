@@ -2,6 +2,15 @@
 ## Unreleased
 
 - feat(codex): optional upstream-only Responses WebSocket transport with HTTP/SSE fallback.
+- fix(codex): WS slot lifecycle — per-account socket released only at terminal
+  stream event/failure/cancel (never on first event), healthy sockets reused by
+  queued same-account requests with no handler overwrite; concurrent connects
+  to one account deduplicated; closed cache entries reconnect after queued
+  acquisition; first-frame timeout (config `timeoutMs`, fallback 15000ms)
+  rejects `WsStreamError(framesEmitted=0)` so CodexExecutor falls back to
+  HTTP/SSE once; abort before send rejects `AbortError`, mid-stream abort
+  keeps `AbortError` name (no HTTP fallback); connection-limit retry only
+  while pre-output.
 
 
 ## Fixes

@@ -11,6 +11,14 @@ function frame(json) {
   const payload = Buffer.from(JSON.stringify(json));
   return Buffer.concat([Buffer.from([0x81, payload.length]), payload]);
 }
+function demask(raw) {
+  // RFC6455: client->server frames are masked; unmask small frames for inspection.
+  const len = raw[1] & 0x7f;
+  const offset = len < 126 ? 2 : 4;
+  const mask = raw.subarray(offset, offset + 4);
+  const payload = raw.subarray(offset + 4);
+  return Buffer.from(payload.map((byte, i) => byte ^ mask[i % 4])).toString("utf8");
+}
 async function mockWs(onOpen) {
   const server = http.createServer();
   server.on("upgrade", (request, socket) => {
@@ -60,7 +68,55 @@ describe("Codex upstream WebSocket transport", () => {
     const controller = new AbortController();
     const pending = executeCodexWs({ ...input(url), signal: controller.signal });
     await sleep(20); controller.abort();
-    await expect(pending).rejects.toMatchObject({ name: "WsStreamError", framesEmitted: 0 });
+    await expect(pending).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("rejects already-aborted signal before send", async () => {
+    const url = await mockWs(() => {});
+    const controller = new AbortController(); controller.abort();
+    await expect(executeCodexWs({ ...input(url), signal: controller.signal })).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("keeps AbortError name when aborted mid-stream", async () => {
+    const url = await mockWs(socket => setTimeout(() => socket.write(frame({ type: "response.output_text.delta", delta: "ok" })), 10));
+    const controller = new AbortController();
+    const response = await executeCodexWs({ ...input(url), signal: controller.signal });
+    await sleep(20); controller.abort();
+    await expect(response.text()).rejects.toMatchObject({ name: "AbortError" });
+  });
+
+  it("times out when no first frame arrives", async () => {
+    const url = await mockWs(() => {});
+    await expect(executeCodexWs({ ...input(url), timeoutMs: 50 })).rejects.toMatchObject({ name: "WsStreamError", framesEmitted: 0, message: expect.stringContaining("first frame timeout") });
+  });
+
+  it("serializes concurrent same-account requests without cross-contamination and reuses the socket", async () => {
+    const seen = [];
+    let upgrades = 0;
+    const url = await mockWs((socket, request) => {
+      upgrades++;
+      socket.on("data", raw => {
+        let text;
+        try { text = demask(raw); } catch { return; }
+        const marker = /"marker":"([^"]+)"/.exec(text);
+        if (!marker) return;
+        seen.push(marker[1]);
+        const id = marker[1];
+        socket.write(frame({ type: "response.output_text.delta", delta: id }));
+        socket.write(frame({ type: "response.completed" }));
+      });
+    });
+    const credentials = { connectionId: "shared-account" };
+    const run = marker => executeCodexWs({ ...input(url), credentials, transformedBody: { model: "gpt", input: "hi", marker } });
+    const [a, b] = await Promise.all([run("A"), run("B")]);
+    const textA = await a.text();
+    const textB = await b.text();
+    expect(upgrades).toBe(1);
+    expect(seen.sort()).toEqual(["A", "B"]);
+    expect(textA).toContain('"delta":"A"');
+    expect(textA).not.toContain('"delta":"B"');
+    expect(textB).toContain('"delta":"B"');
+    expect(textB).not.toContain('"delta":"A"');
   });
 
   it("uses upstream URL and settings default", () => {
