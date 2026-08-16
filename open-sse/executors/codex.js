@@ -301,6 +301,12 @@ export class CodexExecutor extends BaseExecutor {
     // Transform once: WebSocket and exactly-one HTTP fallback must share the same body/context.
     const preparedRequest = this.prepareRequest(args);
     const wsEnabled = process.env.NINEROUTER_CODEX_WS === "1" || args.codexUpstreamWebsocket === true;
+
+    // Retry 200-OK SSE transient errors before exposing a response. The bounded
+    // peek buffers at most 8 KiB, then replays it into the client stream.
+    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
+    const { attempts, delayMs } = resolveRetryEntry(retryConfig[HTTP_STATUS.SERVICE_UNAVAILABLE]);
+
     if (wsEnabled && args.credentials?.accessToken) {
       const httpUrl = this.buildUrl(args.model, args.stream, 0, args.credentials);
       const headers = this.buildHeaders(args.credentials, args.stream, httpUrl, args.model, preparedRequest.ctx);
@@ -312,7 +318,36 @@ export class CodexExecutor extends BaseExecutor {
         monitorCodexTransport("CODEX_WS_ATTEMPT", { transport: "websocket", attempt: 0 });
         const response = await executeCodexWs({ url: httpUrl, headers: wsHeaders, transformedBody, credentials: args.credentials, signal: args.signal, timeoutMs: this.config?.timeoutMs });
         monitorCodexTransport("CODEX_WS_CONNECTED", { transport: "websocket", framesEmitted: 1 });
-        return { response, url: wsUrl(httpUrl), headers: wsHeaders, transformedBody };
+        // WS streams carry the same 200-OK SSE-shaped error events as HTTP (e.g.
+        // usage_limit_reached inside response.failed). Route the WS response through
+        // the same peek classification so capacity/overload rotates accounts instead
+        // of leaking upstream error bytes to the client.
+        const peek = await this._peekSseTransientError(response);
+        if (!peek.matched) {
+          if (peek.replacementBody) {
+            return {
+              response: new Response(peek.replacementBody, {
+                status: response.status,
+                statusText: response.statusText,
+                headers: response.headers,
+              }),
+              url: wsUrl(httpUrl),
+              headers: wsHeaders,
+              transformedBody,
+            };
+          }
+          return { response, url: wsUrl(httpUrl), headers: wsHeaders, transformedBody };
+        }
+        if (peek.accountFallback || attempts <= 0) {
+          const message = peek.message || (peek.accountFallback ? CODEX_MODEL_CAPACITY_MESSAGE : peek.matched);
+          monitorCodexTransport("CODEX_WS_SSE_ERROR", { transport: "websocket", errorName: peek.matched, framesEmitted: null, attempt: 0 });
+          args.log?.warn?.("RETRY", `CODEX | WS SSE ${peek.accountFallback ? "account fallback" : "overloaded"} "${message}"`);
+          return { response: codexSseErrorResponse(HTTP_STATUS.SERVICE_UNAVAILABLE, message), url: wsUrl(httpUrl), headers: wsHeaders, transformedBody };
+        }
+        // Transient-only match (server_is_overloaded/service_unavailable_error) with retries
+        // budgeted: fall through to the HTTP while-loop below, which owns retry/delay.
+        monitorCodexTransport("CODEX_WS_FALLBACK_HTTP", { transport: "http-sse", reason: "ws-sse-transient", errorName: peek.matched, framesEmitted: null, attempt: 0 });
+        args.log?.debug?.("CODEX", `WS fallback to HTTP after transient SSE error: ${peek.matched}`);
       } catch (error) {
         if (error?.name === "AbortError") throw error;
         if (!(error instanceof WsConnectError) && !(error instanceof WsStreamError && error.framesEmitted === 0)) throw error;
@@ -323,10 +358,6 @@ export class CodexExecutor extends BaseExecutor {
 
     monitorCodexTransport("CODEX_HTTP_SSE_SELECTED", { transport: "http-sse" });
 
-    // Retry 200-OK SSE transient errors before exposing a response. The bounded
-    // peek buffers at most 8 KiB, then replays it into the client stream.
-    const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
-    const { attempts, delayMs } = resolveRetryEntry(retryConfig[HTTP_STATUS.SERVICE_UNAVAILABLE]);
     let attempt = 0;
     while (true) {
       const result = await super.execute({ ...args, preparedRequest });

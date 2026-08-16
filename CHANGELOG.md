@@ -1,6 +1,14 @@
 # Unreleased
 ## Unreleased
 
+- fix(codex): WS transport no longer bypasses SSE transient-error classification —
+  200-OK SSE-shaped error events inside WebSocket streams (e.g.
+  `usage_limit_reached` arriving as `response.failed`) are peeked before the
+  response is exposed, so account-capacity errors surface 503 and rotate another
+  Codex account instead of leaking upstream error bytes to the client;
+  transient-only markers (`server_is_overloaded`/`service_unavailable_error`)
+  fall back to the HTTP/SSE retry loop; connect/stream failures keep exactly-one
+  HTTP fallback semantics.
 - feat(codex): optional upstream-only Responses WebSocket transport with HTTP/SSE fallback.
 - feat(codex): opt-in JSONL monitor identifies upstream WebSocket vs HTTP/SSE transport without recording request content or credentials.
 - fix(codex): WS slot lifecycle — per-account socket released only at terminal
