@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import { FORMATS } from "../../open-sse/translator/formats.js";
+import { initState } from "../../open-sse/translator/index.js";
+import { openaiResponsesToOpenAIResponse } from "../../open-sse/translator/response/openai-responses.js";
 import { createSSETransformStreamWithLogger } from "../../open-sse/utils/stream.js";
 
 async function runTransform(input) {
@@ -65,6 +67,33 @@ describe("OpenAI Responses streaming termination", () => {
     expect(output).not.toContain("event: response.failed");
     expect(output).not.toContain("data: null");
     expect(output).toContain("data: [DONE]");
+  });
+
+
+  it("maps prompt_cache_hit_tokens to cached_tokens when input_tokens_details absent", () => {
+    const state = initState(FORMATS.OPENAI_RESPONSES);
+    openaiResponsesToOpenAIResponse(
+      { type: "response.output_text.delta", delta: "hi" },
+      state,
+    );
+    const out = openaiResponsesToOpenAIResponse(
+      {
+        type: "response.completed",
+        response: {
+          id: "resp_test",
+          status: "completed",
+          usage: { input_tokens: 100, output_tokens: 50, prompt_cache_hit_tokens: 40 },
+        },
+      },
+      state,
+    );
+
+    expect(out.usage).toMatchObject({
+      prompt_tokens: 100,
+      completion_tokens: 50,
+      prompt_tokens_details: { cached_tokens: 40 },
+    });
+    expect(openaiResponsesToOpenAIResponse(null, state)).toBeNull();
   });
 
   it("does not add response.failed when a Responses stream sends response.done", async () => {

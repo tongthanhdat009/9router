@@ -113,6 +113,20 @@ describe("commandcode-to-openai — finish", () => {
     const last = chunks[chunks.length - 1];
     expect(last.usage).toEqual({ prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 });
   });
+  it("maps cachedInputTokens to prompt_tokens_details.cached_tokens", () => {
+    const { chunks } = feed([
+      { type: "text-delta", text: "hi" },
+      { type: "finish-step", finishReason: "stop", usage: { inputTokens: 10, outputTokens: 5, totalTokens: 15 } },
+      { type: "finish", totalUsage: { inputTokens: 10, outputTokens: 5, totalTokens: 15, cachedInputTokens: 7 } },
+    ]);
+    const last = chunks[chunks.length - 1];
+    expect(last.usage).toEqual({
+      prompt_tokens: 10,
+      completion_tokens: 5,
+      total_tokens: 15,
+      prompt_tokens_details: { cached_tokens: 7 },
+    });
+  });
 });
 
 describe("commandcode-to-openai — error event", () => {
