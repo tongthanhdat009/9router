@@ -7,6 +7,8 @@ function positiveEnv(name, fallback, integer = false) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
+const MIN_TPS_TIME_SPAN_MS = 1000;
+
 const AFFINITY_MIN_TPS = positiveEnv("AFFINITY_MIN_TPS", 12);
 const AFFINITY_RECOVERY_TPS = Math.max(AFFINITY_MIN_TPS, positiveEnv("AFFINITY_RECOVERY_TPS", 18));
 const AFFINITY_SLOW_STREAK = positiveEnv("AFFINITY_SLOW_STREAK", 2, true);
@@ -73,7 +75,13 @@ export function recordRouteAffinityThroughput({ sessionId, routeScope, route, co
   if (!firstSemanticGenerationAt || streamEndAt <= firstSemanticGenerationAt) return { ignored: "no_semantic_timing" };
   const entry = getRouteAffinity(sessionId, routeScope);
   if (!entry || entry.route !== route) return { ignored: "stale_route" };
-  const tps = completionTokens / ((streamEndAt - firstSemanticGenerationAt) / 1000);
+  // Mux-style honesty floor (mux/src/common/utils/tokens/tps.ts MIN_TPS_TIME_SPAN_MS=1000):
+  // upstream can deliver a whole burst in a few ms (one chunk then EOF); dividing by
+  // that tiny span reports e.g. 119 tokens / 0.043s = 2767 t/s. Flooring the divisor at
+  // 1s makes short/bursty samples report tokens/1s at most, so TPS ramps honestly.
+  const timeSpanMs = streamEndAt - firstSemanticGenerationAt;
+  const timeSpanSec = Math.max(timeSpanMs, MIN_TPS_TIME_SPAN_MS) / 1000;
+  const tps = Math.round(completionTokens / timeSpanSec);
   if (!Number.isFinite(tps) || tps <= 0) return { ignored: "invalid_tps" };
   const priorSlowStreak = entry.slowStreak || 0;
   const priorEscapeNext = Boolean(entry.escapeNext);

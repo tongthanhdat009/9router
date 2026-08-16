@@ -63,4 +63,13 @@ describe("route throughput escape", () => {
     expect(sample("a/model")).toEqual({ ignored: "stale_route" });
     expect(getRouteAffinity("S", "combo")).toMatchObject({ route: "b/model", slowStreak: 0, escapeNext: false });
   });
+
+  it("floors the time span so bursty short samples cannot inflate TPS", () => {
+    bindRouteAffinity("S", "combo", "a/model");
+    // 119 tokens delivered in a 43ms burst: without the 1s floor this would read 2767 t/s.
+    expect(recordRouteAffinityThroughput({ sessionId: "S", routeScope: "combo", route: "a/model", completionTokens: 119, firstSemanticGenerationAt: 1, streamEndAt: 44, estimated: false }))
+      .toMatchObject({ tps: 119, slowStreak: 0, escapeArmed: false });
+    expect(recordRouteAffinityThroughput({ sessionId: "S", routeScope: "combo", route: "a/model", completionTokens: 119, firstSemanticGenerationAt: 1, streamEndAt: 44, estimated: false }))
+      .toMatchObject({ tps: 119, slowStreak: 0, escapeArmed: false });
+  });
 });
