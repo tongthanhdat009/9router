@@ -123,25 +123,42 @@ describe("Codex upstream WebSocket transport", () => {
 
   it("first caller aborting a shared connect does not break later same-account waiters", async () => {
     let upgrades = 0;
-    const url = await mockWs(socket => {
+    let releaseHandshake;
+    const handshakeGate = new Promise(resolve => { releaseHandshake = resolve; });
+    let markUpgradeSeen;
+    const upgradeSeen = new Promise(resolve => { markUpgradeSeen = resolve; });
+    const server = http.createServer();
+    server.on("upgrade", (request, socket) => {
+      const accept = crypto.createHash("sha1").update(`${request.headers["sec-websocket-key"]}258EAFA5-E914-47DA-95CA-C5AB0DC85B11`).digest("base64");
+      sockets.push(socket);
       upgrades++;
-      socket.on("data", raw => {
-        let text;
-        try { text = demask(raw); } catch { return; }
-        const marker = /"marker":"([^\"]+)"/.exec(text);
-        if (!marker) return;
-        socket.write(frame({ type: "response.output_text.delta", delta: marker[1] }));
-        socket.write(frame({ type: "response.completed" }));
+      markUpgradeSeen();
+      // Hold the HTTP 101 until the test has aborted the first caller mid-handshake.
+      handshakeGate.then(() => {
+        socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${accept}\r\n\r\n`);
+        socket.on("data", raw => {
+          let text;
+          try { text = demask(raw); } catch { return; }
+          const marker = /"marker":"([^"]+)"/.exec(text);
+          if (!marker) return;
+          socket.write(frame({ type: "response.output_text.delta", delta: marker[1] }));
+          socket.write(frame({ type: "response.completed" }));
+        });
       });
-    }, 60);
+    });
+    await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+    servers.push(server);
+    const url = `http://127.0.0.1:${server.address().port}/responses`;
     const credentials = { connectionId: "shared-abort-account" };
     const controllerA = new AbortController();
-    // A starts the shared dial then aborts mid-handshake; B rides the same pending connect.
+    // A starts the shared dial; the gate keeps the handshake unresolved.
     const a = executeCodexWs({ ...input(url), credentials, transformedBody: { model: "gpt", input: "hi", marker: "A" }, signal: controllerA.signal });
-    await sleep(10);
+    await upgradeSeen;
+    // B joins the same pending connect while A's handshake is still gated.
+    const b = executeCodexWs({ ...input(url), credentials, transformedBody: { model: "gpt", input: "hi", marker: "B" } });
     controllerA.abort();
     await expect(a).rejects.toMatchObject({ name: "AbortError" });
-    const b = executeCodexWs({ ...input(url), credentials, transformedBody: { model: "gpt", input: "hi", marker: "B" } });
+    releaseHandshake();
     const response = await b;
     expect(await response.text()).toContain('"delta":"B"');
     expect(upgrades).toBe(1);
