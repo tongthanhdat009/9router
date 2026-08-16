@@ -53,14 +53,14 @@ describe("route throughput escape", () => {
     expect(consumeRouteAffinityEscape("S", "combo")).toBeNull();
   });
 
-  it("recovers on healthy TPS and ignores stale or unqualified samples", () => {
+  it("reports samples, ignored reasons, escape arming, and recovery", () => {
     bindRouteAffinity("S", "combo", "a/model");
-    sample("a/model"); sample("a/model");
-    sample("a/model", 180, 10000);
-    expect(getRouteAffinity("S", "combo")).toMatchObject({ slowStreak: 0, escapeNext: false });
+    expect(sample("a/model")).toMatchObject({ tps: 8, slowStreak: 1, escapeArmed: false });
+    expect(sample("a/model")).toMatchObject({ tps: 8, slowStreak: 2, escapeArmed: true });
+    expect(sample("a/model", 180, 10000)).toMatchObject({ tps: 18, slowStreak: 0, recovered: true });
+    expect(recordRouteAffinityThroughput({ sessionId: "S", routeScope: "combo", route: "a/model", completionTokens: 63, firstSemanticGenerationAt: 1, streamEndAt: 8001, estimated: false })).toEqual({ ignored: "insufficient_tokens" });
     bindRouteAffinity("S", "combo", "b/model");
-    sample("a/model");
-    sample("b/model", 63);
+    expect(sample("a/model")).toEqual({ ignored: "stale_route" });
     expect(getRouteAffinity("S", "combo")).toMatchObject({ route: "b/model", slowStreak: 0, escapeNext: false });
   });
 });

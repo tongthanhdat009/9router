@@ -101,8 +101,8 @@ export function createSSEStream(options = {}) {
           }
         }
 
-        // Capture Responses API event name to preserve framing in same-format passthrough
-        if (mode === STREAM_MODE.TRANSLATE && targetFormat === FORMATS.OPENAI_RESPONSES && trimmed.startsWith("event:")) {
+        // Capture Responses API event framing for translated and native passthrough streams.
+        if (trimmed.startsWith("event:")) {
           currentOpenAIResponsesEvent = trimmed.slice(6).trim();
         }
 
@@ -156,7 +156,8 @@ export function createSSEStream(options = {}) {
                 continue;
               }
 
-              if (!firstSemanticGenerationAt && hasSemanticGenerationDelta(parsed)) firstSemanticGenerationAt = Date.now();
+              if (!firstSemanticGenerationAt && (hasSemanticGenerationDelta(parsed) || hasOpenAIResponsesSemanticGenerationDelta(currentOpenAIResponsesEvent, parsed))) firstSemanticGenerationAt = Date.now();
+              currentOpenAIResponsesEvent = null;
               const delta = parsed.choices?.[0]?.delta;
               const content = delta?.content;
               const reasoning = delta?.reasoning_content;

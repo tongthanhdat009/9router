@@ -66,18 +66,25 @@ export function consumeRouteAffinityEscape(sessionId, routeScope) {
 }
 
 export function recordRouteAffinityThroughput({ sessionId, routeScope, route, completionTokens, firstSemanticGenerationAt, streamEndAt, estimated }) {
-  if (!sessionId || !route || estimated || completionTokens < AFFINITY_MIN_SAMPLE_TOKENS || !firstSemanticGenerationAt || streamEndAt <= firstSemanticGenerationAt) return;
+  if (!sessionId) return { ignored: "no_session" };
+  if (!route) return { ignored: "no_route" };
+  if (estimated) return { ignored: "estimated_usage" };
+  if (!Number.isFinite(completionTokens) || completionTokens < AFFINITY_MIN_SAMPLE_TOKENS) return { ignored: "insufficient_tokens" };
+  if (!firstSemanticGenerationAt || streamEndAt <= firstSemanticGenerationAt) return { ignored: "no_semantic_timing" };
   const entry = getRouteAffinity(sessionId, routeScope);
-  if (!entry || entry.route !== route) return;
+  if (!entry || entry.route !== route) return { ignored: "stale_route" };
   const tps = completionTokens / ((streamEndAt - firstSemanticGenerationAt) / 1000);
-  if (!Number.isFinite(tps) || tps <= 0) return;
+  if (!Number.isFinite(tps) || tps <= 0) return { ignored: "invalid_tps" };
+  const priorSlowStreak = entry.slowStreak || 0;
+  const priorEscapeNext = Boolean(entry.escapeNext);
   if (tps < AFFINITY_MIN_TPS) {
-    entry.slowStreak = (entry.slowStreak || 0) + 1;
+    entry.slowStreak = priorSlowStreak + 1;
     if (entry.slowStreak >= AFFINITY_SLOW_STREAK) entry.escapeNext = true;
   } else if (tps >= AFFINITY_RECOVERY_TPS) {
     entry.slowStreak = 0;
     entry.escapeNext = false;
   }
+  return { tps, completionTokens, slowStreak: entry.slowStreak || 0, recovered: priorSlowStreak > 0 && entry.slowStreak === 0, escapeArmed: !priorEscapeNext && Boolean(entry.escapeNext) };
 }
 
 export function invalidateRouteAffinity(sessionId, routeScope) {

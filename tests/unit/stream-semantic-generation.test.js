@@ -42,6 +42,35 @@ describe("OpenAI Responses same-format semantic generation", () => {
     expect(hasOpenAIResponsesSemanticGenerationDelta(null, {})).toBe(false);
   });
 
+  it("captures firstSemanticGenerationAt in native Responses passthrough", async () => {
+    const encoder = new TextEncoder();
+    let completed = null;
+    const before = Date.now();
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode([
+          "event: response.output_text.delta",
+          `data: ${JSON.stringify({ type: "response.output_text.delta", delta: "partial" })}`,
+          "",
+          "data: [DONE]",
+          "",
+        ].join("\n")));
+        controller.close();
+      },
+    }).pipeThrough(createSSEStream({
+      mode: "passthrough",
+      provider: "codex",
+      model: "gpt-5.5",
+      onStreamComplete: (content, usage, ttftAt, firstSemanticGenerationAt) => { completed = { firstSemanticGenerationAt }; },
+    }));
+
+    const reader = stream.getReader();
+    while (!(await reader.read()).done) { /* drain */ }
+
+    expect(completed?.firstSemanticGenerationAt).toBeGreaterThanOrEqual(before);
+    expect(completed?.firstSemanticGenerationAt).toBeLessThanOrEqual(Date.now());
+  });
+
   it("captures firstSemanticGenerationAt in same-format Responses passthrough and reports it via onStreamComplete", async () => {
     const encoder = new TextEncoder();
     const input = [

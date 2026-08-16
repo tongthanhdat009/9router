@@ -185,11 +185,13 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
       : null;
     if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
     const escapedRoute = preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+    if (escapedRoute) logAffinity("affinity.throughput.escape_consumed", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, route: escapedRoute });
     const effectivePreferredRoute = escapedRoute ? null : preferredRoute;
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
     diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
     diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
+    let demotionSelectedLogged = false;
     return finishOuter(handleComboChat({
       body,
       models: augmentedModels,
@@ -204,6 +206,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
             const r = getRouteAffinity(affinitySessionId, modelStr);
             if (r?.route === effectivePreferredRoute) logAffinity("affinity.invariant_violation", { code: "AFFINITY_ROUTE_HIT_ROTATED_COMBO", requestId: diagnostics.requestId, preferredRoute: effectivePreferredRoute, selected: m });
           }
+          if (escapedRoute && m !== escapedRoute && !demotionSelectedLogged) { demotionSelectedLogged = true; logAffinity("affinity.throughput.demotion_selected", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, demotedRoute: escapedRoute, selected: m }); }
           const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId, {
             routeAffinityHit: Boolean(effectivePreferredRoute) && m === effectivePreferredRoute,
             routeCompletion: { sessionId: affinitySessionId, routeScope: modelStr, route: m },
@@ -298,11 +301,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         : null;
       if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
       const escapedRoute = preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+      if (escapedRoute) logAffinity("affinity.throughput.escape_consumed", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, route: escapedRoute });
       const effectivePreferredRoute = escapedRoute ? null : preferredRoute;
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
       diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
       diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
+      let demotionSelectedLogged = false;
       // handleSingleModelChat has no finishOuter of its own — outer handleChat
       // lifecycle (finishOuter/stream hooks) owns finalization for this promise.
       return handleComboChat({
@@ -314,6 +319,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             const routePrior = routeAffinity?.route || null;
             if (diagnostics.selection.provider && `${diagnostics.selection.provider}/${diagnostics.selection.model}` !== m) { diagnostics.fallback.routeFallbackCount++; diagnostics.fallback.lastReason = "route_fallback"; diagnostics.selection.routeSource = "combo_fallback"; }
             if (effectivePreferredRoute && m !== effectivePreferredRoute && getRouteAffinity(affinitySessionId, modelStr)?.route === effectivePreferredRoute) logAffinity("affinity.invariant_violation", { code: "AFFINITY_ROUTE_HIT_ROTATED_COMBO", requestId: diagnostics.requestId, preferredRoute: effectivePreferredRoute, selected: m });
+            if (escapedRoute && m !== escapedRoute && !demotionSelectedLogged) { demotionSelectedLogged = true; logAffinity("affinity.throughput.demotion_selected", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, demotedRoute: escapedRoute, selected: m }); }
             const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId, {
               routeAffinityHit: Boolean(effectivePreferredRoute) && m === effectivePreferredRoute,
               routeCompletion: { sessionId: affinitySessionId, routeScope: modelStr, route: m },
@@ -445,7 +451,15 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       finalizeAffinityRequest,
       onRouteAffinityStreamComplete: ({ usage, firstSemanticGenerationAt, streamEndAt }) => {
         const route = affinityMeta?.routeCompletion;
-        if (route) recordRouteAffinityThroughput({ ...route, completionTokens: usage?.completion_tokens, firstSemanticGenerationAt, streamEndAt, estimated: usage?.estimated });
+        if (!route) return;
+        const throughput = recordRouteAffinityThroughput({ ...route, completionTokens: usage?.completion_tokens, firstSemanticGenerationAt, streamEndAt, estimated: usage?.estimated });
+        const details = { requestId: diagnostics?.requestId, sessionHash: diagnostics?.sessionHash, routeScope: route.routeScope, route: route.route, ...throughput };
+        if (throughput?.ignored) logAffinity("affinity.throughput.ignored", details);
+        else {
+          logAffinity("affinity.throughput.sample", details);
+          if (throughput.recovered) logAffinity("affinity.throughput.recovered", details);
+          if (throughput.escapeArmed) logAffinity("affinity.throughput.escape_armed", details);
+        }
       },
       affinity: {
         sessionHash: affinitySessionId ? sha16(affinitySessionId) : null,
