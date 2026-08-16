@@ -43,8 +43,8 @@ export class OpenCodeExecutor extends BaseExecutor {
    * Request-scoped context (threaded by base.execute): conversation-stable
    * session id computed once per logical request, stable across retries.
    */
-  deriveRequestContext(transformedBody, credentials, _requestId) {
-    return { sessionId: resolveOpencodeSession(transformedBody, credentials) };
+  deriveRequestContext(body, credentials) {
+    return { sessionId: resolveOpencodeSession(body, credentials) };
   }
 
   buildUrl(model) {

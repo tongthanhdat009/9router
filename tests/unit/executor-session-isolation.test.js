@@ -46,18 +46,39 @@ describe("grok-cli — request-scoped identity across retries", () => {
     expect(h[0]["x-grok-agent-id"]).toBe("dev-1");
   });
 
-  it("identical-body concurrent requests → distinct reqIds and fallback UUID sessions", async () => {
+  it("interleaved requests keep each retry pass in its own ctx", async () => {
+    const ex = new GrokCliExecutor();
+    let releaseA;
+    const aFirst = new Promise((resolve) => { releaseA = resolve; });
+    fetchMock
+      .mockImplementationOnce(() => aFirst)
+      .mockResolvedValueOnce(res(200))
+      .mockResolvedValueOnce(res(502))
+      .mockResolvedValueOnce(res(200));
+    const body = (sessionId) => ({ model: "grok-build", prompt_cache_key: sessionId, input: [{ type: "message", role: "user", content: "hi" }], stream: true });
+    const requestA = ex.execute({ model: "grok-build", body: body("session-A"), stream: true, credentials: { apiKey: "k" }, requestId: "req-A" });
+    await Promise.resolve();
+    await ex.execute({ model: "grok-build", body: body("session-B"), stream: true, credentials: { apiKey: "k" }, requestId: "req-B" });
+    releaseA(res(502));
+    await requestA;
+    const h = capturedHeaders();
+    expect(h[0]["x-grok-session-id"]).toBe("session-A");
+    expect(h[1]["x-grok-session-id"]).toBe("session-B");
+    expect(h[2]["x-grok-session-id"]).toBe("session-A");
+    expect(h[2]["x-grok-req-id"]).toBe("req-A");
+  });
+
+  it("identical-body concurrent fallback requests mint distinct session and req ids", async () => {
     const ex = new GrokCliExecutor();
     fetchMock.mockResolvedValue(res(200));
     const body = () => ({ model: "grok-build", input: [{ type: "message", role: "user", content: "hi" }], stream: true });
     await Promise.all([
-      ex.execute({ model: "grok-build", body: body(), stream: true, credentials: { ...creds, providerSpecificData: { deviceId: "dev-1" } }, requestId: "req-A" }),
-      ex.execute({ model: "grok-build", body: body(), stream: true, credentials: { ...creds, providerSpecificData: { deviceId: "dev-1" } }, requestId: "req-B" }),
+      ex.execute({ model: "grok-build", body: body(), stream: true, credentials: { apiKey: "k" } }),
+      ex.execute({ model: "grok-build", body: body(), stream: true, credentials: { apiKey: "k" } }),
     ]);
     const h = capturedHeaders();
+    expect(h[0]["x-grok-session-id"]).not.toBe(h[1]["x-grok-session-id"]);
     expect(h[0]["x-grok-req-id"]).not.toBe(h[1]["x-grok-req-id"]);
-    // No stable session in body/headers → connectionId fallback differs? No — same creds → same fallback.
-    // Distinctness requirement applies to fallback UUID sessions only; same creds share connectionId by design.
   });
 
   it("fallback UUID session minted once, stable across retries (same logical request)", async () => {
@@ -121,14 +142,14 @@ describe("base — ctx threading contract", () => {
   it("deriveRequestContext called once per execute entry, ctx reaches buildHeaders", async () => {
     const calls = [];
     class Probe extends BaseExecutor {
-      deriveRequestContext(tb, cr, rid, raw) { calls.push({ rid, raw: !!raw }); return { tag: `ctx-${rid}` }; }
+      deriveRequestContext(tb, cr, { requestId }) { calls.push({ requestId }); return { tag: `ctx-${requestId}` }; }
       buildHeaders(cr, st, url, model, ctx) { this._seen = ctx; return { "x-probe": ctx?.tag || "none" }; }
     }
     const ex = new Probe("test", { baseUrl: "https://x/api", retry: { 502: { attempts: 1, delayMs: 0 } } });
     fetchMock.mockResolvedValueOnce(res(502)).mockResolvedValue(res(200));
     await ex.execute({ model: "m", body: { a: 1 }, stream: false, credentials: creds, requestId: "req-Z" });
     expect(calls.length).toBe(1); // once per execute entry despite retry
-    expect(calls[0].rid).toBe("req-Z");
+    expect(calls[0].requestId).toBe("req-Z");
     const h = capturedHeaders();
     expect(h[0]["x-probe"]).toBe("ctx-req-Z");
     expect(h[1]["x-probe"]).toBe("ctx-req-Z");

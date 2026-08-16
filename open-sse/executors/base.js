@@ -105,14 +105,9 @@ export class BaseExecutor {
 
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
-    // Snapshot pre-transform fields before transformRequest mutates/strips the body
-    // in place (grok-cli session ids live in fields its allowlist deletes).
-    const rawBodySnapshot = { ...body };
     const transformedBody = this.transformRequest(model, body, stream, credentials);
-    // Request-scoped context: identity derived ONCE per execute() entry (stable across
-    // URL retries + SSE/token-refresh re-entries). Optional hook — providers without
-    // deriveRequestContext get {} and ignore it.
-    const ctx = this.deriveRequestContext?.(transformedBody, credentials, requestId, rawBodySnapshot) ?? {};
+    // Request-scoped context: identity derived once per execute entry; URL retries reuse it.
+    const ctx = this.deriveRequestContext?.(transformedBody, credentials, { requestId }) ?? {};
     const bodyStr = JSON.stringify(transformedBody);
 
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`

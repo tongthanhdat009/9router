@@ -216,8 +216,8 @@ export class CodexExecutor extends BaseExecutor {
    * Request-scoped context (threaded by base.execute): conversation-stable
    * session id computed once per logical request, stable across retries.
    */
-  deriveRequestContext(transformedBody, credentials, _requestId) {
-    return { sessionId: resolveCacheSessionId(transformedBody, credentials) };
+  deriveRequestContext(body, credentials, { requestId: _requestId }) {
+    return { sessionId: resolveCacheSessionId(body, credentials) };
   }
 
   /**
