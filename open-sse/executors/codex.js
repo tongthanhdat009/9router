@@ -216,8 +216,12 @@ export class CodexExecutor extends BaseExecutor {
    * Request-scoped context (threaded by base.execute): conversation-stable
    * session id computed once per logical request, stable across retries.
    */
-  deriveRequestContext(body, credentials, { requestId: _requestId }) {
-    return { sessionId: resolveCacheSessionId(body, credentials) };
+  deriveRequestContext(body, credentials, { requestId: _requestId }, rawBody = null) {
+    // Session must resolve from the RAW body: transformRequest's allowlist strip
+    // deletes session_id/conversation_id/metadata that resolveCacheSessionId reads,
+    // while prompt_cache_key injection (still in transformRequest, raw-derived)
+    // must match the session_id header.
+    return { sessionId: resolveCacheSessionId(rawBody || body, credentials) };
   }
 
   /**

@@ -83,7 +83,7 @@ describe("GrokCliExecutor", () => {
     const ctx = executor.deriveRequestContext(
       { model: "grok-4.5" },
       { connectionId: "conn-x" },
-      "req-xyz"
+      { requestId: "req-xyz" }
     );
     // deriveRequestContext owns per-request identity now — patch deterministic bits
     ctx.sessionId = "sess-abc";
@@ -123,7 +123,7 @@ describe("GrokCliExecutor", () => {
     const ctx = executor.deriveRequestContext(
       { model: "grok-4.5" },
       { connectionId: "conn-top" },
-      "req-top"
+      { requestId: "req-top" }
     );
     ctx.sessionId = "sess-top";
 

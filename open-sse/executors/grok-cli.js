@@ -14,6 +14,7 @@ import {
 } from "../config/grokCli.js";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { getConsistentMachineId } from "../shared/machineId.js";
 
 // Server-generated item id prefixes that /responses cannot resolve when store=false
 const SERVER_ID_PATTERN = /^(rs|fc|resp|msg)_/;
@@ -339,6 +340,7 @@ function resolveEffortFromModel(modelId) {
 export class GrokCliExecutor extends BaseExecutor {
   constructor() {
     super("grok-cli", PROVIDERS["grok-cli"]);
+    this._agentId = null;
   }
 
   buildUrl() {
@@ -354,14 +356,25 @@ export class GrokCliExecutor extends BaseExecutor {
     return shouldRefreshCredentials("grok-cli", credentials);
   }
 
-  deriveRequestContext(body, credentials, { requestId }) {
-    const sessionId = resolveGrokCliSessionId(credentials, body) || crypto.randomUUID();
+  deriveRequestContext(transformedBody, credentials, { requestId } = {}, rawBody = null) {
+    // Session resolves from the RAW body: transformRequest's allowlist strip
+    // deletes session_id/conversation_id, which the resolver would otherwise read.
+    const sessionId =
+      resolveGrokCliSessionId(credentials, rawBody || transformedBody) ||
+      credentials?.connectionId ||
+      crypto.randomUUID();
     return {
       sessionId,
       reqId: requestId || crypto.randomUUID(),
-      agentId: credentials?.providerSpecificData?.deviceId || credentials?.providerSpecificData?.agentId || null,
-      turnIdx: resolveGrokCliTurnIdx(sessionId, body.input, body),
-      model: body.model || null,
+      agentId:
+        credentials?.providerSpecificData?.deviceId ||
+        credentials?.providerSpecificData?.agentId ||
+        this._agentId ||
+        null,
+      // Input is normalized by transformRequest (runs first in base.execute);
+      // requestKey = body object keeps retry turns stable via WeakMap.
+      turnIdx: resolveGrokCliTurnIdx(sessionId, transformedBody?.input, transformedBody),
+      model: transformedBody?.model || null,
     };
   }
 
@@ -520,6 +533,29 @@ export class GrokCliExecutor extends BaseExecutor {
     return body;
   }
 
+  async execute(args) {
+    // Lazy-resolve stable agent id once per process (no per-credential deviceId).
+    if (!this._agentId && !args.credentials?.providerSpecificData?.deviceId) {
+      try {
+        const mid = await getConsistentMachineId("grok-cli-agent");
+        // Format as UUID-ish for header aesthetics
+        this._agentId = [
+          mid.slice(0, 8),
+          mid.slice(8, 12),
+          "5" + mid.slice(13, 16),
+          "a" + mid.slice(17, 20),
+          mid.slice(0, 12).padEnd(12, "0"),
+        ].join("-");
+      } catch {
+        this._agentId = crypto.randomUUID();
+      }
+    }
+    if (args.credentials?.providerSpecificData?.deviceId) {
+      this._agentId = args.credentials.providerSpecificData.deviceId;
+    }
+
+    return super.execute(args);
+  }
 }
 
 export default GrokCliExecutor;
