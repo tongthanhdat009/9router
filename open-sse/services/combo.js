@@ -285,7 +285,7 @@ function isCodexSseTransientError(modelStr, errorText) {
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, onSelection = null }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, deprioritizedRoute = null, onSelection = null }) {
   // Preferred affinity deliberately bypasses rotation; cursor remains unchanged.
   let rotatedModels = preferredRoute && models.includes(preferredRoute)
     ? [preferredRoute, ...models.filter((model) => model !== preferredRoute)]
@@ -311,6 +311,10 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
         rotatedModels = reordered;
       }
     }
+  }
+
+  if (deprioritizedRoute && rotatedModels.length > 1 && rotatedModels.includes(deprioritizedRoute)) {
+    rotatedModels = [...rotatedModels.filter((model) => model !== deprioritizedRoute), deprioritizedRoute];
   }
   
   let lastError = null;

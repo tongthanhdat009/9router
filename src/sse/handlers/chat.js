@@ -23,7 +23,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { resolveClientAffinitySessionId, sha16 } from "open-sse/utils/sessionManager.js";
-import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, getRouteAffinity, bindRouteAffinity, invalidateRouteAffinity } from "../services/sessionAffinity.js";
+import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, getRouteAffinity, bindRouteAffinity, consumeRouteAffinityEscape, recordRouteAffinityThroughput, invalidateRouteAffinity } from "../services/sessionAffinity.js";
 import { logAffinity } from "@/lib/affinityLogger.js";
 
 /**
@@ -184,9 +184,11 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
       ? routeAffinity.route
       : null;
     if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
+    const escapedRoute = preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+    const effectivePreferredRoute = escapedRoute ? null : preferredRoute;
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-    diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(preferredRoute), missReason: affinitySessionId ? (preferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
-    diagnostics.selection.routeSource = preferredRoute ? "route_affinity" : "combo_initial";
+    diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
+    diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
     diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
     return finishOuter(handleComboChat({
       body,
@@ -198,12 +200,13 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
           // owned by the account loop inside handleSingleModelChat.
           const routePrior = routeAffinity?.route || null;
           if (diagnostics.selection.provider && `${diagnostics.selection.provider}/${diagnostics.selection.model}` !== m) { diagnostics.fallback.routeFallbackCount++; diagnostics.fallback.lastReason = "route_fallback"; diagnostics.selection.routeSource = "combo_fallback"; }
-          if (preferredRoute && m !== preferredRoute) {
+          if (effectivePreferredRoute && m !== effectivePreferredRoute) {
             const r = getRouteAffinity(affinitySessionId, modelStr);
-            if (r?.route === preferredRoute) logAffinity("affinity.invariant_violation", { code: "AFFINITY_ROUTE_HIT_ROTATED_COMBO", requestId: diagnostics.requestId, preferredRoute, selected: m });
+            if (r?.route === effectivePreferredRoute) logAffinity("affinity.invariant_violation", { code: "AFFINITY_ROUTE_HIT_ROTATED_COMBO", requestId: diagnostics.requestId, preferredRoute: effectivePreferredRoute, selected: m });
           }
           const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId, {
-            routeAffinityHit: Boolean(preferredRoute) && m === preferredRoute,
+            routeAffinityHit: Boolean(effectivePreferredRoute) && m === effectivePreferredRoute,
+            routeCompletion: { sessionId: affinitySessionId, routeScope: modelStr, route: m },
             routeSwitch: Boolean(routePrior && routePrior !== m),
             rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
           }, diagnostics, finalizeAffinityRequest);
@@ -211,7 +214,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
             if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
             bindRouteAffinity(affinitySessionId, modelStr, m);
           }
-          else if (m === preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
+          else if (m === effectivePreferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
           return response;
         },
         adapterAdded
@@ -220,7 +223,8 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
       comboName: modelStr,
       comboStrategy,
       comboStickyLimit,
-      preferredRoute,
+      preferredRoute: effectivePreferredRoute,
+      deprioritizedRoute: escapedRoute,
     }));
   }
 
@@ -293,9 +297,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         ? routeAffinity.route
         : null;
       if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
+      const escapedRoute = preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+      const effectivePreferredRoute = escapedRoute ? null : preferredRoute;
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
-      diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(preferredRoute), missReason: affinitySessionId ? (preferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
-      diagnostics.selection.routeSource = preferredRoute ? "route_affinity" : "combo_initial";
+      diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
+      diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
       diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
       // handleSingleModelChat has no finishOuter of its own — outer handleChat
       // lifecycle (finishOuter/stream hooks) owns finalization for this promise.
@@ -307,9 +313,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           async (b, m) => {
             const routePrior = routeAffinity?.route || null;
             if (diagnostics.selection.provider && `${diagnostics.selection.provider}/${diagnostics.selection.model}` !== m) { diagnostics.fallback.routeFallbackCount++; diagnostics.fallback.lastReason = "route_fallback"; diagnostics.selection.routeSource = "combo_fallback"; }
-            if (preferredRoute && m !== preferredRoute && getRouteAffinity(affinitySessionId, modelStr)?.route === preferredRoute) logAffinity("affinity.invariant_violation", { code: "AFFINITY_ROUTE_HIT_ROTATED_COMBO", requestId: diagnostics.requestId, preferredRoute, selected: m });
+            if (effectivePreferredRoute && m !== effectivePreferredRoute && getRouteAffinity(affinitySessionId, modelStr)?.route === effectivePreferredRoute) logAffinity("affinity.invariant_violation", { code: "AFFINITY_ROUTE_HIT_ROTATED_COMBO", requestId: diagnostics.requestId, preferredRoute: effectivePreferredRoute, selected: m });
             const response = await handleSingleModelChat(b, m, clientRawRequest, request, apiKey, affinitySessionId, {
-              routeAffinityHit: Boolean(preferredRoute) && m === preferredRoute,
+              routeAffinityHit: Boolean(effectivePreferredRoute) && m === effectivePreferredRoute,
+              routeCompletion: { sessionId: affinitySessionId, routeScope: modelStr, route: m },
               routeSwitch: Boolean(routePrior && routePrior !== m),
               rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
             }, diagnostics, finalizeAffinityRequest);
@@ -317,7 +324,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
               bindRouteAffinity(affinitySessionId, modelStr, m);
             }
-            else if (m === preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
+            else if (m === effectivePreferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
             return response;
           },
           adapterAdded
@@ -326,7 +333,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         comboName: modelStr,
         comboStrategy,
         comboStickyLimit,
-        preferredRoute,
+        preferredRoute: effectivePreferredRoute,
+        deprioritizedRoute: escapedRoute,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });
@@ -435,6 +443,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       requestId: diagnostics?.requestId,
       affinityDiagnostics: diagnostics,
       finalizeAffinityRequest,
+      onRouteAffinityStreamComplete: ({ usage, firstSemanticGenerationAt, streamEndAt }) => {
+        const route = affinityMeta?.routeCompletion;
+        if (route) recordRouteAffinityThroughput({ ...route, completionTokens: usage?.completion_tokens, firstSemanticGenerationAt, streamEndAt, estimated: usage?.estimated });
+      },
       affinity: {
         sessionHash: affinitySessionId ? sha16(affinitySessionId) : null,
         routeAffinityHit: false,

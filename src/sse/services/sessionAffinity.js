@@ -2,6 +2,16 @@ const TTL_MS = 30 * 60 * 1000;
 const ROUTE_LIMIT = 4096;
 const ACCOUNT_LIMIT = 8192;
 
+function positiveEnv(name, fallback, integer = false) {
+  const value = integer ? Number.parseInt(process.env[name] || String(fallback), 10) : Number(process.env[name] || fallback);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+const AFFINITY_MIN_TPS = positiveEnv("AFFINITY_MIN_TPS", 12);
+const AFFINITY_RECOVERY_TPS = Math.max(AFFINITY_MIN_TPS, positiveEnv("AFFINITY_RECOVERY_TPS", 18));
+const AFFINITY_SLOW_STREAK = positiveEnv("AFFINITY_SLOW_STREAK", 2, true);
+export const AFFINITY_MIN_SAMPLE_TOKENS = positiveEnv("AFFINITY_MIN_SAMPLE_TOKENS", 64, true);
+
 function key(...parts) {
   return parts.join("\0");
 }
@@ -40,7 +50,34 @@ export function getRouteAffinity(sessionId, routeScope) {
 }
 
 export function bindRouteAffinity(sessionId, routeScope, route) {
-  if (sessionId && route) routes.bind(key(sessionId, routeScope), { route });
+  if (!sessionId || !route) return;
+  const entryKey = key(sessionId, routeScope);
+  const existing = routes.get(entryKey);
+  routes.bind(entryKey, existing?.route === route
+    ? { route, slowStreak: existing.slowStreak || 0, escapeNext: Boolean(existing.escapeNext) }
+    : { route, slowStreak: 0, escapeNext: false });
+}
+
+export function consumeRouteAffinityEscape(sessionId, routeScope) {
+  const entry = getRouteAffinity(sessionId, routeScope);
+  if (!entry?.escapeNext) return null;
+  entry.escapeNext = false;
+  return { route: entry.route };
+}
+
+export function recordRouteAffinityThroughput({ sessionId, routeScope, route, completionTokens, firstSemanticGenerationAt, streamEndAt, estimated }) {
+  if (!sessionId || !route || estimated || completionTokens < AFFINITY_MIN_SAMPLE_TOKENS || !firstSemanticGenerationAt || streamEndAt <= firstSemanticGenerationAt) return;
+  const entry = getRouteAffinity(sessionId, routeScope);
+  if (!entry || entry.route !== route) return;
+  const tps = completionTokens / ((streamEndAt - firstSemanticGenerationAt) / 1000);
+  if (!Number.isFinite(tps) || tps <= 0) return;
+  if (tps < AFFINITY_MIN_TPS) {
+    entry.slowStreak = (entry.slowStreak || 0) + 1;
+    if (entry.slowStreak >= AFFINITY_SLOW_STREAK) entry.escapeNext = true;
+  } else if (tps >= AFFINITY_RECOVERY_TPS) {
+    entry.slowStreak = 0;
+    entry.escapeNext = false;
+  }
 }
 
 export function invalidateRouteAffinity(sessionId, routeScope) {

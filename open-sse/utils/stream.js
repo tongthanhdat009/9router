@@ -2,7 +2,7 @@ import { translateResponse, initState } from "../translator/index.js";
 import { FORMATS } from "../translator/formats.js";
 import { trackPendingRequest, appendRequestLog } from "@/lib/usageDb.js";
 import { extractUsage, mergeUsage, hasValidUsage, estimateUsage, logUsage, addBufferToUsage, filterUsageForFormat, COLORS } from "./usageTracking.js";
-import { parseSSELine, hasValuableContent, fixInvalidId, formatSSE } from "./streamHelpers.js";
+import { parseSSELine, hasValuableContent, hasSemanticGenerationDelta, fixInvalidId, formatSSE } from "./streamHelpers.js";
 import { getOpenAIResponsesEventName, isOpenAIResponsesTerminalEvent, formatIncompleteOpenAIResponsesStreamFailure } from "./responsesStreamHelpers.js";
 import { dbg, isDebugEnabled } from "./debugLog.js";
 
@@ -67,6 +67,7 @@ export function createSSEStream(options = {}) {
   let accumulatedContent;
   let accumulatedThinking;
   let ttftAt = null;
+  let firstSemanticGenerationAt = null;
   let sseLineCount = 0;
   let sseEmittedCount = 0;
   const eventTypeCounts = {};
@@ -155,6 +156,7 @@ export function createSSEStream(options = {}) {
                 continue;
               }
 
+              if (!firstSemanticGenerationAt && hasSemanticGenerationDelta(parsed)) firstSemanticGenerationAt = Date.now();
               const delta = parsed.choices?.[0]?.delta;
               const content = delta?.content;
               const reasoning = delta?.reasoning_content;
@@ -318,6 +320,8 @@ export function createSSEStream(options = {}) {
               continue; // Skip this empty chunk
             }
 
+            if (!firstSemanticGenerationAt && hasSemanticGenerationDelta(item)) firstSemanticGenerationAt = Date.now();
+
             // Inject estimated usage if finish chunk has no valid usage
             const isFinishChunk = item.type === "message_delta" || item.choices?.[0]?.finish_reason;
             if (state.finishReason && isFinishChunk && !hasValidUsage(item.usage) && totalContentLength > 0) {
@@ -380,7 +384,7 @@ export function createSSEStream(options = {}) {
           }
 
           if (onStreamComplete) {
-            onStreamComplete(ACCUMULATE_CONTENT ? { content: accumulatedContent, thinking: accumulatedThinking } : undefined, usage, ttftAt);
+            onStreamComplete(ACCUMULATE_CONTENT ? { content: accumulatedContent, thinking: accumulatedThinking } : undefined, usage, ttftAt, firstSemanticGenerationAt);
           }
           return;
         }
@@ -453,7 +457,7 @@ export function createSSEStream(options = {}) {
         }
         
         if (onStreamComplete) {
-          onStreamComplete(ACCUMULATE_CONTENT ? { content: accumulatedContent, thinking: accumulatedThinking } : undefined, state?.usage, ttftAt);
+          onStreamComplete(ACCUMULATE_CONTENT ? { content: accumulatedContent, thinking: accumulatedThinking } : undefined, state?.usage, ttftAt, firstSemanticGenerationAt);
         }
       } catch (error) {
         console.log("Error in flush:", error);

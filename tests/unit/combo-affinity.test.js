@@ -42,4 +42,22 @@ describe("combo route affinity", () => {
     await run("a/x");
     expect(selected).toEqual([{ rotationUsed: true }, { rotationUsed: false }]);
   });
+
+  it("demotes only the escaped exact route after one normal rotation", async () => {
+    const calls = [];
+    await handleComboChat({
+      body: { messages: [{ role: "user", content: "q" }] },
+      models: ["a/sonnet", "a/opus", "b/gpt"], comboName: "combo", comboStrategy: "fallback",
+      deprioritizedRoute: "a/sonnet", log,
+      handleSingleModel: async (_body, model) => { calls.push(model); return new Response("fail", { status: 503 }); },
+    });
+    expect(calls).toEqual(["a/opus", "b/gpt", "a/sonnet"]);
+  });
+
+  it("keeps singleton route usable when escaped", async () => {
+    const calls = [];
+    await handleComboChat({ body: {}, models: ["a/only"], deprioritizedRoute: "a/only", log,
+      handleSingleModel: async (_body, model) => { calls.push(model); return new Response("ok", { status: 200 }); } });
+    expect(calls).toEqual(["a/only"]);
+  });
 });

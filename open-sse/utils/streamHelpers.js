@@ -61,6 +61,20 @@ export function hasValuableContent(chunk, format) {
   return true; // Other formats: keep all chunks
 }
 
+export function hasSemanticGenerationDelta(chunk) {
+  const delta = chunk?.choices?.[0]?.delta;
+  if (delta) {
+    if (typeof delta.content === "string" && delta.content.length > 0) return true;
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) return true;
+    if (Array.isArray(delta.tool_calls) && delta.tool_calls.some((call) =>
+      [call?.id, call?.function?.name, call?.function?.arguments].some((value) => typeof value === "string" && value.length > 0))) return true;
+  }
+  if (typeof chunk?.delta?.text === "string" && chunk.delta.text.length > 0) return true;
+  if (typeof chunk?.delta?.thinking === "string" && chunk.delta.thinking.length > 0) return true;
+  if (typeof chunk?.delta?.partial_json === "string" && chunk.delta.partial_json.length > 0) return true;
+  return chunk?.candidates?.[0]?.content?.parts?.some((part) => typeof part?.text === "string" && part.text.length > 0) || false;
+}
+
 // Fix invalid id (generic or too short)
 export function fixInvalidId(parsed) {
   if (parsed.id && (parsed.id === "chat" || parsed.id === "completion" || parsed.id.length < 8)) {
