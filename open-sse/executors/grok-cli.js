@@ -437,6 +437,16 @@ export class GrokCliExecutor extends BaseExecutor {
     // Session/req/turn identity now lives in deriveRequestContext (request-scoped,
     // threaded by base.execute) — no instance fields, no re-derivation here.
 
+    // Persist session identity into prompt_cache_key (allowlisted, survives the
+    // strip below) BEFORE the allowlist filter deletes session_id/conversation_id.
+    // chatCore.js:419 token-refresh retry re-runs execute() with the already-stripped
+    // body; without this, a session whose identity lived only in body.session_id would
+    // re-derive a fresh UUID on pass 2. Mirrors codex.js prompt_cache_key injection.
+    if (!body.prompt_cache_key) {
+      const persistSessionId = resolveGrokCliSessionId(credentials, body);
+      if (persistSessionId) body.prompt_cache_key = persistSessionId;
+    }
+
     // Normalize Responses input
     const normalized = normalizeResponsesInput(body.input);
     if (normalized) body.input = normalized;

@@ -46,6 +46,24 @@ describe("grok-cli — request-scoped identity across retries", () => {
     expect(h[0]["x-grok-agent-id"]).toBe("dev-1");
   });
 
+  it("token-refresh re-entry keeps session from body.session_id (allowlist strip)", async () => {
+    const ex = new GrokCliExecutor();
+    // No prompt_cache_key, no connectionId, no rawHeaders → identity lives only in
+    // body.session_id, which the allowlist filter would delete on pass 1. chatCore.js
+    // re-runs execute() with the SAME stripped body on token refresh (chatCore.js:419),
+    // so pass 2 must still resolve the original session.
+    const body = { model: "grok-build", session_id: "client-sess", input: [{ type: "message", role: "user", content: "hi" }], stream: true };
+    fetchMock.mockResolvedValue(res(200));
+    await ex.execute({ model: "grok-build", body, stream: true, credentials: { apiKey: "k" }, requestId: "r1" });
+    await ex.execute({ model: "grok-build", body, stream: true, credentials: { apiKey: "k" }, requestId: "r1" });
+    const h = capturedHeaders();
+    expect(h).toHaveLength(2);
+    expect(h[0]["x-grok-session-id"]).toBe("client-sess");
+    expect(h[1]["x-grok-session-id"]).toBe("client-sess");
+    expect(h[0]["x-grok-conv-id"]).toBe("client-sess");
+    expect(h[1]["x-grok-conv-id"]).toBe("client-sess");
+  });
+
   it("interleaved requests keep each retry pass in its own ctx", async () => {
     const ex = new GrokCliExecutor();
     let releaseA;
