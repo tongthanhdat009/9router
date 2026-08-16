@@ -13,6 +13,7 @@ import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { executeCodexWs, WsConnectError, WsStreamError, wsUrl } from "./codexWsTransport.js";
+import { monitorCodexTransport } from "../../src/lib/codexTransportMonitor.js";
 
 // SSE error patterns inside 200-OK bodies. Some retry same account first; capacity rotates accounts.
 const CODEX_SSE_RETRY_PATTERNS = ["server_is_overloaded", "service_unavailable_error"];
@@ -308,14 +309,19 @@ export class CodexExecutor extends BaseExecutor {
       const wsHeaders = { ...headers, "OpenAI-Beta": "responses_websockets=2026-02-06", "session-id": sessionId, "thread-id": sessionId, "x-client-request-id": requestId };
       const transformedBody = { ...preparedRequest.transformedBody, client_metadata: { ...preparedRequest.transformedBody.client_metadata, session_id: sessionId, thread_id: sessionId } };
       try {
+        monitorCodexTransport("CODEX_WS_ATTEMPT", { transport: "websocket", attempt: 0 });
         const response = await executeCodexWs({ url: httpUrl, headers: wsHeaders, transformedBody, credentials: args.credentials, signal: args.signal, timeoutMs: this.config?.timeoutMs });
+        monitorCodexTransport("CODEX_WS_CONNECTED", { transport: "websocket", framesEmitted: 1 });
         return { response, url: wsUrl(httpUrl), headers: wsHeaders, transformedBody };
       } catch (error) {
         if (error?.name === "AbortError") throw error;
         if (!(error instanceof WsConnectError) && !(error instanceof WsStreamError && error.framesEmitted === 0)) throw error;
+        monitorCodexTransport("CODEX_WS_FALLBACK_HTTP", { transport: "http-sse", reason: error.message, errorName: error.name, framesEmitted: error.framesEmitted ?? null, attempt: 0 });
         args.log?.debug?.("CODEX", `WS fallback to HTTP: ${error.message}`);
       }
     }
+
+    monitorCodexTransport("CODEX_HTTP_SSE_SELECTED", { transport: "http-sse" });
 
     // Retry 200-OK SSE transient errors before exposing a response. The bounded
     // peek buffers at most 8 KiB, then replays it into the client stream.

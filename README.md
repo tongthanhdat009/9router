@@ -645,6 +645,7 @@ Seamless translation between formats:
 - Track API calls, headers, and payloads
 - Troubleshoot integration issues
 - Export logs for analysis
+- Codex transport diagnostics: `ENABLE_CODEX_TRANSPORT_LOG=1` writes JSONL to `<DATA_DIR>/logs/codex-transport.jsonl` (override with `CODEX_TRANSPORT_LOG_FILE`) showing which upstream transport each Codex request used — `CODEX_WS_ATTEMPT`, `CODEX_WS_CONNECTED`, `CODEX_WS_FALLBACK_HTTP`, `CODEX_HTTP_SSE_SELECTED`. Tokens, auth headers, bodies, prompts, and session/account IDs are never logged.
 
 ### 💾 Cloud Sync
 

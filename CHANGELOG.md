@@ -2,6 +2,7 @@
 ## Unreleased
 
 - feat(codex): optional upstream-only Responses WebSocket transport with HTTP/SSE fallback.
+- feat(codex): opt-in JSONL monitor identifies upstream WebSocket vs HTTP/SSE transport without recording request content or credentials.
 - fix(codex): WS slot lifecycle — per-account socket released only at terminal
   stream event/failure/cancel (never on first event), healthy sockets reused by
   queued same-account requests with no handler overwrite; concurrent connects
