@@ -61,6 +61,22 @@ export function hasValuableContent(chunk, format) {
   return true; // Other formats: keep all chunks
 }
 
+// OpenAI Responses streaming events that carry model-generated semantic output
+const OPENAI_RESPONSES_SEMANTIC_EVENT_TYPES = new Set([
+  "response.output_text.delta",
+  "response.reasoning_summary_text.delta",
+  "response.function_call_arguments.delta",
+  "response.custom_tool_call_input.delta",
+]);
+
+// Responses same-format passthrough variant of hasSemanticGenerationDelta:
+// event identity comes from the SSE `event:` frame (or chunk.type), payload carries `delta` string
+export function hasOpenAIResponsesSemanticGenerationDelta(eventName, chunk) {
+  const type = eventName || (typeof chunk?.type === "string" ? chunk.type : null);
+  return OPENAI_RESPONSES_SEMANTIC_EVENT_TYPES.has(type) &&
+    typeof chunk?.delta === "string" && chunk.delta.length > 0;
+}
+
 export function hasSemanticGenerationDelta(chunk) {
   const delta = chunk?.choices?.[0]?.delta;
   if (delta) {
