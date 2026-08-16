@@ -353,7 +353,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       preferredConnectionId: affinity?.connectionId || null,
     });
     if (affinity && credentials?.connectionId !== affinity.connectionId) {
-      logAffinity("affinity.invariant_violation", { code: "AFFINITY_ACCOUNT_HIT_SELECTED_OTHER", requestId: diagnostics.requestId, provider, model, preferredConnectionId: affinity.connectionId, selected: credentials?.connectionId ?? null });
+      logAffinity("affinity.invariant_violation", { code: "AFFINITY_ACCOUNT_HIT_SELECTED_OTHER", requestId: diagnostics?.requestId, provider, model, preferredConnectionId: affinity.connectionId, selected: credentials?.connectionId ?? null });
       invalidateAccountAffinity(affinitySessionId, provider, model);
     }
 
@@ -432,7 +432,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       pxpipeTransform: chatSettings.pxpipeEnabled ? await getPxpipeTransform() : null,
       onPxpipeEvent: appendPxpipeEvent,
       providerThinking,
-      requestId: diagnostics.requestId,
+      requestId: diagnostics?.requestId,
       affinityDiagnostics: diagnostics,
       finalizeAffinityRequest,
       affinity: {
