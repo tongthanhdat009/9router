@@ -1527,4 +1527,4 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ### Codex upstream WebSocket
 
-Codex Responses WebSocket is optional and upstream-only: clients continue using HTTP/SSE. Enable with dashboard Profile → Security → Codex upstream WebSocket, or `NINEROUTER_CODEX_WS=1`. It is off by default. Connection, 426, timeout, or pre-output stream failures fall back once to the existing upstream HTTP/SSE transport; output-started failures are never replayed.
+Codex Responses WebSocket is optional upstream-only: clients continue using HTTP/SSE. Enable dashboard Profile → Security → Codex upstream WebSocket, or `NINEROUTER_CODEX_WS=1`. It is off by default. Per-account sockets serialize requests — a slot is held until the terminal stream event (or failure/cancel), then the healthy socket is reused by the next queued request; concurrent connects to one account are deduplicated. First-frame timeout (config `timeoutMs`, fallback 15000ms) rejects pre-output so CodexExecutor falls back once to existing upstream HTTP/SSE transport; output-started failures never replayed. Aborts always surface as `AbortError` (no HTTP fallback after client disconnect).
