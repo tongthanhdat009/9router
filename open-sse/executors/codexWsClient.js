@@ -1,3 +1,5 @@
+import { WebSocket } from "undici";
+
 const CLOSE_NORMAL = 1000;
 
 export class WsConnectError extends Error {
@@ -19,7 +21,7 @@ export async function connectCodexResponsesWs({ url, headers, signal, timeoutMs 
   let timer;
   let abort;
   try {
-    socket = new WebSocket(url, [], { headers });
+    socket = new WebSocket(url, { headers });
     await new Promise((resolve, reject) => {
       const cleanup = () => { clearTimeout(timer); signal?.removeEventListener("abort", abort); };
       timer = setTimeout(() => { closeSocket(socket); cleanup(); reject(new WsConnectError("WebSocket connect timeout")); }, timeoutMs);

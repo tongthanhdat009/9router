@@ -28,6 +28,14 @@ afterEach(async () => { for (const socket of sockets.splice(0)) socket.destroy()
 const input = url => ({ url, headers: { Authorization: "Bearer token" }, transformedBody: { model: "gpt", input: "hi" }, credentials: { connectionId: crypto.randomUUID() }, timeoutMs: 1000 });
 
 describe("Codex upstream WebSocket transport", () => {
+  it("sends required authentication and session headers during handshake", async () => {
+    const headers = { Authorization: "Bearer token", "OpenAI-Beta": "responses=experimental", "session-id": "session", "thread-id": "thread", "x-client-request-id": "request" };
+    let receivedHeaders;
+    const url = await mockWs((socket, request) => { receivedHeaders = request.headers; socket.destroy(); });
+    await expect(executeCodexWs({ ...input(url), headers })).rejects.toMatchObject({ name: "WsStreamError", framesEmitted: 0 });
+    expect(receivedHeaders).toMatchObject(Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value])));
+  });
+
   it("converts JSON WebSocket event to exact SSE then closes terminal stream", async () => {
     const url = await mockWs(socket => setTimeout(() => { socket.write(frame({ type: "response.output_text.delta", delta: "ok" })); socket.write(frame({ type: "response.completed" })); setTimeout(() => socket.destroy(), 10); }, 10));
     const response = await executeCodexWs(input(url));
