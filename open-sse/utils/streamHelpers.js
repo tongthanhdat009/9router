@@ -64,6 +64,7 @@ export function hasValuableContent(chunk, format) {
 // OpenAI Responses streaming events that carry model-generated semantic output
 const OPENAI_RESPONSES_SEMANTIC_EVENT_TYPES = new Set([
   "response.output_text.delta",
+  "response.refusal.delta",
   "response.reasoning_summary_text.delta",
   "response.function_call_arguments.delta",
   "response.custom_tool_call_input.delta",

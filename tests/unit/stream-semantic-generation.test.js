@@ -25,6 +25,7 @@ import { createSSEStream } from "../../open-sse/utils/stream.js";
 describe("OpenAI Responses same-format semantic generation", () => {
   it("accepts Responses semantic delta events with non-empty delta", () => {
     expect(hasOpenAIResponsesSemanticGenerationDelta("response.output_text.delta", { type: "response.output_text.delta", delta: "x" })).toBe(true);
+    expect(hasOpenAIResponsesSemanticGenerationDelta("response.refusal.delta", { delta: "x" })).toBe(true);
     expect(hasOpenAIResponsesSemanticGenerationDelta("response.reasoning_summary_text.delta", { delta: "x" })).toBe(true);
     expect(hasOpenAIResponsesSemanticGenerationDelta("response.function_call_arguments.delta", { delta: "{}" })).toBe(true);
     expect(hasOpenAIResponsesSemanticGenerationDelta("response.custom_tool_call_input.delta", { delta: "x" })).toBe(true);
