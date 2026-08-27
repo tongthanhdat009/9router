@@ -23,7 +23,7 @@ import * as log from "../utils/logger.js";
 import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
 import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { resolveClientAffinitySessionId, sha16 } from "open-sse/utils/sessionManager.js";
-import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, getRouteAffinity, bindRouteAffinity, consumeRouteAffinityEscape, recordRouteAffinityThroughput, invalidateRouteAffinity } from "../services/sessionAffinity.js";
+import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, getRouteAffinity, bindRouteAffinity, consumeRouteAffinityEscape, recordRouteAffinityThroughput, invalidateRouteAffinity, AFFINITY_MAX_LOGICAL_REQUESTS } from "../services/sessionAffinity.js";
 import { logAffinity } from "@/lib/affinityLogger.js";
 
 /**
@@ -175,7 +175,14 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
-    const routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
+    // Voluntary expiry: if the route binding has served >= MAX successful requests, drop it before selection.
+    // Must run before the hard-cap check so limit takes precedence; throughput escape is consumed after.
+    let routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
+    if (routeAffinity && AFFINITY_MAX_LOGICAL_REQUESTS > 0 && Number.isFinite(routeAffinity.requestCount) && routeAffinity.requestCount >= AFFINITY_MAX_LOGICAL_REQUESTS) {
+      logAffinity("affinity.limit_expired", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", routeScope: modelStr, route: routeAffinity.route, requestCount: routeAffinity.requestCount, limit: AFFINITY_MAX_LOGICAL_REQUESTS });
+      invalidateRouteAffinity(affinitySessionId, modelStr);
+      routeAffinity = null;
+    }
     // A stored route is only honored if it still satisfies the current request's
     // hard capabilities. Otherwise it falls through to normal combo rotation.
     const preferredRoute = routeAffinity?.route &&
@@ -192,6 +199,8 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
     diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
     diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
     let demotionSelectedLogged = false;
+    const priorRouteRequestCount = routeAffinity?.requestCount ?? 0;
+    const priorRouteForCount = routeAffinity?.route || null;
     return finishOuter(handleComboChat({
       body,
       models: augmentedModels,
@@ -215,7 +224,8 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
           }, diagnostics, finalizeAffinityRequest);
           if (response.ok) {
             if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
-            bindRouteAffinity(affinitySessionId, modelStr, m);
+            const nextCount = priorRouteForCount === m ? priorRouteRequestCount + 1 : 1;
+            bindRouteAffinity(affinitySessionId, modelStr, m, { requestCount: nextCount });
           }
           else if (m === effectivePreferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
           return response;
@@ -293,7 +303,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
 
       const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
-      const routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
+      let routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
+      if (routeAffinity && AFFINITY_MAX_LOGICAL_REQUESTS > 0 && Number.isFinite(routeAffinity.requestCount) && routeAffinity.requestCount >= AFFINITY_MAX_LOGICAL_REQUESTS) {
+        logAffinity("affinity.limit_expired", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", routeScope: modelStr, route: routeAffinity.route, requestCount: routeAffinity.requestCount, limit: AFFINITY_MAX_LOGICAL_REQUESTS });
+        invalidateRouteAffinity(affinitySessionId, modelStr);
+        routeAffinity = null;
+      }
       const preferredRoute = routeAffinity?.route &&
         augmentedModels.includes(routeAffinity.route) &&
         modelSatisfiesHardCapabilities(routeAffinity.route, requiredCapabilities)
@@ -308,6 +323,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
       diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
       let demotionSelectedLogged = false;
+      const priorRouteRequestCount = routeAffinity?.requestCount ?? 0;
+      const priorRouteForCount = routeAffinity?.route || null;
       // handleSingleModelChat has no finishOuter of its own — outer handleChat
       // lifecycle (finishOuter/stream hooks) owns finalization for this promise.
       return handleComboChat({
@@ -328,7 +345,8 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             }, diagnostics, finalizeAffinityRequest);
             if (response.ok) {
               if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
-              bindRouteAffinity(affinitySessionId, modelStr, m);
+              const nextCount = priorRouteForCount === m ? priorRouteRequestCount + 1 : 1;
+              bindRouteAffinity(affinitySessionId, modelStr, m, { requestCount: nextCount });
             }
             else if (m === effectivePreferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
             return response;
@@ -361,8 +379,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastError = null;
   let lastStatus = null;
 
+  let isOuterAccountAttempt = true;
   while (true) {
-    const affinity = getAccountAffinity(affinitySessionId, provider, model);
+    let affinity = getAccountAffinity(affinitySessionId, provider, model);
+    if (isOuterAccountAttempt && affinity && AFFINITY_MAX_LOGICAL_REQUESTS > 0 && Number.isFinite(affinity.requestCount) && affinity.requestCount >= AFFINITY_MAX_LOGICAL_REQUESTS) {
+      logAffinity("affinity.limit_expired", { requestId: diagnostics?.requestId, sessionHash: diagnostics?.sessionHash, layer: "account", provider, model, connectionId: affinity.connectionId, requestCount: affinity.requestCount, limit: AFFINITY_MAX_LOGICAL_REQUESTS });
+      invalidateAccountAffinity(affinitySessionId, provider, model);
+      affinity = null;
+    }
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       preferredConnectionId: affinity?.connectionId || null,
     });
@@ -405,6 +429,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       excludeConnectionIds.add(credentials.connectionId);
       lastError = "Token refresh failed, re-authentication required";
       lastStatus = HTTP_STATUS.UNAUTHORIZED;
+      isOuterAccountAttempt = false;
       continue;
     }
 
@@ -485,7 +510,10 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       onRequestSuccess: async () => {
         await clearAccountError(credentials.connectionId, credentials, model);
         if (diagnostics && accountPrior?.connectionId && accountPrior.connectionId !== credentials.connectionId) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "account", provider, model, fromConnectionId: accountPrior.connectionId, toConnectionId: credentials.connectionId, reason: "account_fallback" });
-        bindAccountAffinity(affinitySessionId, provider, model, credentials.connectionId);
+        const priorConn = accountPrior?.connectionId || null;
+        const priorCount = accountPrior?.requestCount ?? 0;
+        const effectiveNext = (priorConn && priorConn !== credentials.connectionId) ? 1 : (Number.isFinite(priorCount) && priorCount > 0 ? priorCount + 1 : 1);
+        bindAccountAffinity(affinitySessionId, provider, model, credentials.connectionId, { requestCount: effectiveNext });
       }
     });
 
@@ -504,6 +532,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       excludeConnectionIds.add(credentials.connectionId);
       lastError = result.error;
       lastStatus = result.status;
+      isOuterAccountAttempt = false;
       continue;
     }
 
