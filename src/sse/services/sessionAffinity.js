@@ -13,6 +13,7 @@ const AFFINITY_MIN_TPS = positiveEnv("AFFINITY_MIN_TPS", 12);
 const AFFINITY_RECOVERY_TPS = Math.max(AFFINITY_MIN_TPS, positiveEnv("AFFINITY_RECOVERY_TPS", 18));
 const AFFINITY_SLOW_STREAK = positiveEnv("AFFINITY_SLOW_STREAK", 2, true);
 export const AFFINITY_MIN_SAMPLE_TOKENS = positiveEnv("AFFINITY_MIN_SAMPLE_TOKENS", 64, true);
+export const AFFINITY_MAX_LOGICAL_REQUESTS = positiveEnv("AFFINITY_MAX_LOGICAL_REQUESTS", 0, true);
 
 function key(...parts) {
   return parts.join("\0");
@@ -51,13 +52,25 @@ export function getRouteAffinity(sessionId, routeScope) {
   return sessionId ? routes.get(key(sessionId, routeScope)) : null;
 }
 
-export function bindRouteAffinity(sessionId, routeScope, route) {
+export function bindRouteAffinity(sessionId, routeScope, route, opts = {}) {
   if (!sessionId || !route) return;
   const entryKey = key(sessionId, routeScope);
   const existing = routes.get(entryKey);
-  routes.bind(entryKey, existing?.route === route
-    ? { route, slowStreak: existing.slowStreak || 0, escapeNext: Boolean(existing.escapeNext) }
-    : { route, slowStreak: 0, escapeNext: false });
+  if (Number.isFinite(opts.requestCount)) {
+    const rc = Math.max(1, Math.floor(opts.requestCount));
+    routes.bind(entryKey, existing?.route === route
+      ? { route, slowStreak: existing.slowStreak || 0, escapeNext: Boolean(existing.escapeNext), requestCount: rc }
+      : { route, slowStreak: 0, escapeNext: false, requestCount: rc });
+  } else {
+    // Back-compat: no explicit count — preserve existing count for same route (default 1 for first bind), else init 1.
+    if (existing?.route === route && Number.isFinite(existing.requestCount)) {
+      routes.bind(entryKey, { route, slowStreak: existing.slowStreak || 0, escapeNext: Boolean(existing.escapeNext), requestCount: existing.requestCount });
+    } else if (existing?.route === route) {
+      routes.bind(entryKey, { route, slowStreak: existing.slowStreak || 0, escapeNext: Boolean(existing.escapeNext), requestCount: 1 });
+    } else {
+      routes.bind(entryKey, { route, slowStreak: 0, escapeNext: false, requestCount: 1 });
+    }
+  }
 }
 
 export function consumeRouteAffinityEscape(sessionId, routeScope) {
@@ -103,8 +116,17 @@ export function getAccountAffinity(sessionId, provider, model) {
   return sessionId ? accounts.get(key(sessionId, provider, model)) : null;
 }
 
-export function bindAccountAffinity(sessionId, provider, model, connectionId) {
-  if (sessionId && connectionId) accounts.bind(key(sessionId, provider, model), { connectionId });
+export function bindAccountAffinity(sessionId, provider, model, connectionId, opts = {}) {
+  if (!sessionId || !connectionId) return;
+  const entryKey = key(sessionId, provider, model);
+  const existing = accounts.get(entryKey);
+  if (Number.isFinite(opts.requestCount)) {
+    accounts.bind(entryKey, { connectionId, requestCount: Math.max(1, Math.floor(opts.requestCount)) });
+  } else if (existing?.connectionId === connectionId && Number.isFinite(existing.requestCount)) {
+    accounts.bind(entryKey, { connectionId, requestCount: existing.requestCount });
+  } else {
+    accounts.bind(entryKey, { connectionId, requestCount: 1 });
+  }
 }
 
 export function invalidateAccountAffinity(sessionId, provider, model) {

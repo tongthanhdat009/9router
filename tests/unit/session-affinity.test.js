@@ -73,3 +73,72 @@ describe("route throughput escape", () => {
       .toMatchObject({ tps: 119, slowStreak: 0, escapeArmed: false });
   });
 });
+
+describe("affinity request-count limit", () => {
+  beforeEach(clearSessionAffinity);
+
+  it("route affinity starts at requestCount 1 and preserves it on same-route rebind", () => {
+    bindRouteAffinity("S", "combo", "a/model");
+    expect(getRouteAffinity("S", "combo")?.requestCount).toBe(1);
+    bindRouteAffinity("S", "combo", "a/model", { requestCount: 5 });
+    expect(getRouteAffinity("S", "combo")?.requestCount).toBe(5);
+    // Back-compat path without opts preserves existing count for same route
+    bindRouteAffinity("S", "combo", "a/model");
+    expect(getRouteAffinity("S", "combo")?.requestCount).toBe(5);
+  });
+
+  it("route affinity resets requestCount to 1 on route switch", () => {
+    bindRouteAffinity("S", "combo", "a/model", { requestCount: 10 });
+    bindRouteAffinity("S", "combo", "b/model");
+    expect(getRouteAffinity("S", "combo")?.requestCount).toBe(1);
+    expect(getRouteAffinity("S", "combo")?.route).toBe("b/model");
+  });
+
+  it("route affinity with explicit requestCount clamps to >=1", () => {
+    bindRouteAffinity("S", "combo", "a/model", { requestCount: 0 });
+    expect(getRouteAffinity("S", "combo")?.requestCount).toBe(1);
+    bindRouteAffinity("S", "combo", "a/model", { requestCount: -5 });
+    expect(getRouteAffinity("S", "combo")?.requestCount).toBe(1);
+  });
+
+  it("account affinity starts at requestCount 1 and increments via explicit opts", () => {
+    bindAccountAffinity("S", "codex", "gpt", "A");
+    expect(getAccountAffinity("S", "codex", "gpt")?.requestCount).toBe(1);
+    bindAccountAffinity("S", "codex", "gpt", "A", { requestCount: 3 });
+    expect(getAccountAffinity("S", "codex", "gpt")?.requestCount).toBe(3);
+    // Same connection without opts preserves count
+    bindAccountAffinity("S", "codex", "gpt", "A");
+    expect(getAccountAffinity("S", "codex", "gpt")?.requestCount).toBe(3);
+  });
+
+  it("account affinity resets to 1 on connection switch", () => {
+    bindAccountAffinity("S", "codex", "gpt", "A", { requestCount: 7 });
+    bindAccountAffinity("S", "codex", "gpt", "B");
+    expect(getAccountAffinity("S", "codex", "gpt")?.requestCount).toBe(1);
+    expect(getAccountAffinity("S", "codex", "gpt")?.connectionId).toBe("B");
+  });
+
+  it("preserves slowStreak and escapeNext when bumping requestCount for same route", () => {
+    bindRouteAffinity("S", "combo", "a/model");
+    // Arm escape via throughput samples
+    recordRouteAffinityThroughput({ sessionId: "S", routeScope: "combo", route: "a/model", completionTokens: 64, firstSemanticGenerationAt: 1, streamEndAt: 8001, estimated: false });
+    recordRouteAffinityThroughput({ sessionId: "S", routeScope: "combo", route: "a/model", completionTokens: 64, firstSemanticGenerationAt: 1, streamEndAt: 8001, estimated: false });
+    expect(getRouteAffinity("S", "combo")?.escapeNext).toBe(true);
+    const prior = getRouteAffinity("S", "combo");
+    bindRouteAffinity("S", "combo", "a/model", { requestCount: (prior.requestCount ?? 1) + 1 });
+    expect(getRouteAffinity("S", "combo")).toMatchObject({ route: "a/model", escapeNext: true, slowStreak: 2 });
+  });
+
+  it("no corruption under repeated invalidates and rebinds at boundary", () => {
+    bindRouteAffinity("S", "combo", "a/model", { requestCount: 20 });
+    invalidateRouteAffinity("S", "combo");
+    expect(getRouteAffinity("S", "combo")).toBeNull();
+    bindRouteAffinity("S", "combo", "b/model", { requestCount: 1 });
+    expect(getRouteAffinity("S", "combo")).toMatchObject({ route: "b/model", requestCount: 1 });
+    bindAccountAffinity("S", "codex", "gpt", "A", { requestCount: 20 });
+    invalidateAccountAffinity("S", "codex", "gpt");
+    expect(getAccountAffinity("S", "codex", "gpt")).toBeNull();
+    bindAccountAffinity("S", "codex", "gpt", "B", { requestCount: 1 });
+    expect(getAccountAffinity("S", "codex", "gpt")).toMatchObject({ connectionId: "B", requestCount: 1 });
+  });
+});
