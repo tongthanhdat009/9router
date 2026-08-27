@@ -87,3 +87,6 @@ graphify-out/*
 .PR/
 .next-analyze/*
 /.omc
+
+# Exhaustive provider cache evidence ledger
+!docs/provider-cache-audit.md
