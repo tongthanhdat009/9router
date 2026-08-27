@@ -12,6 +12,12 @@ import { DEFAULT_MAX_TOKENS } from "../../config/runtimeConfig.js";
 const CACHE_CONTROL_5M = { type: "ephemeral" };
 const CACHE_CONTROL_1H = { type: "ephemeral", ttl: "1h" };
 
+function hasExplicitCacheControl(body) {
+  return body?.system?.some?.(block => block?.cache_control !== undefined) ||
+    body?.messages?.some?.(message => message?.content?.some?.(block => block?.cache_control !== undefined)) ||
+    body?.tools?.some?.(tool => tool?.cache_control !== undefined) || false;
+}
+
 // Check if message has valid non-empty content
 export function hasValidContent(msg) {
   if (typeof msg.content === "string" && msg.content.trim()) return true;
@@ -206,12 +212,12 @@ function markLastCacheableBlock(msg) {
 }
 
 // Re-anchor cache breakpoints on a Claude passthrough body (same policy as
-// prepareClaudeRequest): last tool + last system block at 1h, last assistant at 5m.
-// The client's own markers point at pre-normalization offsets, so they are dropped.
+// prepareClaudeRequest): preserve caller markers; otherwise last tool + last system
+// block at 1h and last assistant at 5m.
 // Must run LAST, after every step that can reshape system/tools/messages
 // (normalize, tool dedupe, token savers) — otherwise the anchor drifts off the tail.
 export function anchorClaudeCache(body) {
-  if (!body || typeof body !== "object") return body;
+  if (!body || typeof body !== "object" || hasExplicitCacheControl(body)) return body;
 
   if (Array.isArray(body.system)) {
     const last = body.system.length - 1;
@@ -262,6 +268,8 @@ export function anchorClaudeCache(body) {
 // - Fix tool_use/tool_result ordering
 // - Apply cloaking (billing header + fake user ID) for OAuth tokens
 export function prepareClaudeRequest(body, provider = null, apiKey = null, connectionId = null, rawHeaders = null, sessionId = null) {
+  const preserveCacheControl = hasExplicitCacheControl(body);
+
   // quirk: MiniMax's Claude-compatible endpoint rejects Anthropic's output_config (400 invalid params)
   if (PROVIDERS[provider]?.quirks?.dropOutputConfig) {
     delete body.output_config;
@@ -290,8 +298,8 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     }
   }
 
-  // 1. System: remove all cache_control, add only to last block with ttl 1h
-  if (body.system && Array.isArray(body.system)) {
+  // 1. System: preserve caller markers; otherwise anchor only the last block at 1h
+  if (!preserveCacheControl && body.system && Array.isArray(body.system)) {
     body.system = body.system.map((block, i) => {
       const { cache_control, ...rest } = block;
       if (i === body.system.length - 1) {
@@ -306,12 +314,12 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     const len = body.messages.length;
     let filtered = [];
 
-    // Pass 1: remove cache_control + filter empty messages
+    // Pass 1: preserve caller markers or remove automatic markers; filter empty messages
     for (let i = 0; i < len; i++) {
       const msg = body.messages[i];
 
       // Remove cache_control from content blocks
-      if (Array.isArray(msg.content)) {
+      if (!preserveCacheControl && Array.isArray(msg.content)) {
         for (const block of msg.content) {
           delete block.cache_control;
         }
@@ -343,7 +351,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
       if (msg.role === "assistant" && Array.isArray(msg.content)) {
         // Add cache_control to last non-thinking block of first (from end) assistant with content
         // thinking/redacted_thinking blocks do not support cache_control
-        if (!lastAssistantProcessed && msg.content.length > 0) {
+        if (!preserveCacheControl && !lastAssistantProcessed && msg.content.length > 0) {
           for (let j = msg.content.length - 1; j >= 0; j--) {
             const block = msg.content[j];
             if (block.type !== CLAUDE_BLOCK.THINKING && block.type !== CLAUDE_BLOCK.REDACTED_THINKING) {
@@ -397,7 +405,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
     }
   }
 
-  // 3. Tools: filter built-in tools for non-Anthropic providers, then handle cache_control
+  // 3. Tools: filter built-in tools for non-Anthropic providers, then preserve or auto-anchor cache_control
   if (body.tools && Array.isArray(body.tools)) {
     // Strip built-in tools (e.g. web_search_20250305) and normalize to Anthropic-native shape
     // (drop `type` field, fold `function.{name,description,parameters}`) for non-Anthropic providers
@@ -417,7 +425,7 @@ export function prepareClaudeRequest(body, provider = null, apiKey = null, conne
         });
     }
 
-    body.tools = body.tools.map((tool, i) => {
+    body.tools = preserveCacheControl ? body.tools : body.tools.map((tool, i) => {
       const { cache_control, ...rest } = tool;
       if (i === body.tools.length - 1) {
         return { ...rest, cache_control: { type: "ephemeral", ttl: "1h" } };
