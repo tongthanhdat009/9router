@@ -77,7 +77,7 @@ function extractCustomToolInput(argumentsValue) {
   return argumentsText;
 }
 
-function openAICompletionToResponses(responseBody, customToolNames = null) {
+export function openAICompletionToResponses(responseBody, customToolNames = null) {
   const choice = responseBody?.choices?.[0];
   if (!choice) return responseBody;
 
@@ -119,6 +119,7 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
   }
 
   const usage = responseBody.usage || {};
+  const cachedTokens = usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens ?? usage.prompt_cache_hit_tokens ?? usage.cached_tokens;
   const status = choice.finish_reason === "tool_calls" ? "completed" : (choice.finish_reason === "stop" ? "completed" : (choice.finish_reason || "completed"));
 
   return {
@@ -134,6 +135,7 @@ function openAICompletionToResponses(responseBody, customToolNames = null) {
       input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
       output_tokens: usage.completion_tokens || usage.output_tokens || 0,
       total_tokens: usage.total_tokens || (usage.prompt_tokens || 0) + (usage.completion_tokens || 0),
+      ...(cachedTokens !== undefined && cachedTokens !== null ? { input_tokens_details: { cached_tokens: cachedTokens } } : {}),
     },
   };
 }
