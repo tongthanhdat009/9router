@@ -15,13 +15,19 @@ export async function GET() {
 }
 
 // POST /api/models/custom - Add custom model
+const ALLOWED_CUSTOM_TYPES = new Set(["llm", "imageToText"]);
+
 export async function POST(request) {
   try {
     const { providerAlias, id, type, name } = await request.json();
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }
-    const added = await addCustomModel({ providerAlias, id, type: type || "llm", name });
+    const resolvedType = type || "llm";
+    if (!ALLOWED_CUSTOM_TYPES.has(resolvedType)) {
+      return NextResponse.json({ error: `Invalid type: ${resolvedType}. Allowed: llm, imageToText` }, { status: 400 });
+    }
+    const added = await addCustomModel({ providerAlias, id, type: resolvedType, name });
     return NextResponse.json({ success: true, added });
   } catch (error) {
     console.log("Error adding custom model:", error);
@@ -30,12 +36,13 @@ export async function POST(request) {
 }
 
 // DELETE /api/models/custom?providerAlias=xxx&id=yyy&type=zzz
+// type is optional — when omitted both llm and imageToText keys are tried.
 export async function DELETE(request) {
   try {
     const { searchParams } = new URL(request.url);
     const providerAlias = searchParams.get("providerAlias");
     const id = searchParams.get("id");
-    const type = searchParams.get("type") || "llm";
+    const type = searchParams.get("type") || undefined;
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }

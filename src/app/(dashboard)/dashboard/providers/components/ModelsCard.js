@@ -69,11 +69,13 @@ ModelRow.propTypes = {
 // ── AddCustomModelModal ────────────────────────────────────────
 function AddCustomModelModal({ isOpen, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
+  const [vision, setVision] = useState(false);
 
   const handleSave = () => {
     if (!modelId.trim()) return;
-    onSave(modelId.trim());
+    onSave(modelId.trim(), vision ? "imageToText" : "llm");
     setModelId("");
+    setVision(false);
   };
 
   return (
@@ -90,6 +92,10 @@ function AddCustomModelModal({ isOpen, onSave, onClose }) {
             autoFocus
           />
         </div>
+        <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none">
+          <input type="checkbox" checked={vision} onChange={(e) => setVision(e.target.checked)} className="rounded border-border" />
+          Supports vision
+        </label>
         <div className="flex gap-2">
           <Button onClick={handleSave} fullWidth disabled={!modelId.trim()}>Add</Button>
           <Button onClick={onClose} variant="ghost" fullWidth>Cancel</Button>
@@ -154,12 +160,13 @@ export default function ModelsCard({ providerId, kindFilter, providerAliasOverri
     } catch (e) { console.log("delete alias error:", e); }
   };
 
-  const handleAddCustomModel = async (modelId) => {
+  const handleAddCustomModel = async (modelId, typeOverride) => {
+    const resolvedType = typeOverride || effectiveType;
     try {
       const res = await fetch("/api/models/custom", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerAlias, id: modelId, type: effectiveType }),
+        body: JSON.stringify({ providerAlias, id: modelId, type: resolvedType }),
       });
       if (res.ok) {
         await fetchData();

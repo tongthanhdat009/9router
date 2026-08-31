@@ -35,8 +35,13 @@ export async function getCustomModels() {
   return Object.values(all);
 }
 
+const ALLOWED_CUSTOM_TYPES = new Set(["llm", "imageToText"]);
+
 // Atomic check-then-insert inside transaction to prevent duplicate races
 export async function addCustomModel({ providerAlias, id, type = "llm", name }) {
+  if (!ALLOWED_CUSTOM_TYPES.has(type)) {
+    throw new Error(`Invalid custom model type: ${type}. Allowed: llm, imageToText`);
+  }
   const k = customKey(providerAlias, id, type);
   const db = await getAdapter();
   let added = false;
@@ -50,8 +55,25 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name }) 
   return added;
 }
 
-export async function deleteCustomModel({ providerAlias, id, type = "llm" }) {
-  await customKv.remove(customKey(providerAlias, id, type));
+export async function deleteCustomModel({ providerAlias, id, type }) {
+  if (type) {
+    await customKv.remove(customKey(providerAlias, id, type));
+    // Also remove the alternate type for the same id (robust against caller passing the wrong type).
+    const other = type === "llm" ? "imageToText" : "llm";
+    await customKv.remove(customKey(providerAlias, id, other));
+    return;
+  }
+  // No type provided (delete from UI where type is unknown) — try both keys.
+  for (const t of ["llm", "imageToText"]) {
+    await customKv.remove(customKey(providerAlias, id, t));
+  }
+}
+
+export function isCustomVisionModel(m) {
+  if (!m) return false;
+  if (m.type === "imageToText") return true;
+  if (m.capabilities && m.capabilities.vision === true) return true;
+  return false;
 }
 
 // mitmAlias: key=toolName, value=mappings object

@@ -6,6 +6,7 @@ import { Button, Modal } from "@/shared/components";
 
 export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
+  const [vision, setVision] = useState(false);
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -46,7 +47,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
     if (!cleanId || saving) return;
     setSaving(true);
     try {
-      await onSave(cleanId);
+      await onSave(cleanId, vision ? "imageToText" : "llm");
     } finally {
       setSaving(false);
     }
@@ -85,6 +86,11 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
             Sent to provider as: <code className="font-mono bg-sidebar px-1 rounded">{stripAlias(modelId.trim()) || "model-id"}</code>
           </p>
         </div>
+
+        <label className="flex items-center gap-1.5 text-xs text-text-muted cursor-pointer select-none">
+          <input type="checkbox" checked={vision} onChange={(e) => setVision(e.target.checked)} className="rounded border-border" />
+          Supports vision
+        </label>
 
         {/* Test result */}
         {testStatus === "ok" && (
