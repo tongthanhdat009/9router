@@ -19,6 +19,23 @@ function normalizeTools(tools) {
   return body.tools;
 }
 
+describe("CodexExecutor input normalization", () => {
+  it("adds type=message to role-based Responses input", () => {
+    const executor = new CodexExecutor();
+    const body = {
+      model: "gpt-5.6-sol-low",
+      input: [{ role: "user", content: "hello" }],
+    };
+
+    executor.transformRequest("gpt-5.6-sol-low", body, true, {
+      connectionId: "test-codex-input",
+      providerSpecificData: {},
+    });
+
+    expect(body.input).toEqual([{ type: "message", role: "user", content: "hello" }]);
+  });
+});
+
 describe("CodexExecutor tool normalization", () => {
   it("preserves Responses text.format for structured outputs", () => {
     const executor = new CodexExecutor();

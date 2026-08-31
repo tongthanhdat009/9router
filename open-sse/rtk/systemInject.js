@@ -28,17 +28,15 @@ export function injectSystemPrompt(body, format, prompt) {
 
 // OpenAI-shaped: messages[] (chat) or input[] (responses) or instructions (responses string)
 function injectMessagesSystem(body, prompt) {
-  // OpenAI Responses API: top-level string field
-  if (typeof body.instructions === "string") {
-    body.instructions = body.instructions
+  // Responses API system instructions belong in the top-level field, even when omitted by the client.
+  if (Array.isArray(body.input) && !Array.isArray(body.messages)) {
+    body.instructions = typeof body.instructions === "string" && body.instructions
       ? `${body.instructions}${SEP}${prompt}`
       : prompt;
     return;
   }
 
-  const arr = Array.isArray(body.messages) ? body.messages
-    : Array.isArray(body.input) ? body.input
-    : null;
+  const arr = Array.isArray(body.messages) ? body.messages : null;
   if (!arr) return;
 
   const idx = arr.findIndex(m => m && (m.role === "system" || m.role === "developer"));

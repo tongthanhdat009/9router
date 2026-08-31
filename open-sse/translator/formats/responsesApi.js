@@ -18,7 +18,12 @@ export function normalizeResponsesInput(input) {
     if (input.length === 0) {
       return [{ type: RESPONSES_ITEM.MESSAGE, role: ROLE.USER, content: [{ type: RESPONSES_ITEM.INPUT_TEXT, text: "..." }] }];
     }
-    return input;
+    // EasyInputMessage allows omitted type, but strict Responses backends require it.
+    return input.map((item) =>
+      item && typeof item === "object" && !Array.isArray(item) && !item.type && item.role
+        ? { ...item, type: RESPONSES_ITEM.MESSAGE }
+        : item
+    );
   }
   return null;
 }

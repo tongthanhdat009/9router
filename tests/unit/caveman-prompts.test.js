@@ -1,5 +1,7 @@
 import { describe, it, expect } from "vitest";
+import { injectCaveman } from "../../open-sse/rtk/caveman.js";
 import { CAVEMAN_LEVELS, CAVEMAN_PROMPTS } from "../../open-sse/rtk/cavemanPrompts.js";
+import { injectPonytail } from "../../open-sse/rtk/ponytail.js";
 
 const LEVEL_KEYS = [
   CAVEMAN_LEVELS.LITE,
@@ -50,6 +52,21 @@ describe("Caveman prompt coverage", () => {
     for (const level of LEVEL_KEYS) {
       expect(CAVEMAN_PROMPTS[level]).toContain("No decorative emoji");
     }
+  });
+});
+
+describe("Responses API prompt injection", () => {
+  it("uses top-level instructions without inserting an invalid input message", () => {
+    const body = {
+      input: [{ type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] }],
+    };
+
+    injectCaveman(body, "openai-responses", CAVEMAN_LEVELS.ULTRA);
+    injectPonytail(body, "openai-responses", "ultra");
+
+    expect(body.input).toHaveLength(1);
+    expect(body.input[0].role).toBe("user");
+    expect(body.instructions).toContain(CAVEMAN_PROMPTS[CAVEMAN_LEVELS.ULTRA]);
   });
 });
 
