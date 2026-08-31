@@ -183,7 +183,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
 
     if (refreshedCredentials._needsReauth) {
       const reauthError = "Token refresh failed, re-authentication required";
-      await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.UNAUTHORIZED, reauthError, providerId);
+      await markAccountUnavailable(credentials.connectionId, HTTP_STATUS.UNAUTHORIZED, reauthError, credentialProviderId, searchLockKey);
       log.warn("AUTH", `Account ${credentials.connectionName} token refresh failed, needs re-auth (401)`);
       excludeConnectionIds.add(credentials.connectionId);
       lastError = "Token refresh failed, re-authentication required";
