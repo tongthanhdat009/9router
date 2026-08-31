@@ -20,9 +20,11 @@ export default {
   transport: {
     baseUrl: "https://openrouter.ai/api/v1/chat/completions",
     thinkingFormat: "openai",
+    // Harness-gated :free models (e.g. thinkingmachines/inkling-small:free) 403 unlisted apps;
+    // Cline attribution (same pair as cline.js) passes — live-verified: old headers 403, Cline 200.
     headers: {
-      "HTTP-Referer": "https://endpoint-proxy.local",
-      "X-Title": "Endpoint Proxy",
+      "HTTP-Referer": "https://cline.bot",
+      "X-Title": "Cline",
     },
   },
   models: [
