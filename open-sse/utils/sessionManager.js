@@ -96,6 +96,7 @@ const MAX_CONTINUATION_SESSIONS = 5000;
 // — every harness sends exactly one of these, so appended order cannot shadow.
 const SESSION_HEADER_KEYS = ["x-session-id", "session-id", "session_id", "x-amp-thread-id", "x-claude-code-session-id", "x-session-affinity", "x-mux-workspace-id"];
 const CLAUDE_CODE_SESSION_RE = /_session_([a-f0-9-]+)$/;
+const CLAUDE_CODE_SESSION_HEADER = "x-claude-code-session-id";
 
 export function sha16(text) {
     return crypto.createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -146,6 +147,8 @@ function extractAntigravitySession(body) {
 function stableClientSessionId(headers, body) {
   const claude = extractClaudeCodeSession(body?.metadata?.user_id);
   if (claude) return `claude:${claude}`;
+  const claudeHeader = headerValue(headers, CLAUDE_CODE_SESSION_HEADER);
+  if (claudeHeader) return claudeHeader;
   const antigravity = extractAntigravitySession(body);
   if (antigravity) return `antigravity:${antigravity}`;
   for (const key of SESSION_HEADER_KEYS) {
