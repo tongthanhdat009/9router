@@ -148,8 +148,19 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
   let lastError = null;
   let lastStatus = null;
 
+  const fallbackProviderId = resolvedProvider.credentialFallback;
+  const searchLockKey = `websearch:${providerId}`;
+
   while (true) {
-    const credentials = await getProviderCredentials(providerId, excludeConnectionIds);
+    let credentialProviderId = providerId;
+    let credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey);
+    if (!credentials && fallbackProviderId) {
+      credentials = await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey);
+      if (credentials) {
+        credentialProviderId = fallbackProviderId;
+        log.info("AUTH", `\x1b[32m${providerId} reusing ${fallbackProviderId} credentials\x1b[0m`);
+      }
+    }
 
     if (!credentials || credentials.allRateLimited) {
       if (credentials?.allRateLimited) {
@@ -197,7 +208,7 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
 
     if (result.success) return result.response;
 
-    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, providerId);
+    const { shouldFallback } = await markAccountUnavailable(credentials.connectionId, result.status, result.error, credentialProviderId, searchLockKey);
 
     if (shouldFallback) {
       log.warn("AUTH", `Account ${credentials.connectionName} unavailable (${result.status}), trying fallback`);
