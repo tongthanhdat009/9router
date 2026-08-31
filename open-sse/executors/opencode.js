@@ -17,6 +17,11 @@ function generateSessionId() {
   return `ses_${crypto.randomUUID().replace(/-/g, "")}`;
 }
 
+function toOpencodeSession(id) {
+  const stripped = String(id || "").replace(/^ses_/, "").replace(/-/g, "");
+  return stripped ? `ses_${stripped}` : null;
+}
+
 // Strip the thinking suffix "model(level)" so registry lookups hit the base id.
 function baseModelId(model) {
   return String(model || "").replace(/\([^()]+\)\s*$/, "").trim();
@@ -27,14 +32,12 @@ function isResponsesModel(model) {
 }
 
 function resolveOpencodeSession(body, credentials) {
-  const headers = credentials?.rawHeaders || {};
-  return resolveSessionId({
-    headers,
+  return toOpencodeSession(resolveSessionId({
+    headers: credentials?.rawHeaders,
     body,
     connectionId: credentials?.connectionId,
     scope: "opencode",
-    generate: generateSessionId,
-  });
+  }));
 }
 
 function normalizeOpencodeReasoning(model, body) {
