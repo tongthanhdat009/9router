@@ -106,7 +106,9 @@ export function parseCommandCodeError(event) {
     } else if (lower.includes("payment required") || lower.includes("billing")) {
       statusCode = 402;
       type = "billing_error";
-    } else if (lower.includes("quota") || lower.includes("forbidden") || lower.includes("permission")) {
+    } else if (lower.includes("quota")) {
+      statusCode = 503;
+    } else if (lower.includes("forbidden") || lower.includes("permission")) {
       statusCode = 403;
       type = "permission_error";
     } else if (lower.includes("not found")) {
@@ -156,8 +158,8 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
       buffer = lines.pop() || "";
 
       let stopLoop = false;
-      for (const line of lines) {
-        const trimmed = line.trim();
+      for (let index = 0; index < lines.length; index++) {
+        const trimmed = lines[index].trim();
         if (!trimmed) continue;
         const jsonStr = trimmed.startsWith("data:") ? trimmed.slice(5).trim() : trimmed;
         if (!jsonStr || jsonStr === "[DONE]") {
@@ -190,6 +192,7 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
           event?.type === "finish" ||
           event?.type === "finish-step"
         ) {
+          bufferedLines.push(...lines.slice(index + 1).map((item) => item.trim()).filter(Boolean));
           stopLoop = true;
           break;
         }
@@ -198,8 +201,7 @@ export async function inspectAndWrapCommandCodeResponse(originalResponse, model)
       if (stopLoop) break;
     }
   } catch {
-    try { reader.releaseLock(); } catch { /* ignore */ }
-    return originalResponse;
+    // Preserve the consumed prefix; the replay stream propagates the reader failure.
   }
 
   if (detectedError) {
