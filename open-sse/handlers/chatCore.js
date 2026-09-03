@@ -91,13 +91,14 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // differ — kimi/glm only do /chat/completions). Undeclared models keep the
   // upstream default (use the transport), preserving behavior for glm/deepseek/...
   const useTransport = (!modelSupportedFormats || modelSupportedFormats.includes(sourceFormat)) ? runtimeTransport : null;
-  // A source-format-matched endpoint keeps the request lossless. Prefer it
-  // over a model-level targetFormat, which is only the fallback for clients
-  // whose wire format has no supported transport (for example MiniMax-M3:
-  // OpenAI clients should stay on /chat/completions; other clients can fall
-  // back to its declared Claude target).
-  const targetFormat = useTransport?.format || modelTargetFormat || getTargetFormat(provider, credentials);
-  if (useTransport && credentials) credentials.runtimeTransport = useTransport;
+  // A single-format model has no compatible fallback at the provider default
+  // endpoint. Translate into its only supported wire format instead.
+  const fallbackFormat = modelTargetFormat || null;
+  const fallbackTransport = fallbackFormat ? resolveTransport(provider, fallbackFormat) : null;
+  // A source-format-matched endpoint keeps the request lossless. Multi-format
+  // models retain their default endpoint when the source format is unsupported.
+  const targetFormat = useTransport?.format || fallbackFormat || getTargetFormat(provider, credentials);
+  if ((useTransport || fallbackTransport) && credentials) credentials.runtimeTransport = useTransport || fallbackTransport;
   const stripList = getModelStrip(alias, model);
   const upstreamModel = getModelUpstreamId(alias, model);
 
