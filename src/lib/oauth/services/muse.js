@@ -48,13 +48,3 @@ export async function logoutMuse(accessToken, config) {
     return false;
   }
 }
-
-export function toMuseCredentialPatch(minted) {
-  // Persist apiKey/identity preserving existing OAuth fields; never a
-  // refreshToken rotation (accessToken/refreshToken/expiresAt untouched).
-  return {
-    apiKey: minted.apiKey,
-    ...(minted.userEmail ? { email: minted.userEmail } : {}),
-    ...(minted.userFullName ? { displayName: minted.userFullName } : {}),
-  };
-}

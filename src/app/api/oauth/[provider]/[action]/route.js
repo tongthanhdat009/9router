@@ -464,6 +464,9 @@ export async function POST(request, { params }) {
     return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.log("OAuth POST error:", error);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    const message = provider === "muse" && action === "poll"
+      ? "Muse key mint failed. Try logging in again."
+      : error.message;
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

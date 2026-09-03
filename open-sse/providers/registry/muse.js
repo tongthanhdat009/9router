@@ -19,7 +19,7 @@ export default {
   hasOAuth: true,
   authModes: ["oauth", "apikey"],
   transport: {
-    baseUrl: "https://api.meta.ai/v1/responses",
+    baseUrl: "https://api.meta.ai/v1",
     format: "openai-responses",
     forceStream: true,
   },
