@@ -11,7 +11,7 @@ import { handleSearchCore } from "open-sse/handlers/search/index.js";
 import { errorResponse, unavailableResponse } from "open-sse/utils/error.js";
 import { HTTP_STATUS } from "open-sse/config/runtimeConfig.js";
 import * as log from "../utils/logger.js";
-import { updateProviderCredentials, persistRefreshedCredentials, checkAndRefreshToken, recordUnrecoverableRefreshFailure } from "../services/tokenRefresh.js";
+import { updateProviderCredentials, checkAndRefreshToken } from "../services/tokenRefresh.js";
 import { handleComboChat, getComboModelsFromData } from "open-sse/services/combo.js";
 
 /**
@@ -148,12 +148,26 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
   let lastError = null;
   let lastStatus = null;
 
+  // Credential fallback: some search providers reuse the API key of a related
+  // chat provider (e.g. ollama-search reuses the `ollama` chat key, zai-search
+  // reuses the `glm` chat key). When the search provider has no own connection,
+  // fall back to the linked provider's credentials.
   const fallbackProviderId = resolvedProvider.credentialFallback;
+
+  // Lock scope for this handler. Without it markAccountUnavailable would write
+  // an account-wide `__all` lock, which on the credentialFallback path takes
+  // the shared chat key (e.g. glm) offline for chat as well. Must be passed to
+  // getProviderCredentials too, so the lock is read back under the same key.
   const searchLockKey = `websearch:${providerId}`;
 
   while (true) {
+    // Provider that actually owns the connection in use — differs from
+    // providerId once we fall back, and error locks must be attributed to it.
     let credentialProviderId = providerId;
     let credentials = await getProviderCredentials(providerId, excludeConnectionIds, searchLockKey);
+
+    // Fall back to the related chat provider's credentials when this search
+    // provider has none of its own (one key, chat + search).
     if (!credentials && fallbackProviderId) {
       credentials = await getProviderCredentials(fallbackProviderId, excludeConnectionIds, searchLockKey);
       if (credentials) {
@@ -198,8 +212,12 @@ async function handleSingleProviderSearch(body, providerInput, request, apiKey, 
       credentials: refreshedCredentials,
       log,
       onCredentialsRefreshed: async (newCreds) => {
-        if (newCreds.__terminalRefreshFailure) { await recordUnrecoverableRefreshFailure(credentials.connectionId, newCreds.__terminalRefreshFailure); return; }
-        await persistRefreshedCredentials(credentials.connectionId, { ...newCreds, testStatus: "active" }, credentials.providerSpecificData);
+        await updateProviderCredentials(credentials.connectionId, {
+          accessToken: newCreds.accessToken,
+          refreshToken: newCreds.refreshToken,
+          providerSpecificData: newCreds.providerSpecificData,
+          testStatus: "active"
+        });
       },
       onRequestSuccess: async () => {
         await clearAccountError(credentials.connectionId, credentials);
