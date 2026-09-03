@@ -15,6 +15,8 @@ const CHAT_MODELS = [
   "mimo-v2.5-pro",
 ];
 
+const RESPONSES_MODELS = ["muse-spark-1.2-contributor"];
+
 const MESSAGES_MODELS = [
   "minimax-m3",
   "minimax-m2.7",
@@ -28,7 +30,11 @@ describe("OpenCode Go official model catalog", () => {
   it("matches the documented OpenCode Go model IDs", () => {
     const ids = (PROVIDER_MODELS["opencode-go"] || []).map((model) => model.id);
 
-    expect(ids).toEqual([...CHAT_MODELS, ...MESSAGES_MODELS]);
+    expect(ids).toEqual([...CHAT_MODELS, ...RESPONSES_MODELS, ...MESSAGES_MODELS]);
+  });
+
+  it("marks Muse Spark as OpenAI Responses format", () => {
+    expect(getModelTargetFormat("opencode-go", RESPONSES_MODELS[0])).toBe("openai-responses");
   });
 
   it("marks documented Qwen and MiniMax models as Anthropic messages format", () => {
@@ -44,7 +50,34 @@ describe("OpenCode Go official model catalog", () => {
   });
 });
 
+describe("OpenCode Go Responses request translation", () => {
+  it("maps Chat max_tokens to Responses max_output_tokens for Muse Spark", async () => {
+    await import("../translator/registerAll.js");
+    const { translateRequest } = await import("../../open-sse/translator/index.js");
+
+    const body = translateRequest(
+      "openai",
+      "openai-responses",
+      RESPONSES_MODELS[0],
+      { messages: [{ role: "user", content: "hello" }], max_tokens: 32 },
+      false,
+    );
+
+    expect(body.max_output_tokens).toBe(32);
+    expect(body.max_tokens).toBeUndefined();
+  });
+});
+
 describe("OpenCode Go endpoint routing", () => {
+  it("routes Muse Spark to the responses endpoint with bearer auth", () => {
+    const executor = new OpenCodeGoExecutor();
+
+    expect(executor.buildUrl(RESPONSES_MODELS[0])).toBe("https://opencode.ai/zen/go/v1/responses");
+    const headers = executor.buildHeaders({ apiKey: "sk-test" }, false);
+    expect(headers.Authorization).toBe("Bearer sk-test");
+    expect(headers["x-api-key"]).toBeUndefined();
+  });
+
   it("routes Qwen and MiniMax models to the messages endpoint with x-api-key auth", () => {
     const executor = new OpenCodeGoExecutor();
 

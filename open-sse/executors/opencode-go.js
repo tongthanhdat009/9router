@@ -3,6 +3,9 @@ import { PROVIDERS } from "../config/providers.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 
+// Models that use /zen/go/v1/responses (OpenAI Responses format)
+const RESPONSES_FORMAT_MODELS = new Set(["muse-spark-1.2-contributor"]);
+
 // Models that use /zen/go/v1/messages (Anthropic/Claude format + x-api-key auth)
 const MESSAGES_FORMAT_MODELS = new Set([
   "minimax-m3",
@@ -23,6 +26,7 @@ export class OpenCodeGoExecutor extends BaseExecutor {
   // buildUrl runs before buildHeaders in BaseExecutor.execute, cache model here
   buildUrl(model) {
     this._lastModel = model;
+    if (RESPONSES_FORMAT_MODELS.has(model)) return `${BASE}/responses`;
     return MESSAGES_FORMAT_MODELS.has(model)
       ? `${BASE}/messages`
       : `${BASE}/chat/completions`;

@@ -31,6 +31,7 @@ export default {
     { id: "deepseek-v4-flash", name: "DeepSeek V4 Flash" },
     { id: "mimo-v2.5", name: "MiMo V2.5" },
     { id: "mimo-v2.5-pro", name: "MiMo V2.5 Pro" },
+    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor", targetFormat: "openai-responses" },
     { id: "minimax-m3", name: "MiniMax M3", targetFormat: "claude" },
     { id: "minimax-m2.7", name: "MiniMax M2.7", targetFormat: "claude" },
     { id: "minimax-m2.5", name: "MiniMax M2.5", targetFormat: "claude" },
