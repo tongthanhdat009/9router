@@ -105,7 +105,7 @@ describe('muse-auth', () => {
     global.fetch = fetchMock;
     const svc = await freshMuseService();
     const out = await svc.mintMuseKey("at-1", { mintBase: "https://api.meta.ai" });
-    expect(out).toEqual({ apiKey: "mk-123", userEmail: "u@meta.ai", userFullName: "Meta User" });
+    expect(out).toMatchObject({ apiKey: "mk-123", userEmail: "u@meta.ai", userFullName: "Meta User", tierName: null, isSubsActive: null });
     const call = fetchMock.mock.calls[0];
     expect(call[0]).toBe("https://api.meta.ai/muse-code/key");
     expect(call[1].headers.Authorization).toBe("Bearer at-1");
@@ -117,6 +117,23 @@ describe('muse-auth', () => {
     global.fetch = vi.fn().mockResolvedValue(jsonResponse({ user_email: "u@meta.ai" }));
     const svc = await freshMuseService();
     await expect(svc.mintMuseKey("at-1", {})).rejects.toThrow(/api_key/);
+  });
+
+  it('captures subscription usage only when mint provides it', async () => {
+    global.fetch = vi.fn().mockResolvedValueOnce(jsonResponse({
+      api_key: "mk-usage",
+      subs_tier_name: "Pro",
+      is_subs_active: true,
+      subs_usage: { window: { used_percent: 25, resets_at: 1700000000 } },
+    })).mockResolvedValueOnce(jsonResponse({ api_key: "mk-no-usage", subs_usage: null }));
+    const svc = await freshMuseService();
+    const usage = await svc.mintMuseKey("at-1", {});
+    const noUsage = await svc.mintMuseKey("at-1", {});
+    expect(usage.museUsage.window.used_percent).toBe(25);
+    expect(usage.museUsage.fetchedAt).toEqual(expect.any(Number));
+    expect(usage.tierName).toBe("Pro");
+    expect(usage.isSubsActive).toBe(true);
+    expect(noUsage.museUsage).toBeUndefined();
   });
 
   it('responses uses apiKey Bearer with no accessToken and no x-api-key', async () => {

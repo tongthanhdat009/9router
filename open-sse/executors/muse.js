@@ -102,6 +102,9 @@ export class MuseExecutor extends BaseExecutor {
             ...(credentials?.providerSpecificData || {}),
             apiBaseUrl: resolveApiBase(credentials),
             baseUrl: resolveApiBase(credentials),
+            ...(minted.museUsage ? { museUsage: minted.museUsage } : {}),
+            ...(minted.tierName != null ? { museTierName: minted.tierName } : {}),
+            ...(minted.isSubsActive != null ? { museIsSubsActive: minted.isSubsActive } : {}),
           },
         };
       } catch (err) {

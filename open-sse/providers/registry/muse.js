@@ -28,6 +28,9 @@ export default {
     deviceCodeUrl: "https://auth.meta.com/oidc/device/authorization/",
     tokenUrl: "https://auth.meta.com/oidc/device/token/",
   },
+  features: {
+    usage: true,
+  },
   models: [
     { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor" },
     { id: "muse-spark-1.3", name: "Muse Spark 1.3" },

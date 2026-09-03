@@ -418,6 +418,16 @@ export async function POST(request, { params }) {
             apiKey: minted.apiKey,
             ...(minted.userEmail ? { email: minted.userEmail } : {}),
             ...(minted.userFullName ? { displayName: minted.userFullName } : {}),
+            ...((minted.museUsage || minted.tierName != null || minted.isSubsActive != null)
+              ? {
+                  providerSpecificData: {
+                    ...(tokens.providerSpecificData || {}),
+                    ...(minted.museUsage ? { museUsage: minted.museUsage } : {}),
+                    ...(minted.tierName != null ? { museTierName: minted.tierName } : {}),
+                    ...(minted.isSubsActive != null ? { museIsSubsActive: minted.isSubsActive } : {}),
+                  },
+                }
+              : {}),
           };
         }
         // Save to database (legacy kimi-coding OAuth → dual-auth kimi)

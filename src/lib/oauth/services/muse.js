@@ -27,11 +27,18 @@ export async function mintMuseKey(accessToken, config) {
   }
   const data = await response.json();
   // Lenient parse: api_key plus identity fields when present; ignore the rest.
+  // subs_usage arrives inside the same mint response (percent-only quota
+  // snapshot); tolerate missing/null so login never breaks when Meta omits it.
   if (!data.api_key) throw new Error("Muse key mint response missing api_key");
+  const usage = data.subs_usage && typeof data.subs_usage === "object" ? data.subs_usage : null;
   return {
     apiKey: data.api_key,
     userEmail: data.user_email || null,
     userFullName: data.user_full_name || null,
+    // Tier/active arrive top-level, not inside subs_usage.
+    tierName: data.subs_tier_name ?? data.tier_name ?? null,
+    isSubsActive: data.is_subs_active ?? data.is_active ?? null,
+    ...(usage ? { museUsage: { ...usage, fetchedAt: Date.now() } } : {}),
   };
 }
 
