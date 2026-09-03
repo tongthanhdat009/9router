@@ -3,7 +3,7 @@ import path from "node:path";
 import { DATA_DIR } from "./dataDir.js";
 import { getSettings } from "./localDb.js";
 
-const SENSITIVE_KEY = /^(access_token|refresh_token|id_token|access_token_secret|token_type|bearer|api_key|apikey|accessToken|refreshToken|idToken|token|cookie|authorization|email|secret|password|header|prompt|messages|prompt_cache_key|promptCacheKey|previous_response_id|previousResponseId|thread_id|threadId|session|sessionId|x-session-id|session-id|session_id|x-amp-thread-id|x-client-request-id|x-claude-code-session-id|x-session-affinity|x-mux-workspace-id)$/i;
+const SENSITIVE_KEY = /^(access_token|refresh_token|id_token|access_token_secret|token_type|bearer|api_key|apikey|accessToken|refreshToken|idToken|token|cookie|authorization|email|secret|password|header|prompt|messages|prompt_cache_key|promptCacheKey|previous_response_id|previousResponseId|thread_id|threadId|session|sessionId|x-session-id|session-id|session_id|x-amp-thread-id|x-client-request-id|x-claude-code-session-id|x-session-affinity|x-mux-workspace-id|x-opencode-session)$/i;
 
 function safeValue(value, key = "") {
   if (SENSITIVE_KEY.test(key)) return value == null ? value : "[redacted]";

@@ -201,6 +201,10 @@ describe("resolveClientAffinitySessionId", () => {
     expect(resolveClientAffinitySessionId({ headers: {}, body: { metadata: { user_id: "router-generated-user" } } })).toBeNull();
   });
 
+  it("recognizes x-opencode-session as stable affinity identity", () => {
+    expect(resolveClientAffinitySessionId({ headers: { "X-OpenCode-Session": "ses_opencode" }, body: {} })).toBe("ses_opencode");
+  });
+
   it("accepts stable harness identities", () => {
     expect(resolveClientAffinitySessionId({ headers: { "x-mux-workspace-id": "mux-workspace-1" }, body: {} })).toBe("mux-workspace-1");
     expect(resolveClientAffinitySessionId({ headers: { "X-Session-Affinity": "opencode-session-1" }, body: {} })).toBe("opencode-session-1");

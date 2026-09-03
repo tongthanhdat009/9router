@@ -11,6 +11,8 @@ const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 const { CodexExecutor } = await import("../../open-sse/executors/codex.js");
 const { GrokCliExecutor, _resetGrokCliTurnStore } = await import("../../open-sse/executors/grok-cli.js");
 const { OpenCodeExecutor } = await import("../../open-sse/executors/opencode.js");
+const { OpenCodeGoExecutor } = await import("../../open-sse/executors/opencode-go.js");
+const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
 
 function res(status, headers = {}) {
   return { status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k] ?? "" } };
@@ -153,6 +155,31 @@ describe("opencode — request-scoped session", () => {
     const h = capturedHeaders();
     expect(h[0]["x-opencode-session"]).toBe(h[1]["x-opencode-session"]);
     expect(h[0]["x-opencode-session"]).toMatch(/^ses_[0-9a-f]+$/);
+  });
+});
+
+describe("opencode-go — provider-scoped session", () => {
+  it("preserves supplied header across retries", async () => {
+    const ex = new OpenCodeGoExecutor();
+    fetchMock.mockResolvedValueOnce(res(502)).mockResolvedValue(res(200));
+    await ex.execute({ model: "glm-5.2", body: { model: "glm-5.2", messages: [{ role: "user", content: "hi" }] }, stream: true, credentials: { ...creds, rawHeaders: { "X-OpenCode-Session": "client-session-123" } }, requestId: "req-G" });
+    const h = capturedHeaders();
+    expect(h[0]["x-opencode-session"]).toBe("client-session-123");
+    expect(h[1]["x-opencode-session"]).toBe("client-session-123");
+  });
+
+  it("mints one ses_ id per logical request without changing other defaults", async () => {
+    const ex = new OpenCodeGoExecutor();
+    fetchMock.mockResolvedValueOnce(res(502)).mockResolvedValue(res(200));
+    await ex.execute({ model: "glm-5.2", body: { model: "glm-5.2", messages: [{ role: "user", content: "hi" }] }, stream: true, credentials: creds, requestId: "req-H" });
+    const h = capturedHeaders();
+    expect(h[0]["x-opencode-session"]).toMatch(/^ses_[0-9a-f]+$/);
+    expect(h[0]["x-opencode-session"]).toBe(h[1]["x-opencode-session"]);
+
+    fetchMock.mockReset();
+    fetchMock.mockResolvedValue(res(200));
+    await new DefaultExecutor("minimax").execute({ model: "m", body: { model: "m", messages: [{ role: "user", content: "hi" }] }, stream: false, credentials: { apiKey: "k" }, requestId: "req-I" });
+    expect(capturedHeaders()[0]["x-opencode-session"]).toBeUndefined();
   });
 });
 
