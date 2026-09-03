@@ -13,7 +13,7 @@ const AFFINITY_MIN_TPS = positiveEnv("AFFINITY_MIN_TPS", 12);
 const AFFINITY_RECOVERY_TPS = Math.max(AFFINITY_MIN_TPS, positiveEnv("AFFINITY_RECOVERY_TPS", 18));
 const AFFINITY_SLOW_STREAK = positiveEnv("AFFINITY_SLOW_STREAK", 2, true);
 export const AFFINITY_MIN_SAMPLE_TOKENS = positiveEnv("AFFINITY_MIN_SAMPLE_TOKENS", 64, true);
-export const AFFINITY_MAX_LOGICAL_REQUESTS = positiveEnv("AFFINITY_MAX_LOGICAL_REQUESTS", 0, true);
+export const AFFINITY_MAX_LOGICAL_REQUESTS = positiveEnv("AFFINITY_MAX_LOGICAL_REQUESTS", 20, true);
 
 function key(...parts) {
   return parts.join("\0");
