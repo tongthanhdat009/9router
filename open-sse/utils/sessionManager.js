@@ -217,6 +217,8 @@ function assistantTextSessionId(scope, body) {
  * ephemeral fallbacks. No stable client identity means no affinity.
  */
 export function resolveClientAffinitySessionId({ headers, body } = {}) {
+  // ponytail: cache identity must never drive affinity — null it here only; upstream executors still use it via resolveSessionId.
+  if (body?.prompt_cache_key != null) return stableClientSessionId(headers, { ...body, prompt_cache_key: null });
   return stableClientSessionId(headers, body);
 }
 

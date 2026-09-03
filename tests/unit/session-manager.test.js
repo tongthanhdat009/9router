@@ -214,7 +214,7 @@ describe("resolveClientAffinitySessionId", () => {
     expect(resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-generic" }, body: { thread_id: "zed-thread-1" } })).toBe("sess-generic");
     expect(resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-generic", "x-session-affinity": "opencode-session-1", "x-mux-workspace-id": "mux-workspace-1" }, body: {} })).toBe("sess-generic");
     expect(resolveClientAffinitySessionId({ headers: { "x-claude-code-session-id": "claude-session-1", "x-session-affinity": "opencode-session-1" }, body: {} })).toBe("claude-session-1");
-    expect(resolveClientAffinitySessionId({ headers: {}, body: { prompt_cache_key: "cache-key-1", thread_id: "zed-thread-1", conversation_id: "conv-1" } })).toBe("cache-key-1");
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { prompt_cache_key: "cache-key-1", thread_id: "zed-thread-1", conversation_id: "conv-1" } })).toBe("conv-1");
     expect(resolveClientAffinitySessionId({ headers: {}, body: { conversation_id: "conv-1", thread_id: "zed-thread-1" } })).toBe("conv-1");
   });
 
@@ -229,6 +229,34 @@ describe("resolveClientAffinitySessionId", () => {
 
   it("never derives from assistant-text or workspaceId fallbacks", () => {
     expect(resolveClientAffinitySessionId({ headers: {}, body: bodyWithAssistant })).toBeNull();
+  });
+  it("decouples cache identity from affinity: prompt_cache_key alone never creates affinity", () => {
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { prompt_cache_key: "shared-cache-key" } })).toBeNull();
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { prompt_cache_key: "shared-cache-key", promptCacheKey: "other" } })).toBeNull();
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { prompt_cache_key: "shared-cache-key", messages: [{ role: "user", content: "hello" }] } })).toBeNull();
+  });
+
+  it("same prompt_cache_key + different explicit sessions -> different affinity identities", () => {
+    const a = resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-a" }, body: { prompt_cache_key: "shared-cache-key" } });
+    const b = resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-b" }, body: { prompt_cache_key: "shared-cache-key" } });
+    expect(a).toBe("sess-a");
+    expect(b).toBe("sess-b");
+    expect(a).not.toBe(b);
+  });
+
+  it("same explicit session keeps sticky identity regardless of prompt_cache_key", () => {
+    const plain = resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-s" }, body: {} });
+    const withKey = resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-s" }, body: { prompt_cache_key: "cache-key-1" } });
+    const otherKey = resolveClientAffinitySessionId({ headers: { "x-session-id": "sess-s" }, body: { prompt_cache_key: "cache-key-2" } });
+    expect(plain).toBe("sess-s");
+    expect(withKey).toBe(plain);
+    expect(otherKey).toBe(plain);
+  });
+
+  it("no prompt_cache_key + explicit session -> behavior unchanged", () => {
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { conversation_id: "conversation-1" } })).toBe("conversation-1");
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { session_id: "sid-1" } })).toBe("sid-1");
+    expect(resolveClientAffinitySessionId({ headers: {}, body: { thread_id: "zed-thread-1" } })).toBe("zed-thread-1");
   });
 });
 
