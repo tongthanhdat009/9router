@@ -45,9 +45,11 @@ function mapSnapshot(snapshot) {
 export async function getMuseUsage(accessToken, proxyOptions = null, options = {}) {
   void proxyOptions;
   if (options?.force === true && accessToken) {
-    const minted = await mintMuseKey(accessToken, {});
-    const fresh = mapSnapshot(minted?.museUsage);
-    if (fresh) return { quotas: fresh };
+    try {
+      const minted = await mintMuseKey(accessToken, {});
+      const fresh = mapSnapshot(minted?.museUsage);
+      if (fresh) return { quotas: fresh };
+    } catch { /* fall through to stored snapshot */ }
   }
   return { quotas: mapSnapshot(options?.providerSpecificData?.museUsage) || {} };
 }

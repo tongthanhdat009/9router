@@ -71,4 +71,13 @@ describe("muse usage", () => {
     expect(fetchMock.mock.calls[0][0]).toContain("/muse-code/key");
     expect(usage.quotas["5h"]).toMatchObject({ used: 50, remaining: 50 });
   });
+
+  it("falls back to stored snapshot when force mint rejects", async () => {
+    global.fetch = vi.fn().mockRejectedValue(new Error("mint failed"));
+    const usage = await getMuseUsage("at-1", null, {
+      force: true,
+      providerSpecificData: { museUsage: { window: { used_percent: 25, window_duration_mins: 300, resets_at: SECONDS } } },
+    });
+    expect(usage.quotas["5h"]).toMatchObject({ used: 25, remaining: 75 });
+  });
 });
