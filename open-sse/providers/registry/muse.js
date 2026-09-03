@@ -29,7 +29,10 @@ export default {
     tokenUrl: "https://auth.meta.com/oidc/device/token/",
   },
   models: [
-    { id: "muse-latest", name: "Muse Latest" },
+    { id: "muse-spark-1.3-contributor", name: "Muse Spark 1.3 Contributor" },
+    { id: "muse-spark-1.3", name: "Muse Spark 1.3" },
+    { id: "muse-spark-1.2-contributor", name: "Muse Spark 1.2 Contributor" },
+    { id: "muse-spark-1.2", name: "Muse Spark 1.2" },
   ],
   passthroughModels: true,
 };
