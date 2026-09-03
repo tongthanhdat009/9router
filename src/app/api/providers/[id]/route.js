@@ -5,6 +5,7 @@ import {
   updateProviderConnection,
   deleteProviderConnection,
 } from "@/models";
+import { logoutMuse } from "@/lib/oauth/services/muse";
 
 function normalizeProxyConfig(body = {}) {
   const hasAnyProxyField =
@@ -175,6 +176,13 @@ export async function PUT(request, { params }) {
 export async function DELETE(request, { params }) {
   try {
     const { id } = await params;
+
+    // Muse OAuth logout is best-effort; local removal must proceed even when
+    // remote logout fails. Direct-key rows have no accessToken and stay local-only.
+    const connection = await getProviderConnectionById(id);
+    if (connection?.provider === "muse" && connection.accessToken) {
+      await logoutMuse(connection.accessToken);
+    }
 
     const deleted = await deleteProviderConnection(id);
     if (!deleted) {

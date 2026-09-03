@@ -45,6 +45,8 @@ export function isCodexRefreshStale(credentials, nowMs = Date.now(), maxAgeMs = 
 
 export function shouldRefreshCredentials(provider, credentials, nowMs = Date.now()) {
   if (!credentials) return false;
+  // Muse: expiresAt is telemetry-only; re-mint happens on 401 only, never proactively.
+  if (provider === "muse") return false;
 
   const expiresAtMs = getCredentialExpiryMs(credentials);
   if (expiresAtMs !== null && expiresAtMs - nowMs < getRefreshLeadMs(provider)) {

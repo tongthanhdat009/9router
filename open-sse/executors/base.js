@@ -84,8 +84,10 @@ export class BaseExecutor {
     return status === HTTP_STATUS.RATE_LIMITED && urlIndex + 1 < this.getFallbackCount();
   }
 
-  // Override in subclass for provider-specific refresh
-  async refreshCredentials(credentials, log, proxyOptions = null) {
+  // Override in subclass for provider-specific refresh.
+  // Optional 4th arg carries the upstream HTTP status (Muse mints on 401 only).
+  async refreshCredentials(credentials, log, proxyOptions = null, status = null) {
+    void status;
     return null;
   }
 

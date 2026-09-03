@@ -400,7 +400,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
       // refreshWithRetry's 2nd/3rd attempt reuses the already-consumed RT →
       // invalid_grant → auth_failed retryable=false.
       const newCredentials = await refreshWithRetry(async () => {
-        const result = await executor.refreshCredentials(credentials, log, proxyOptions);
+        const result = await executor.refreshCredentials(credentials, log, proxyOptions, providerResponse.status);
         if (result?.refreshToken && result.refreshToken !== credentials.refreshToken) {
           if (result.accessToken) credentials.accessToken = result.accessToken;
           credentials.refreshToken = result.refreshToken;
@@ -419,8 +419,20 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         if (connectionId && onCredentialsRefreshed) {
           try { await onCredentialsRefreshed({ __terminalRefreshFailure: newCredentials }); } catch (e) { log?.warn?.("TOKEN", `terminal refresh failure callback failed: ${e.message}`); }
         }
-        // Do not retry the upstream — the chain is dead; fall through to error handling with 401
-      } else if (newCredentials?.accessToken || newCredentials?.refreshToken || newCredentials?.copilotToken) {
+        // Do not retry the upstream — the chain is dead; fall through to error handling with 401.
+        // Muse supplies a safe re-auth message; do not expose its mint body.
+        if (provider === "muse" && newCredentials.message) {
+          providerResponse = new Response(JSON.stringify({ error: { message: newCredentials.message } }), {
+            status: HTTP_STATUS.UNAUTHORIZED,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      } else if (provider === "muse" && newCredentials?.error === "invalid_muse_key") {
+        providerResponse = new Response(JSON.stringify({ error: { message: newCredentials.message || "Saved Muse key is invalid. Check the key or log in again." } }), {
+          status: HTTP_STATUS.UNAUTHORIZED,
+          headers: { "Content-Type": "application/json" },
+        });
+      } else if (newCredentials?.accessToken || newCredentials?.refreshToken || newCredentials?.copilotToken || (provider === "muse" && newCredentials?.apiKey)) {
         if (log?.line) log.line(reqTag, "🔑", `TOKEN REFRESHED · ${provider}/${model}`);
         Object.assign(credentials, newCredentials);
         if (onCredentialsRefreshed) {

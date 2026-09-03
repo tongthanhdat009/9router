@@ -194,6 +194,22 @@ export const ZED_HOSTED_CONFIG = {
   defaultNativeAppPort: 58443,
   oauthTimeoutMs: 600_000,
 };
+// Muse (Meta) — device-code OAuth, then apiKey mint via /muse-code/key.
+// authBase default https://auth.meta.com (override TBH_AUTH_BASE_URL),
+// mintBase default https://api.meta.ai (override TBH_MINT_BASE_URL).
+export const MUSE_AUTH_BASE =
+  process.env.TBH_AUTH_BASE_URL || "https://auth.meta.com";
+export const MUSE_MINT_BASE =
+  process.env.TBH_MINT_BASE_URL || "https://api.meta.ai";
+export const MUSE_CLIENT_ID = "1031625952748946";
+export const MUSE_API_BASE = "https://api.meta.ai/v1";
+export const MUSE_CONFIG = {
+  ...PROVIDER_OAUTH["muse"],
+  authBase: MUSE_AUTH_BASE,
+  mintBase: MUSE_MINT_BASE,
+  clientId: MUSE_CLIENT_ID,
+  apiBase: MUSE_API_BASE,
+};
 
 // OAuth timeout (5 minutes)
 export const OAUTH_TIMEOUT = 300000;
@@ -223,4 +239,5 @@ export const PROVIDERS = {
   TRAE: "trae",
   WINDSURF: "windsurf",
   ZED: "zed",
+  MUSE: "muse",
 };

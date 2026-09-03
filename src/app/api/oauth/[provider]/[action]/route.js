@@ -7,6 +7,7 @@ import {
   pollForToken
 } from "@/lib/oauth/providers";
 import { createProviderConnection } from "@/models";
+import { mintMuseKey } from "@/lib/oauth/services/muse";
 import {
   startCodexProxy,
   stopCodexProxy,
@@ -215,6 +216,7 @@ export async function GET(request, { params }) {
         "codebuddy-intl",
         "qoder",
         "grok-cli",
+        "muse",
       ];
       let deviceData;
       if (noPkceDeviceProviders.includes(provider)) {
@@ -381,7 +383,7 @@ export async function POST(request, { params }) {
       }
 
       // Providers that don't use PKCE for device code
-      const noPkceProviders = ["github", "kimi", "kimi-coding", "kilocode", "codebuddy-cn", "codebuddy-intl"];
+      const noPkceProviders = ["github", "kimi", "kimi-coding", "kilocode", "codebuddy-cn", "codebuddy-intl", "muse"];
       let result;
       if (noPkceProviders.includes(provider)) {
         // kimi needs extraData._kimiDeviceId for stable X-Msh-Device-Id (CLIProxyAPI parity)
@@ -406,14 +408,26 @@ export async function POST(request, { params }) {
       }
 
       if (result.success) {
+        // Login completes only after Muse mints its service apiKey. OAuth
+        // accessToken/refreshToken/expiresAt stay stored for recovery/compat.
+        let tokens = result.tokens;
+        if (provider === "muse") {
+          const minted = await mintMuseKey(tokens.accessToken);
+          tokens = {
+            ...tokens,
+            apiKey: minted.apiKey,
+            ...(minted.userEmail ? { email: minted.userEmail } : {}),
+            ...(minted.userFullName ? { displayName: minted.userFullName } : {}),
+          };
+        }
         // Save to database (legacy kimi-coding OAuth → dual-auth kimi)
         const providerId = provider === "kimi-coding" ? "kimi" : provider;
         const connection = await createProviderConnection({
           provider: providerId,
           authType: "oauth",
-          ...result.tokens,
-          expiresAt: result.tokens.expiresIn 
-            ? new Date(Date.now() + result.tokens.expiresIn * 1000).toISOString() 
+          ...tokens,
+          expiresAt: tokens.expiresIn
+            ? new Date(Date.now() + tokens.expiresIn * 1000).toISOString()
             : null,
           testStatus: "active",
         });

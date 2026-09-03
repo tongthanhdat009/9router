@@ -163,7 +163,9 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           throw new Error(data.errorDescription || data.error);
         }
 
-        if (data.error === "slow_down") {
+        // Muse specifies slow_down at the same interval; other device flows
+        // retain the existing OAuth-spec +5-second backoff.
+        if (data.error === "slow_down" && provider !== "muse") {
           interval = Math.min(interval + 5, 30);
         }
       } catch (err) {
@@ -234,6 +236,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         "codebuddy-intl",
         "qoder",
         "grok-cli",
+        "muse",
       ];
       if (deviceCodeProviders.includes(provider)) {
         setIsDeviceCode(true);

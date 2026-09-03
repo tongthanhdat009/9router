@@ -275,6 +275,8 @@ function getConnectionProxyOptions(credentials) {
 }
 
 export async function checkAndRefreshToken(provider, credentials, options = {}) {
+  // Muse: expiresAt is telemetry-only; re-mint happens on 401 only, never proactively.
+  if (provider === "muse") return { ...credentials };
   let creds = { ...credentials };
   if (!creds.connectionId && creds.id) {
     creds.connectionId = creds.id;
