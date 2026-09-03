@@ -16,6 +16,7 @@ import {
   CLINE_CONFIG,
   KILOCODE_CONFIG,
   KIMCHI_CONFIG,
+  MUSE_MINT_BASE,
 } from "@/lib/oauth/constants/oauth";
 import { buildClineHeaders } from "@/shared/utils/clineAuth";
 
@@ -317,7 +318,24 @@ function isTokenExpired(connection) {
   return shouldRefreshCredentials(connection.provider, connection);
 }
 
+async function probeMuseConnection(connection, effectiveProxy = null) {
+  if (!connection.apiKey) return { valid: false, error: "Muse API key missing", refreshed: false };
+  try {
+    const endpoint = MUSE_MINT_BASE.replace(/\/$/, "") + "/muse-code/models";
+    const response = await fetchWithConnectionProxy(endpoint, {
+      method: "GET",
+      headers: { Authorization: `Bearer ${connection.apiKey}`, "x-client-id": "tbh:exec" },
+    }, effectiveProxy);
+    if (response.ok) return { valid: true, error: null, refreshed: false };
+    if (response.status === 401 || response.status === 403) return { valid: false, error: "Muse key is invalid. Log in again.", refreshed: false };
+    return { valid: false, error: `Muse catalog returned ${response.status}`, refreshed: false };
+  } catch (error) {
+    return { valid: false, error: error.message, refreshed: false };
+  }
+}
+
 async function testOAuthConnection(connection, effectiveProxy = null) {
+  if (connection.provider === "muse") return probeMuseConnection(connection, effectiveProxy);
   const config = OAUTH_TEST_CONFIG[connection.provider];
   if (!config) return { valid: false, error: "Provider test not supported", refreshed: false };
   if (!connection.accessToken) return { valid: false, error: "No access token", refreshed: false };
