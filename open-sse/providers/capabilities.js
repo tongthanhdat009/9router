@@ -355,6 +355,10 @@ export function getCapabilitiesForModel(provider, model) {
 
   // 2. Canonical exact
   if (MODEL_CAPABILITIES[baseModel]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[baseModel] };
+  // ponytail: future OpenCode Free Muse contributor variants use the same Responses reasoning surface as 1.2.
+  if (provider === "opencode" && /^muse-spark-[\w.-]+-contributor-free$/.test(baseModel)) {
+    return { ...DEFAULT_CAPABILITIES, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 };
+  }
   if (MODEL_CAPABILITIES[model]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[model] };
 
   // 3. Pattern match (first match wins)

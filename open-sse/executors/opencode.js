@@ -8,6 +8,7 @@ import { resolveSessionId } from "../utils/sessionManager.js";
 const OPENCODE_UA = "opencode";
 // Models served by /zen/v1/responses; every other model stays on /chat/completions.
 const RESPONSES_MODELS = new Set(["muse-spark-1.2-contributor-free"]);
+const RESPONSES_MODEL_PATTERN = /^muse-spark-[\w.-]+-contributor-free$/;
 
 function generateRequestId() {
   return `msg_${crypto.randomUUID().replace(/-/g, "")}`;
@@ -28,7 +29,8 @@ function baseModelId(model) {
 }
 
 function isResponsesModel(model) {
-  return RESPONSES_MODELS.has(baseModelId(model));
+  const id = baseModelId(model);
+  return RESPONSES_MODELS.has(id) || RESPONSES_MODEL_PATTERN.test(id);
 }
 
 function resolveOpencodeSession(body, credentials) {

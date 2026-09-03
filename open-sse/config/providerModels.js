@@ -51,7 +51,11 @@ export function findModelName(aliasOrId, modelId) {
 export function getModelTargetFormat(aliasOrId, modelId) {
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return null;
-  return modelTargetFormat(findModel(models, modelId, aliasOrId));
+  const found = findModel(models, modelId, aliasOrId);
+  if (found) return modelTargetFormat(found);
+  // ponytail: future OpenCode Free Muse contributor variants use Responses; remove when upstream serves metadata.
+  if ((aliasOrId === "oc" || aliasOrId === "opencode") && /^muse-spark-[\w.-]+-contributor-free$/.test(modelId)) return "openai-responses";
+  return null;
 }
 
 // Declared upstream formats for a model (registry `supportedFormats`). Drives the

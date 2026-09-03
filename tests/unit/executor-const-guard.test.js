@@ -65,6 +65,10 @@ describe("OpenCode Free endpoint routing", () => {
     expect(executor.buildUrl("hy3-free")).toBe("https://opencode.ai/zen/v1/chat/completions");
   });
 
+  it("routes a future Muse contributor-free variant to /responses", () => {
+    expect(new OpenCodeExecutor().buildUrl("muse-spark-9.9-contributor-free")).toBe("https://opencode.ai/zen/v1/responses");
+  });
+
   it("normalizes Chat token/thinking fields only for the Responses model", () => {
     const executor = new OpenCodeExecutor();
     const muse = { max_tokens: 4096, reasoning_effort: "high" };

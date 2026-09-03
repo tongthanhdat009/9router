@@ -40,6 +40,15 @@ describe("OpenCode Free Muse Spark thinking", () => {
     ]);
   });
 
+  it("gives a future contributor-free variant the Responses reasoning capabilities", () => {
+    expect(getCapabilitiesForModel(PROVIDER, "muse-spark-9.9-contributor-free")).toMatchObject({
+      reasoning: true,
+      thinkingFormat: "openai",
+      contextWindow: 1048576,
+      maxOutput: 131072,
+    });
+  });
+
   it("clamps max to xhigh and emits the Responses reasoning shape", () => {
     const body = {
       input,
@@ -64,6 +73,13 @@ describe("OpenCode Free Muse Spark thinking", () => {
     expect(executor.buildUrl("big-pickle")).toBe("https://opencode.ai/zen/v1/chat/completions");
     expect(body.max_tokens).toBe(1024);
     expect(body.max_output_tokens).toBeUndefined();
+  });
+
+  it("normalizes token and reasoning fields for a future contributor-free variant", () => {
+    const body = { max_tokens: 32, reasoning_effort: "high" };
+    const out = new OpenCodeExecutor().transformRequest("muse-spark-9.9-contributor-free", body, true, {});
+    expect(out.max_output_tokens).toBe(32);
+    expect(out.reasoning).toEqual({ effort: "high", summary: "auto" });
   });
 
   it("translates Chat Completions max thinking into a Responses request", () => {
