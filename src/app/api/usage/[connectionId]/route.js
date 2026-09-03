@@ -171,6 +171,26 @@ export async function GET(request, { params }) {
     // Fetch usage from provider API
     let usage = await getUsageForProvider(connection, proxyOptions, { force });
 
+    // Muse carries subs_usage in the mint response only; persist the seeded or
+    // refreshed snapshot so later page loads render from storage, not a mint.
+    // (usage handlers have no DB seam, so this lives in the route.)
+    if (connection.provider === "muse") {
+      const psd = connection.providerSpecificData || {};
+      if (usage?.museSnapshot || usage?.museSeedAttempted) {
+        const stamped = {
+          ...psd,
+          ...(usage.museSnapshot ? { museUsage: usage.museSnapshot } : {}),
+          museUsageSeededAt: Date.now(),
+        };
+        const updated = await updateProviderConnection(connection.id, {
+          providerSpecificData: stamped,
+        });
+        if (updated) connection = updated;
+        delete usage.museSnapshot;
+        delete usage.museSeedAttempted;
+      }
+    }
+
     // If provider returned an auth-expired message instead of throwing,
     // force-refresh token and retry once (OAuth only)
     if (isOAuth && isAuthExpiredMessage(usage) && connection.refreshToken) {

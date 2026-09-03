@@ -52,9 +52,12 @@ describe("muse usage", () => {
   });
 
   it("returns empty quotas when snapshot is null", async () => {
-    global.fetch = vi.fn();
-    expect(await stored({})).toEqual({ quotas: {} });
-    expect(await stored({ museUsage: null })).toEqual({ quotas: {} });
+    const fetchMock = vi.fn();
+    global.fetch = fetchMock;
+    // No accessToken: cannot seed, plain empty, zero network.
+    expect(await getMuseUsage(null, null, {})).toEqual({ quotas: {} });
+    expect(await getMuseUsage(null, null, { providerSpecificData: { museUsage: null } })).toEqual({ quotas: {} });
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("force mints exactly once and maps the fresh snapshot", async () => {
@@ -70,6 +73,34 @@ describe("muse usage", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0][0]).toContain("/muse-code/key");
     expect(usage.quotas["5h"]).toMatchObject({ used: 50, remaining: 50 });
+  });
+
+  it("seeds once on first load, then serves stored with zero network", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(mintResponse({
+      api_key: "mk-seed",
+      subs_usage: { window: { used_percent: 12, window_duration_mins: 300, resets_at: SECONDS } },
+    }));
+    global.fetch = fetchMock;
+    const seeded = await getMuseUsage("at-1", null, { providerSpecificData: {} });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(seeded.quotas["5h"]).toMatchObject({ used: 12 });
+    expect(seeded.museSnapshot.window.used_percent).toBe(12);
+    // Stored snapshot served without network; failure still returns stale.
+    global.fetch = vi.fn();
+    const again = await getMuseUsage("at-1", null, { providerSpecificData: { museUsage: seeded.museSnapshot } });
+    expect(again.quotas["5h"]).toMatchObject({ used: 12 });
+  });
+
+  it("backs off reseeding for a day after an empty mint", async () => {
+    const empty = mintResponse({ api_key: "mk-empty" });
+    const fetchMock = vi.fn().mockResolvedValue(empty);
+    global.fetch = fetchMock;
+    const first = await getMuseUsage("at-1", null, { providerSpecificData: {} });
+    expect(first).toEqual({ quotas: {}, museSeedAttempted: true });
+    // Stamped connection stops minting until the tombstone expires.
+    global.fetch = vi.fn();
+    const second = await getMuseUsage("at-1", null, { providerSpecificData: { museUsageSeededAt: Date.now() } });
+    expect(second).toEqual({ quotas: {} });
   });
 
   it("falls back to stored snapshot when force mint rejects", async () => {

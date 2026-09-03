@@ -42,14 +42,28 @@ function mapSnapshot(snapshot) {
   return Object.keys(quotas).length ? quotas : null;
 }
 
+// Reseed backoff: a connection whose mint yields no usable snapshot retries
+// at most once per day — otherwise every page load mints forever.
+const SEED_RETRY_MS = 24 * 60 * 60 * 1000;
+
 export async function getMuseUsage(accessToken, proxyOptions = null, options = {}) {
   void proxyOptions;
-  if (options?.force === true && accessToken) {
-    try {
-      const minted = await mintMuseKey(accessToken, {});
-      const fresh = mapSnapshot(minted?.museUsage);
-      if (fresh) return { quotas: fresh };
-    } catch { /* fall through to stored snapshot */ }
+  const psd = options?.providerSpecificData || {};
+  const stored = mapSnapshot(psd?.museUsage);
+  // Seed on first load when login/401 predates capture; refresh on force.
+  // The route persists usage.museSnapshot (handlers have no DB seam).
+  if ((options?.force === true || !stored) && accessToken) {
+    const tombstone = Number(psd?.museUsageSeededAt);
+    const tombFresh =
+      Number.isFinite(tombstone) && Date.now() - tombstone < SEED_RETRY_MS;
+    if (options?.force === true || !tombFresh) {
+      try {
+        const minted = await mintMuseKey(accessToken, {});
+        const fresh = mapSnapshot(minted?.museUsage);
+        if (fresh) return { quotas: fresh, museSnapshot: minted.museUsage };
+      } catch { /* fall through to stored snapshot */ }
+      if (!stored) return { quotas: {}, museSeedAttempted: true };
+    }
   }
-  return { quotas: mapSnapshot(options?.providerSpecificData?.museUsage) || {} };
+  return { quotas: stored || {} };
 }
