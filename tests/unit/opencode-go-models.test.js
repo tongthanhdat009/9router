@@ -25,6 +25,7 @@ describe("OpenCode Go model catalog", () => {
       "glm-5.3-flash", "glm-5.2", "glm-5.1", "kimi-k2.7-code", "kimi-k2.6",
       "deepseek-v4-pro", "deepseek-v4-flash", "deepseek-v4-flash-vision-exp",
       "mimo-v2.5", "mimo-v2.5-pro",
+      "muse-spark-1.2-contributor",
       "minimax-m3", "minimax-m2.7", "minimax-m2.5",
       "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
     ]);
@@ -42,6 +43,10 @@ describe("OpenCode Go per-model supportedFormats", () => {
     for (const m of RESPONSES_CAPABLE) {
       expect(getModelSupportedFormats("opencode-go", m)).toEqual(["openai", "claude", "openai-responses"]);
     }
+  });
+
+  it("declares [openai-responses] only for muse-spark-1.2-contributor", () => {
+    expect(getModelSupportedFormats("opencode-go", "muse-spark-1.2-contributor")).toEqual(["openai-responses"]);
   });
 
   it("declares [openai] only for chat-only models (GLM/Kimi/MiMo) → guards /messages routing", () => {
@@ -87,6 +92,11 @@ describe("OpenCode Go per-model transport guard (chatCore logic)", () => {
     for (const m of RESPONSES_CAPABLE) {
       expect(pickTransport("opencode-go", "openai-responses", "opencode-go", m)?.baseUrl).toBe("https://opencode.ai/zen/go/v1/responses");
     }
+  });
+
+  it("routes muse-spark-1.2-contributor + responses-format client to /responses", () => {
+    expect(pickTransport("opencode-go", "openai-responses", "opencode-go", "muse-spark-1.2-contributor")?.baseUrl).toBe("https://opencode.ai/zen/go/v1/responses");
+    expect(pickTransport("opencode-go", "claude", "opencode-go", "muse-spark-1.2-contributor")).toBeNull();
   });
 
   it("does NOT route MiniMax (no responses support) to /responses", () => {
