@@ -199,14 +199,21 @@ export function pipeWithDisconnect(providerResponse, transformStream, streamCont
   const clearStall = () => {
     if (stallTimer) { clearTimeout(stallTimer); stallTimer = null; }
   };
+  const onStall = () => {
+    stallTimer = null;
+    dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
+    streamController.handleError?.(new Error("stream stall timeout"));
+    streamController.abort?.();
+  };
   const armStall = () => {
-    clearStall();
-    stallTimer = setTimeout(() => {
-      stallTimer = null;
-      dbg(tag, `STALL TIMEOUT ${stallTimeoutMs}ms | chunks=${chunkCount} | bytes=${totalBytes} | sinceLast=${Date.now() - lastChunkAt}ms`);
-      streamController.handleError?.(new Error("stream stall timeout"));
-      streamController.abort?.();
-    }, stallTimeoutMs);
+    if (stallTimer) {
+      if (typeof stallTimer.refresh === "function") {
+        stallTimer.refresh();
+        return;
+      }
+      clearTimeout(stallTimer);
+    }
+    stallTimer = setTimeout(onStall, stallTimeoutMs);
   };
 
   // Wrap controller so every termination path clears the stall timer.

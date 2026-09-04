@@ -78,11 +78,36 @@ function generateDetailId(model) {
 }
 
 function truncateField(obj, maxSize) {
-  const str = JSON.stringify(obj || {});
+  if (!obj || typeof obj !== "object") return obj || {};
+  // Fast path: LLM request payloads with a messages array. Sum of raw content
+  // string lengths is a strict LOWER bound of the serialized JSON size (JSON
+  // escaping/keys/brackets only add chars), so exceeding maxSize here means
+  // truncated without paying a full multi-MB stringify inside the flush
+  // transaction (measured ~1.2ms per 1MB field, ×N buffered records).
+  const messages = obj.messages;
+  if (Array.isArray(messages) && messages.length > 0) {
+    let lowerBound = 2 * messages.length;
+    for (const m of messages) {
+      const c = m?.content;
+      if (typeof c === "string") lowerBound += c.length;
+      else if (Array.isArray(c)) for (const b of c) { if (typeof b?.text === "string") lowerBound += b.text.length; }
+    }
+    if (lowerBound > maxSize) {
+      const previewSample = {
+        model: obj.model,
+        messageCount: messages.length,
+        toolCount: Array.isArray(obj.tools) ? obj.tools.length : undefined,
+        firstMessage: typeof messages[0]?.content === "string" ? messages[0].content.slice(0, 120) : undefined,
+      };
+      const preview = JSON.stringify(previewSample);
+      return { _truncated: true, _originalSize: lowerBound, _originalSizeIsLowerBoundEstimate: true, _preview: preview.slice(0, 200) };
+    }
+  }
+  const str = JSON.stringify(obj);
   if (str.length > maxSize) {
     return { _truncated: true, _originalSize: str.length, _preview: str.substring(0, 200) };
   }
-  return obj || {};
+  return obj;
 }
 
 async function flushToDatabase() {
