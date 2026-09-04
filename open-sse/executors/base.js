@@ -4,11 +4,7 @@ import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
-
-// Cooperative-yield threshold for large request serialization (perf 2026-09-05):
-// JSON.stringify of bodies >= ~256KB blocks the event loop for milliseconds; under several
-// concurrent large uploads small requests starved (victim sched delay ~44ms @ 8 heavy projects).
-const HEAVY_BODY_YIELD_BYTES = 256 * 1024;
+import { beforePrepare, beforeUpload } from "../scheduling/trafficScheduler.js";
 
 // Cheap structural size estimate without serializing: message-content char length.
 function estimateSerializedSize(body) {
@@ -130,9 +126,7 @@ export class BaseExecutor {
   // starved behind the whole batch (victim sched delay ~44ms @ 8 heavy projects). Yielding to the
   // check phase lets queued continuations run between large blocks. (perf 2026-09-05)
   async prepareRequestFair({ model, body, stream, credentials, requestId = null }) {
-    if (estimateSerializedSize(body) >= HEAVY_BODY_YIELD_BYTES) {
-      await new Promise((resolve) => setImmediate(resolve));
-    }
+    await beforePrepare({ estimatedSize: estimateSerializedSize(body) });
     return this.prepareRequest({ model, body, stream, credentials, requestId });
   }
 
@@ -179,6 +173,9 @@ export class BaseExecutor {
       try {
         const fetchT0 = Date.now();
         dbg("FETCH", `${this.provider.toUpperCase()} → ${url} | body=${bodyStr.length}B | connectTimeout=${timeoutMs}ms`);
+        // Space heavy upload starts (>=256KB serialized) 15ms apart on a global admission timeline;
+        // unsynchronized multi-MB TLS/socket writes starve small interactive requests (perf 2026-09-05).
+        await beforeUpload({ actualBytes: Buffer.byteLength(bodyStr, "utf8"), signal: mergedSignal });
         const response = await proxyAwareFetch(url, {
           method: "POST",
           headers,
