@@ -204,7 +204,10 @@ function addPlaceholder(obj) {
     obj.type = "object";
     obj.properties = { reason: { type: "string", description: "Brief explanation of why you are calling this tool" } };
     obj.required = ["reason"];
-  } else if (obj.type === "object" && (!obj.properties || Object.keys(obj.properties).length === 0)) {
+  } else if (obj.type === "object" && obj.properties === undefined) {
+    // ponytail: placeholder only when the properties map is ABSENT (orphan {} after
+    // $ref strip); a present-but-empty map stays {} — Google accepts empty maps but
+    // rejects placeholder keys rewritten inside them.
     obj.properties = { reason: { type: "string", description: "Brief explanation of why you are calling this tool" } };
     obj.required = ["reason"];
   }
@@ -240,7 +243,18 @@ export function cleanJSONSchemaForAntigravity(schema) {
       if (UNSUPPORTED_SCHEMA_CONSTRAINTS.includes(key) || key.startsWith("x-")) delete obj[key];
     }
     cleanupRequired(obj);
-    for (const value of Object.values(obj)) visit(value);
+    // properties is a NAME->schema map, not a schema node: visit each member schema
+    // without ever treating the map itself as a node (an empty map would otherwise
+    // match the empty-object branch in addPlaceholder and get rewritten as a schema).
+    for (const [key, value] of Object.entries(obj)) {
+      if (key === "properties") {
+        if (value && typeof value === "object" && !Array.isArray(value)) {
+          for (const propSchema of Object.values(value)) visit(propSchema);
+        }
+        continue;
+      }
+      visit(value);
+    }
     addPlaceholder(obj);
   }
 

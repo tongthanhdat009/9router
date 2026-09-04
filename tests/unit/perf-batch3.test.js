@@ -32,4 +32,23 @@ describe("Batch 3 performance guards", () => {
       properties: { p: { enum: ["1"], type: "string" } },
     });
   });
+  it("empty properties maps stay maps while orphan schemas still get placeholders", () => {
+    const placeholder = {
+      type: "object",
+      properties: { reason: { type: "string", description: "Brief explanation of why you are calling this tool" } },
+      required: ["reason"],
+    };
+    expect(cleanJSONSchemaForAntigravity({ type: "object", properties: {} })).toEqual({
+      type: "object",
+      properties: {},
+    });
+    expect(cleanJSONSchemaForAntigravity({})).toEqual(placeholder);
+    expect(cleanJSONSchemaForAntigravity({ type: "object" })).toEqual(placeholder);
+    expect(
+      cleanJSONSchemaForAntigravity({ type: "object", properties: { p: {} } }).properties.p
+    ).toEqual(placeholder);
+    expect(
+      cleanJSONSchemaForAntigravity({ type: "object", properties: { n: { type: "object", properties: {} } } })
+    ).toEqual({ type: "object", properties: { n: { type: "object", properties: {} } } });
+  });
 });
