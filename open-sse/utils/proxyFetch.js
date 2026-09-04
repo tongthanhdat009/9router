@@ -213,6 +213,38 @@ function resolveConnectionProxyUrl(targetUrl, proxyOptions) {
   return normalizeProxyUrl(proxyUrlRaw);
 }
 
+// ─── Bun compatibility ─────────────────────────────────────────────────
+// Bun's global fetch ignores undici's `dispatcher` option (npm undici's
+// ProxyAgent is non-functional there — no dispatch/close on the prototype),
+// which silently bypassed the proxy and broke strictProxy. Under Bun we use
+// the native `fetch(url, { proxy })` option instead.
+const IS_BUN = typeof globalThis.Bun !== "undefined";
+const BUN_UNSUPPORTED_PROXY_PROTOCOLS = new Set(["socks4:", "socks4a:", "socks5:", "socks5h:"]);
+
+function fatalProxyError(message) {
+  const error = new Error(message);
+  error.fatal = true;
+  return error;
+}
+
+/**
+ * Fetch through a proxy on whichever runtime is active.
+ * Throws a fatal error (never falls back to direct) for proxy schemes the
+ * active runtime cannot honor — e.g. socks* under Bun.
+ */
+function fetchViaProxy(url, options, proxyUrl) {
+  if (IS_BUN) {
+    const protocol = new URL(proxyUrl).protocol;
+    if (BUN_UNSUPPORTED_PROXY_PROTOCOLS.has(protocol)) {
+      throw fatalProxyError(
+        `[ProxyFetch] Proxy protocol ${protocol} is not supported under Bun (run under Node or use an http(s) proxy)`
+      );
+    }
+    return originalFetch(url, { ...options, proxy: proxyUrl });
+  }
+  return getDispatcher(proxyUrl).then((dispatcher) => originalFetch(url, { ...options, dispatcher }));
+}
+
 /**
  * Create proxy dispatcher lazily (undici-compatible)
  */
@@ -320,11 +352,10 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
     if (proxyUrl) {
       // Proxy resolves DNS externally (not affected by /etc/hosts) — use proxy directly
       try {
-        const dispatcher = await getDispatcher(proxyUrl);
-        return await originalFetch(url, { ...options, dispatcher });
+        return await fetchViaProxy(url, options, proxyUrl);
       } catch (proxyError) {
-        if (proxyOptions?.strictProxy === true) {
-          throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+        if (proxyOptions?.strictProxy === true || proxyError?.fatal) {
+          throw proxyError;
         }
         console.warn(`[ProxyFetch] Proxy failed, falling back to direct bypass: ${proxyError.message}`);
       }
@@ -341,12 +372,13 @@ export async function proxyAwareFetch(url, options = {}, proxyOptions = null) {
 
   if (proxyUrl) {
     try {
-      const dispatcher = await getDispatcher(proxyUrl);
-      return await originalFetch(url, { ...options, dispatcher });
+      return await fetchViaProxy(url, options, proxyUrl);
     } catch (proxyError) {
-      // If strictProxy is enabled, fail hard instead of falling back to direct
-      if (proxyOptions?.strictProxy === true) {
-        throw new Error(`[ProxyFetch] Proxy required but failed (strictProxy=true): ${proxyError.message}`);
+      // If strictProxy is enabled, fail hard instead of falling back to direct.
+      // Same for schemes the runtime cannot honor (e.g. socks* under Bun):
+      // falling back would silently send the request unproxied.
+      if (proxyOptions?.strictProxy === true || proxyError?.fatal) {
+        throw proxyError;
       }
       console.warn(`[ProxyFetch] Proxy failed, falling back to direct: ${proxyError.message}`);
       return originalFetch(url, options);
