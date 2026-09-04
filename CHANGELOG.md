@@ -1,6 +1,8 @@
 # Unreleased
 ## Unreleased
 
+- feat(zcode): Z.ai Coding Plan OAuth provider with ticketed off-peak inference, usage lookup, and Coding Plan API Key connection field.
+
 - fix(codex): WS transport no longer bypasses SSE transient-error classification —
   200-OK SSE-shaped error events inside WebSocket streams (e.g.
   `usage_limit_reached` arriving as `response.failed`) are peeked before the
