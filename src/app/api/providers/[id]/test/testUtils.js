@@ -334,10 +334,12 @@ async function probeMuseConnection(connection, effectiveProxy = null) {
   }
 }
 
-// Option B: zcode probe = getCustomerInfo with stored RAW access token (no
-// "Bearer " prefix). Maps mint outcome to {valid,error} for the GENERIC writer
-// (testStatus active/error + lastError); runtime surfacing rides the generic
-// markAccountUnavailable/clearAccountError path — zero schema/UI changes.
+// Option B: zcode probe = run the REAL mint flow (login → biz customer →
+// api_keys → copy; the exact path the executor/inference uses). A successful
+// mint is both a liveness AND entitlement check; minted keys are length-49
+// "apiKey.secretKey" so they never collide with pasted keys. Maps outcome to
+// {valid,error} for the GENERIC writer (testStatus/lastError) — zero schema/UI
+// changes; runtime surfacing rides markAccountUnavailable/clearAccountError.
 async function probeZcodeConnection(connection, effectiveProxy = null) {
   const accessToken = connection.accessToken;
   // Pasted-key-only connections (apiKey/PSD df8d key, no token) are valid:
@@ -348,31 +350,28 @@ async function probeZcodeConnection(connection, effectiveProxy = null) {
       ? { valid: true, error: null, refreshed: false }
       : { valid: false, error: "No access token. Log in again, or paste a coding-plan key from https://z.ai/manage-apikey.", refreshed: false };
   }
+  const { mintCodingPlanKey } = await import("open-sse/services/zcodeKey.js");
   try {
-    const response = await fetchWithConnectionProxy("https://api.z.ai/api/biz/customer/getCustomerInfo", {
-      headers: { Authorization: accessToken, "Content-Type": "application/json" },
-    }, effectiveProxy);
-    // 200 can still carry an entitlement error body — classify BEFORE the
-    // ok return so the probe matches mint classification (review P1).
-    const body = await response.text().catch(() => "");
-    const hay = String(body).toLowerCase();
-    if (response.ok && !hay.includes("not_entitled") && !hay.includes("not entitled") && !hay.includes("no coding plan") && !hay.includes("unsubscribed") && !hay.includes("not_connected") && !hay.includes("not connected") && !hay.includes("unbound") && !hay.includes("unlinked")) {
-      return { valid: true, error: null, refreshed: false };
-    }
-    if (response.status === 401 || response.status === 403) {
+    const minted = await mintCodingPlanKey({ accessToken, connectionId: connection.id }, effectiveProxy);
+    // Persist the minted key through the generic writer's newTokens PSD merge so
+    // Test Connection immediately provisions the key (no waiting for inference).
+    const hadStoredKey = !!connection.providerSpecificData?.codingPlanApiKey;
+    const warning = hadStoredKey ? "Coding-plan key re-minted from the account; stored key was stale." : null;
+    return { valid: true, error: warning, refreshed: true, newTokens: { providerSpecificData: { codingPlanApiKey: minted.key } } };
+  } catch (error) {
+    const remediation = " Log in again, or paste a coding-plan key from https://z.ai/manage-apikey.";
+    if (error.code === "coding_plan_auth_failed") {
       return pastedKey
         ? { valid: true, error: null, refreshed: false }
-        : { valid: false, error: "ZCode login expired or invalid (coding_plan_auth_failed). Log in again, or paste a coding-plan key from https://z.ai/manage-apikey.", refreshed: false };
+        : { valid: false, error: "ZCode login expired or invalid (coding_plan_auth_failed)." + remediation, refreshed: false };
     }
-    if (hay.includes("not_entitled") || hay.includes("not entitled") || hay.includes("no coding plan") || hay.includes("unsubscribed")) {
+    if (error.code === "coding_plan_not_entitled") {
       return { valid: false, error: "Account has no coding plan (coding_plan_not_entitled). Paste a key from https://z.ai/manage-apikey or upgrade.", refreshed: false };
     }
-    if (hay.includes("not_connected") || hay.includes("not connected") || hay.includes("unbound") || hay.includes("unlinked")) {
+    if (error.code === "coding_plan_not_connected") {
       return { valid: false, error: "Coding plan not connected (coding_plan_not_connected). Connect the plan or paste a key from https://z.ai/manage-apikey.", refreshed: false };
     }
-    return { valid: false, error: "ZCode customer check returned " + response.status, refreshed: false };
-  } catch (error) {
-    return { valid: false, error: error.message, refreshed: false };
+    return { valid: false, error: error.message || "ZCode connection check failed", refreshed: false };
   }
 }
 

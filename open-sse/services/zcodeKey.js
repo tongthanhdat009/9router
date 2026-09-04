@@ -1,27 +1,23 @@
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
-// ZCode coding-plan API key (df8d…) auto-provisioning from the OAuth session.
+// ZCode coding-plan API key auto-provisioning, mirroring the installed ZCode
+// client's observed resolver (resources/glm/zcode.cjs createCodingPlanApiKeyResolver),
+// live-verified 2026-09-04 against the real account:
+//
+// 1. POST https://api.z.ai/api/auth/z/login { token: <OAuth JWT> }
+//    -> data.access_token (Z.ai business token).
+// 2. GET https://api.z.ai/api/biz/customer/getCustomerInfo with
+//    Authorization: Bearer <business token> -> organizations[0]/projects[0].
+// 3. GET .../v1/organization/{org}/projects/{proj}/api_keys -> find the entry
+//    named "zcode-api-key"; POST { name } to create it when absent.
+// 4. GET .../api_keys/copy/{apiKey} -> secretKey; final key apiKey.secretKey.
+//
 // Pure fetch+parse+classify: NO persistence (key rides the generic refresh-result
 // PSD merge), NO timers. Lazy + reactive mint; single-flight per connection.
-const CUSTOMER_INFO_URL = "https://api.z.ai/api/biz/customer/getCustomerInfo";
-
-// Ordered candidate paths for the df8d key inside getCustomerInfo data.
-// VERIFY-LIVE (ledger B-1) decides which path hits; first match wins. The
-// [DBG:ZCODEKEY] tag logs WHICH path hit — never the value.
-// ponytail: personal-plan shape only; team org/project /api_keys path is a FOLLOW-UP
-// gated on a live team capture (org/project ids are not in PSD today).
-const KEY_PATHS = [
-  ["codingPlanApiKey"],
-  ["coding_plan_api_key"],
-  ["data", "codingPlanApiKey"],
-  ["data", "coding_plan_api_key"],
-  ["data", "apiKey"],
-  ["data", "api_key"],
-  ["data", "customer", "codingPlanApiKey"],
-  ["data", "customer", "apiKey"],
-  ["data", "entitlement", "apiKey"],
-  ["data", "plan", "apiKey"],
-];
+// Logs carry endpoint/stage names only — never token or key material.
+const AUTH_URL = "https://api.z.ai/api/auth/z/login";
+const HOST = "https://api.z.ai";
+const KEY_NAME = "zcode-api-key";
 
 const inFlightMint = new Map();
 const keyByConnection = new Map();
@@ -35,67 +31,107 @@ function coded(code, status, retryable, message) {
   return err;
 }
 
-function pick(obj, path) {
-  let cur = obj;
-  for (const seg of path) {
-    if (cur == null || typeof cur !== "object") return undefined;
-    cur = cur[seg];
-  }
-  return cur;
-}
-
-// ponytail: ensure()'s fast path accepts any non-blank pasted key (legacy
-// phase-1 fixtures use short test keys); a garbage paste self-heals via the
-// 401 re-mint recovery. Tighten fast path to looksLikeKey once pasted-key
-// validation is live-verified.
-function looksLikeKey(value) {
-  return typeof value === "string" && value.length >= 8 && /^df8d/i.test(value.trim());
-}
-
 function keyLog(conn, event, detail) {
   console.log("[DBG:ZCODEKEY] conn=%s event=%s detail=%s", conn, event, detail || "");
 }
 
+// Z.ai envelopes every biz call as HTTP 200 + { code, msg, data, success }.
+// A logical code 401 means AUTH (expired/wrong token) — never "no plan".
+async function bizJson(response) {
+  const payload = await response.json().catch(() => null);
+  if (!response.ok) return { transport: response.status, payload };
+  const code = payload?.code;
+  if (code === 401 || code === "401") {
+    throw coded("coding_plan_auth_failed", 401, false, "zcode: business token rejected (code 401)");
+  }
+  if (code !== undefined && code !== null && code !== 0 && code !== 200 && code !== "0" && code !== "200") {
+    const err = new Error("zcode business error (" + code + ")");
+    err.code = code;
+    err.payload = payload;
+    throw err;
+  }
+  return { transport: 200, data: payload?.data ?? null, payload };
+}
+
+async function fetchJson(url, init, proxyOptions) {
+  return proxyAwareFetch(url, { ...init, signal: AbortSignal.timeout(10000) }, proxyOptions);
+}
+
+// Step 1 of the observed flow: exchange the stored OAuth JWT for a Z.ai
+// business token. Body carries the RAW token (no Bearer prefix).
+async function resolveBizToken(oauthToken, proxyOptions) {
+  const response = await fetchJson(AUTH_URL, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token: oauthToken }),
+  }, proxyOptions);
+  const biz = await bizJson(response);
+  if (biz.transport !== 200) {
+    const status = biz.transport || 500;
+    throw coded("coding_plan_auth_failed", status, status === 429 || status >= 500, "zcode: /api/auth/z/login failed (" + status + ")");
+  }
+  const token = String(biz.data?.access_token ?? biz.data?.accessToken ?? "").trim();
+  if (!token) throw coded("coding_plan_auth_failed", 200, false, "zcode: biz token response missing access_token");
+  return token;
+}
+
+// Step 2: first organization + first project. The observed client prefers
+// localized default names then falls back to first/first; live account has one.
+function pickOrgProject(customer) {
+  const orgs = customer?.organizations ?? [];
+  const org = orgs[0];
+  const project = org?.projects?.[0];
+  if (!org?.organizationId || !project?.projectId) return null;
+  return { organizationId: org.organizationId, projectId: project.projectId };
+}
+
 async function mintOnce(credentials, proxyOptions = null) {
-  const accessToken = credentials?.accessToken;
-  if (!accessToken) {
+  const oauthToken = credentials?.accessToken;
+  if (!oauthToken) {
     throw coded("coding_plan_auth_failed", 401, false, "zcode: no access token for key mint");
   }
-  const response = await proxyAwareFetch(
-    CUSTOMER_INFO_URL,
-    {
-      headers: { Authorization: accessToken, "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(10000),
-    },
-    proxyOptions,
-  );
-  const payload = await response.json().catch(() => null);
-  if (!response.ok) {
-    const status = response.status;
-    if (status === 401 || status === 403) {
-      throw coded("coding_plan_auth_failed", status, false, "zcode: getCustomerInfo rejected access token (" + status + ")");
+  const headersFor = (biz) => ({ Authorization: "Bearer " + biz, "Content-Type": "application/json" });
+  let bizToken;
+  try {
+    bizToken = await resolveBizToken(oauthToken, proxyOptions);
+  } catch (e) {
+    if (e.code === "coding_plan_auth_failed") throw e;
+    if (typeof e.code === "number") {
+      const status = e.code;
+      throw coded("coding_plan_auth_failed", status, status === 429 || status >= 500, "zcode: biz login returned code " + status);
     }
-    if (status === 429 || status >= 500) {
-      throw coded("coding_plan_auth_failed", status, true, "zcode: getCustomerInfo transient (" + status + ")");
+    throw coded("coding_plan_auth_failed", 500, true, "zcode: biz login transport failed");
+  }
+  const customerResp = await fetchJson(HOST + "/api/biz/customer/getCustomerInfo", { headers: headersFor(bizToken) }, proxyOptions);
+  const customerBiz = await bizJson(customerResp);
+  const org = pickOrgProject(customerBiz.data);
+  if (!org) {
+    const hay = JSON.stringify(customerBiz.payload ?? "").toLowerCase();
+    if (hay.includes("not_entitled") || hay.includes("no coding plan") || hay.includes("unsubscribed")) {
+      throw coded("coding_plan_not_entitled", 200, false, "zcode: account has no coding plan entitlement");
     }
-    throw coded("coding_plan_auth_failed", status, false, "zcode: getCustomerInfo failed (" + status + ")");
-  }
-  const data = payload?.data ?? payload;
-  for (const path of KEY_PATHS) {
-    const value = pick(payload, path) ?? pick({ data }, path);
-    if (looksLikeKey(value)) {
-      return { key: value.trim(), path: path.join("."), data };
+    if (hay.includes("not_connected") || hay.includes("unbound") || hay.includes("unlinked")) {
+      throw coded("coding_plan_not_connected", 200, false, "zcode: coding plan not connected to this account");
     }
+    throw coded("coding_plan_not_connected", 200, false, "zcode: unable to resolve organization and project");
   }
-  // No key found: distinguish not-entitled / not-connected from opaque shape.
-  const haystack = JSON.stringify(payload ?? "").toLowerCase();
-  if (haystack.includes("not_entitled") || haystack.includes("not entitled") || haystack.includes("no coding plan") || haystack.includes("unsubscribed")) {
-    throw coded("coding_plan_not_entitled", 200, false, "zcode: account has no coding plan entitlement");
+  // Steps 3-4: find (or create) the named key, then read its secret copy.
+  const base = HOST + "/api/biz/v1/organization/" + encodeURIComponent(org.organizationId) + "/projects/" + encodeURIComponent(org.projectId) + "/api_keys";
+  const listResp = await fetchJson(base, { headers: headersFor(bizToken) }, proxyOptions);
+  const listBiz = await bizJson(listResp);
+  let entry = (Array.isArray(listBiz.data) ? listBiz.data : []).find((d) => d?.name === KEY_NAME);
+  if (!entry) {
+    const createResp = await fetchJson(base, { method: "POST", headers: headersFor(bizToken), body: JSON.stringify({ name: KEY_NAME }) }, proxyOptions);
+    const createBiz = await bizJson(createResp);
+    entry = createBiz.data && typeof createBiz.data === "object" ? createBiz.data : null;
   }
-  if (haystack.includes("not_connected") || haystack.includes("not connected") || haystack.includes("unbound") || haystack.includes("unlinked")) {
-    throw coded("coding_plan_not_connected", 200, false, "zcode: coding plan not connected to this account");
-  }
-  throw coded("coding_plan_not_entitled", 200, false, "zcode: no coding-plan key in customer info");
+  const apiKey = String(entry?.apiKey ?? "").trim();
+  if (!apiKey) throw coded("coding_plan_not_connected", 200, false, "zcode: API key response missing apiKey");
+  const copyResp = await fetchJson(base + "/copy/" + encodeURIComponent(apiKey), { headers: headersFor(bizToken) }, proxyOptions);
+  const copyBiz = await bizJson(copyResp);
+  const secret = String(copyBiz.data?.secretKey ?? "").trim();
+  // Observed final shape: apiKey.secretKey (49 chars on the live account).
+  return { key: secret ? apiKey + "." + secret : apiKey, path: secret ? "api_keys/zcode-api-key+copy" : "api_keys/zcode-api-key" };
 }
 
 export async function mintCodingPlanKey(credentials, proxyOptions = null) {

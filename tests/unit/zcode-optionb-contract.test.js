@@ -15,11 +15,11 @@ describe("zcode Option B fixture and dashboard contract", () => {
     expect(redacted("df8dfixture000000000001")).toBe("df8dfi...");
   });
 
-  it("dashboard probe uses raw token and the generic error/status writer", () => {
+  it("dashboard probe runs the real mint flow and the generic error/status writer", () => {
     const source = readFileSync(new URL("../../src/app/api/providers/[id]/test/testUtils.js", import.meta.url), "utf8");
     expect(source).toContain('case "zcode"');
     expect(source).toContain('if (connection.provider === "zcode") return probeZcodeConnection');
-    expect(source).toContain('Authorization: accessToken');
+    expect(source).toContain('mintCodingPlanKey({ accessToken, connectionId: connection.id }');
     expect(source).toContain('coding_plan_not_entitled');
     expect(source).toContain('testStatus: result.valid ? "active" : "error"');
   });

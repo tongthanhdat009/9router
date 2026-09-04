@@ -178,10 +178,10 @@ describe("zcode executor Option B (key provisioning)", () => {
     let mintCalls = 0;
     const superCalls = [];
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
-      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") {
-        mintCalls += 1;
-        return res({ code: 0, data: { codingPlanApiKey: "df8dminted00000001" } });
-      }
+      if (String(url).includes("/api/auth/z/login")) { mintCalls += 1; return res({ code: 200, data: { access_token: "biz-" + mintCalls } }); }
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 200, data: { organizations: [{ organizationId: "o1", projects: [{ projectId: "p1" }] }] } });
+      if (url === "https://api.z.ai/api/biz/v1/organization/o1/projects/p1/api_keys") return res({ code: 200, data: [{ name: "zcode-api-key", apiKey: "df8dminted00000001" }] });
+      if (String(url).includes("/api_keys/copy/")) return res({ code: 200, data: { secretKey: "sec00000000000001" } });
       if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
       if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
       if (url === TAKE && options.method === "POST") return res({ code: 0, data: { ticket_id: "tk-b2", status: "active" } });
@@ -200,8 +200,8 @@ describe("zcode executor Option B (key provisioning)", () => {
     });
     const result = await executor.execute({ model: "glm-5.3-flash", body: { model: "glm-5.3-flash", messages: [] }, stream: false, credentials, log: console });
     expect(superCalls.length).toBe(2);
-    expect(superCalls[0].key).toBe("df8dminted00000001");
-    expect(superCalls[1].key).toBe("df8dminted00000001");
+    expect(superCalls[0].key).toBe("df8dminted00000001.sec00000000000001");
+    expect(superCalls[1].key).toBe("df8dminted00000001.sec00000000000001");
     expect(mintCalls).toBe(2);
     expect(result.response.ok).toBe(true);
     superExecute.mockRestore();
@@ -212,7 +212,10 @@ describe("zcode executor Option B (key provisioning)", () => {
     const { clearZcodeKeyStateForTests } = await import("../../open-sse/services/zcodeKey.js");
     clearZcodeKeyStateForTests();
     vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
-      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 0, data: { codingPlanApiKey: "df8dmintednormal01" } });
+      if (String(url).includes("/api/auth/z/login")) return res({ code: 200, data: { access_token: "biz-1" } });
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 200, data: { organizations: [{ organizationId: "o1", projects: [{ projectId: "p1" }] }] } });
+      if (url === "https://api.z.ai/api/biz/v1/organization/o1/projects/p1/api_keys") return res({ code: 200, data: [{ name: "zcode-api-key", apiKey: "df8dmintednormal01" }] });
+      if (String(url).includes("/api_keys/copy/")) return res({ code: 200, data: { secretKey: "sec00000000000001" } });
       throw new Error("unexpected " + url);
     });
     const executor = new ZcodeExecutor();
@@ -223,8 +226,8 @@ describe("zcode executor Option B (key provisioning)", () => {
       return okUpstream();
     });
     await executor.execute({ model: "glm-5.3", body: { model: "glm-5.3", messages: [] }, stream: false, credentials, log: console });
-    expect(headers["x-api-key"]).toBe("df8dmintednormal01");
-    expect(headers["Authorization"]).toBe("Bearer df8dmintednormal01");
+    expect(headers["x-api-key"]).toBe("df8dmintednormal01.sec00000000000001");
+    expect(headers["Authorization"]).toBe("Bearer df8dmintednormal01.sec00000000000001");
     superExecute.mockRestore();
   });
 });
@@ -236,7 +239,10 @@ describe("zcode executor Option B (routing)", () => {
     const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
     const future = Math.floor(Date.now() / 1000) + 3600;
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
-      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 0, data: { codingPlanApiKey: "df8db5routing000001" } });
+      if (String(url).includes("/api/auth/z/login")) return res({ code: 200, data: { access_token: "biz-1" } });
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 200, data: { organizations: [{ organizationId: "o1", projects: [{ projectId: "p1" }] }] } });
+      if (url === "https://api.z.ai/api/biz/v1/organization/o1/projects/p1/api_keys") return res({ code: 200, data: [{ name: "zcode-api-key", apiKey: "df8db5routing000001" }] });
+      if (String(url).includes("/api_keys/copy/")) return res({ code: 200, data: { secretKey: "sec00000000000001" } });
       if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
       if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
       if (url === TAKE && options.method === "POST") return res({ code: 3103, data: { next_take_at: future } }, 429);
@@ -252,14 +258,17 @@ describe("zcode executor Option B (routing)", () => {
     expect(result.response.ok).toBe(true);
     expect(credentials.__zcodeChannel.channel).toBe("normal");
     const headers = executor.buildHeaders(credentials, false, null, null, {});
-    expect(headers["x-api-key"]).toBe("df8db5routing000001");
+    expect(headers["x-api-key"]).toBe("df8db5routing000001.sec00000000000001");
     superExecute.mockRestore();
   });
 
   it("B5 off-peak requires JWT: key only (no JWT) serves normal", async () => {
     const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
     vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
-      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 0, data: { codingPlanApiKey: "df8db5nojwt00000001" } });
+      if (String(url).includes("/api/auth/z/login")) return res({ code: 200, data: { access_token: "biz-1" } });
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 200, data: { organizations: [{ organizationId: "o1", projects: [{ projectId: "p1" }] }] } });
+      if (url === "https://api.z.ai/api/biz/v1/organization/o1/projects/p1/api_keys") return res({ code: 200, data: [{ name: "zcode-api-key", apiKey: "df8db5nojwt00000001" }] });
+      if (String(url).includes("/api_keys/copy/")) return res({ code: 200, data: { secretKey: "sec00000000000001" } });
       throw new Error("unexpected " + url);
     });
     const executor = new ZcodeExecutor();
