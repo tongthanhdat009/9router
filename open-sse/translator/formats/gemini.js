@@ -213,6 +213,15 @@ function addPlaceholder(obj) {
   }
 }
 
+// Tracks schemas already cleaned in this process so the Antigravity executor can
+// skip a duplicate clone + recursive walk after request translation. WeakSet keeps
+// no strong references and never leaks into serialized provider payloads.
+const antigravityCleanedSchemas = new WeakSet();
+
+export function isAntigravitySchemaClean(schema) {
+  return !!schema && typeof schema === "object" && antigravityCleanedSchemas.has(schema);
+}
+
 // Clean JSON Schema for Antigravity API compatibility in one recursive walk.
 export function cleanJSONSchemaForAntigravity(schema) {
   if (!schema || typeof schema !== "object") return schema;
@@ -259,5 +268,6 @@ export function cleanJSONSchemaForAntigravity(schema) {
   }
 
   visit(schema);
+  antigravityCleanedSchemas.add(schema);
   return schema;
 }

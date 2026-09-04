@@ -5,7 +5,7 @@ import { OAUTH_ENDPOINTS, ANTIGRAVITY_HEADERS, AG_DEFAULT_TOOLS, AG_TOOL_SUFFIX,
 import { HTTP_STATUS } from "../config/runtimeConfig.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
-import { cleanJSONSchemaForAntigravity } from "../translator/formats/gemini.js";
+import { cleanJSONSchemaForAntigravity, isAntigravitySchemaClean } from "../translator/formats/gemini.js";
 import { DEFAULT_THINKING_AG_SIGNATURE } from "../config/defaultThinkingSignature.js";
 
 // Sanitize function name: Gemini requires [a-zA-Z_][a-zA-Z0-9_.:\-]{0,63}
@@ -234,7 +234,9 @@ export class AntigravityExecutor extends BaseExecutor {
             ...fn,
             name,
             parameters: fn.parameters
-              ? cleanJSONSchemaForAntigravity(structuredClone(fn.parameters))
+              ? (isAntigravitySchemaClean(fn.parameters)
+                ? fn.parameters
+                : cleanJSONSchemaForAntigravity(structuredClone(fn.parameters)))
               : { type: "object", properties: { reason: { type: "string", description: "Brief explanation" } }, required: ["reason"] }
           });
         }

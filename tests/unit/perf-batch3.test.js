@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { cleanJSONSchemaForAntigravity } from "../../open-sse/translator/formats/gemini.js";
+import { cleanJSONSchemaForAntigravity, isAntigravitySchemaClean } from "../../open-sse/translator/formats/gemini.js";
 import { openaiToGeminiCLIRequest } from "../../open-sse/translator/request/openai-to-gemini.js";
 
 describe("Batch 3 performance guards", () => {
@@ -18,6 +18,13 @@ describe("Batch 3 performance guards", () => {
       type: "object",
       properties: { selected: { type: "string" } },
     });
+  });
+
+  it("marks cleaned schemas for executor dedup without serializing metadata", () => {
+    const schema = cleanJSONSchemaForAntigravity({ type: "object", properties: { p: { const: 1 } } });
+    expect(isAntigravitySchemaClean(schema)).toBe(true);
+    expect(isAntigravitySchemaClean(structuredClone(schema))).toBe(false);
+    expect(JSON.stringify(schema)).toBe('{"type":"object","properties":{"p":{"enum":["1"],"type":"string"}}}');
   });
 
   it("Gemini CLI uses the schema cleaned by the base translator", () => {
