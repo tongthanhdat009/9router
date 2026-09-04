@@ -31,7 +31,7 @@ export default {
     pollUrl: "https://zcode.z.ai/api/v1/oauth/cli/poll/",
     tokenUrl: "https://zcode.z.ai/api/v1/oauth/token",
   },
-  features: { usage: true },
+  features: { usage: false },
   models: [
     { id: "glm-5.3" },
     { id: "glm-5.3-flash" },
