@@ -223,7 +223,12 @@ async function getDispatcher(proxyUrl) {
   if (!proxyDispatchers.has(normalized)) {
     // Evict oldest entry if max size reached
     if (proxyDispatchers.size >= MEMORY_CONFIG.proxyDispatchersMaxSize) {
-      proxyDispatchers.delete(proxyDispatchers.keys().next().value);
+      const oldestKey = proxyDispatchers.keys().next().value;
+      const oldest = proxyDispatchers.get(oldestKey);
+      proxyDispatchers.delete(oldestKey);
+      Promise.resolve(oldest?.close?.()).catch((error) => {
+        console.warn(`[ProxyFetch] Failed to close evicted proxy dispatcher: ${error.message}`);
+      });
     }
     const { ProxyAgent } = await import("undici");
     proxyDispatchers.set(normalized, new ProxyAgent({ uri: normalized }));

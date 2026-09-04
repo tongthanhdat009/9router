@@ -61,6 +61,40 @@ describe("Batch 2 performance guards", () => {
     expect(refreshed).not.toBe(first);
   });
 
+  it("closes an evicted proxy dispatcher when the cache exceeds its cap", async () => {
+    const originalFetch = globalThis.fetch;
+    const close = vi.fn(async () => {});
+    close.mockRejectedValueOnce(new Error("close failed"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const ProxyAgent = vi.fn(function ProxyAgent(options) {
+      this.options = options;
+      this.close = close;
+    });
+    vi.doMock("undici", () => ({ ProxyAgent }));
+    globalThis.fetch = vi.fn(async () => new Response("ok"));
+    vi.resetModules();
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+
+    try {
+      for (let i = 0; i <= 20; i++) {
+        await proxyAwareFetch("https://opencode.ai/zen/v1/chat/completions", {}, {
+          enabled: true,
+          url: `http://proxy-${i}.example:8080`,
+          strictProxy: true,
+        });
+      }
+      expect(ProxyAgent).toHaveBeenCalledTimes(21);
+      expect(close).toHaveBeenCalledTimes(1);
+      await vi.waitFor(() => expect(warn).toHaveBeenCalledWith(
+        "[ProxyFetch] Failed to close evicted proxy dispatcher: close failed"
+      ));
+    } finally {
+      globalThis.fetch = originalFetch;
+      vi.doUnmock("undici");
+      vi.resetModules();
+    }
+  });
+
   it("cancels upstream once a pre-output transient marker completes across chunks", async () => {
     const executor = new CodexExecutor();
     const encoder = new TextEncoder();
