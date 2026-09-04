@@ -47,7 +47,14 @@ const zcode = {
     if (data.status === "ready") return { ok: true, data: { access_token: data.zai?.access_token || "zcode-ready", ...data } };
     return { ok: false, data: { error: "access_denied", error_description: "Unexpected ZCode flow status" } };
   },
-  mapTokens(tokens) {
+  async postExchange(tokens) {
+    const accessToken = tokens.access_token || tokens.zai?.access_token;
+    if (!accessToken) return null;
+    const { mintCodingPlanKey } = await import("open-sse/services/zcodeKey.js");
+    const minted = await mintCodingPlanKey({ accessToken });
+    return { codingPlanApiKey: minted?.key || null };
+  },
+  mapTokens(tokens, extra) {
     return {
       accessToken: tokens.zai?.access_token || null,
       refreshToken: tokens.zai?.refresh_token || null,
@@ -56,7 +63,7 @@ const zcode = {
       providerSpecificData: {
         zcodeJwtToken: tokens.token,
         deviceId: crypto.randomUUID(),
-        codingPlanApiKey: null,
+        codingPlanApiKey: extra?.codingPlanApiKey || null,
         userId: tokens.user?.user_id || null,
       },
     };

@@ -1,6 +1,11 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
+
+vi.mock("open-sse/services/zcodeKey.js", () => ({
+  mintCodingPlanKey: vi.fn(async () => ({ key: "df8d-minted-key.secret123" })),
+}));
+
 import zcode from "../../src/lib/oauth/providers/zcode.js";
 
 const INIT = "https://zcode.z.ai/api/v1/oauth/cli/init";
@@ -52,13 +57,21 @@ describe("zcode oauth adapter", () => {
     const result = await zcode.pollToken({}, "flow-1", null, { _zcodePollToken: "p".repeat(64) });
     expect(result.ok).toBe(true);
     expect(result.data.access_token).toBe("zai-at");
-    const tokens = zcode.mapTokens(result.data, null);
+    const extra = await zcode.postExchange(result.data);
+    const tokens = zcode.mapTokens(result.data, extra);
     expect(tokens.accessToken).toBe("zai-at");
     expect(tokens.refreshToken).toBe("zai-rt");
     expect(tokens.providerSpecificData.zcodeJwtToken).toBe("jwt-1");
     expect(tokens.providerSpecificData.deviceId).toBeTruthy();
-    expect(tokens.providerSpecificData.codingPlanApiKey).toBeNull();
     expect(poll.mock.calls[0][0]).toBe(POLL_BASE + "flow-1");
+  });
+
+  it("postExchange immediately mints codingPlanApiKey and maps into PSD", async () => {
+    const payload = { access_token: "tok-fresh" };
+    const extra = await zcode.postExchange(payload);
+    expect(extra).toEqual({ codingPlanApiKey: "df8d-minted-key.secret123" });
+    const tokens = zcode.mapTokens({ token: "jwt-test", user: { user_id: "u1" }, zai: payload }, extra);
+    expect(tokens.providerSpecificData.codingPlanApiKey).toBe("df8d-minted-key.secret123");
   });
 
   it("registers the four device-flow gates", () => {
