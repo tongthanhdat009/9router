@@ -5,6 +5,24 @@ import { dbg } from "../utils/debugLog.js";
 import { ANTHROPIC_API_VERSION, OPENAI_COMPAT_BASE, ANTHROPIC_COMPAT_BASE } from "../providers/shared.js";
 import { resolveOpenAICompatibleApiType } from "../services/provider.js";
 
+// Cooperative-yield threshold for large request serialization (perf 2026-09-05):
+// JSON.stringify of bodies >= ~256KB blocks the event loop for milliseconds; under several
+// concurrent large uploads small requests starved (victim sched delay ~44ms @ 8 heavy projects).
+const HEAVY_BODY_YIELD_BYTES = 256 * 1024;
+
+// Cheap structural size estimate without serializing: message-content char length.
+function estimateSerializedSize(body) {
+  const msgs = body?.messages ?? body?.input;
+  if (!Array.isArray(msgs)) return 0;
+  let chars = 0;
+  for (const m of msgs) {
+    const c = m?.content;
+    if (typeof c === "string") chars += c.length;
+    else if (Array.isArray(c)) for (const p of c) chars += typeof p?.text === "string" ? p.text.length : 0;
+  }
+  return chars;
+}
+
 /**
  * BaseExecutor - Base class for provider executors
  */
@@ -107,6 +125,17 @@ export class BaseExecutor {
     return { transformedBody, ctx, bodyStr: JSON.stringify(transformedBody) };
   }
 
+  // Cooperative yield before large synchronous serialization: multi-MB JSON.stringify blocks the
+  // event loop for ms; with several concurrent large uploads, small latency-sensitive requests
+  // starved behind the whole batch (victim sched delay ~44ms @ 8 heavy projects). Yielding to the
+  // check phase lets queued continuations run between large blocks. (perf 2026-09-05)
+  async prepareRequestFair({ model, body, stream, credentials, requestId = null }) {
+    if (estimateSerializedSize(body) >= HEAVY_BODY_YIELD_BYTES) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+    return this.prepareRequest({ model, body, stream, credentials, requestId });
+  }
+
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestId = null, preparedRequest = null }) {
     const fallbackCount = this.getFallbackCount();
     let lastError = null;
@@ -115,7 +144,7 @@ export class BaseExecutor {
 
     // Merge default retry config with provider-specific config
     const retryConfig = { ...DEFAULT_RETRY_CONFIG, ...this.config.retry };
-    const { transformedBody, ctx, bodyStr } = preparedRequest || this.prepareRequest({ model, body, stream, credentials, requestId });
+    const { transformedBody, ctx, bodyStr } = preparedRequest || (await this.prepareRequestFair({ model, body, stream, credentials, requestId }));
 
     // Schedule retry via retryConfig[statusKey]. Returns true when caller should `urlIndex--; continue`
     // response (optional) lets a subclass hook compute a dynamic delay (e.g. antigravity Retry-After).

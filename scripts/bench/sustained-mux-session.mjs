@@ -228,11 +228,14 @@ async function main() {
   clearInterval(sampler);
   loop.disable();
 
-  // Let event loop settle and run GC if exposed
-  await new Promise((r) => setTimeout(r, 500));
+  const endLoadMem = process.memoryUsage();
+  const endLoadFd = getFdCount();
+
+  // Explicit post-load idle settle period: wait 3 seconds for keep-alive timeouts and socket releases
+  await new Promise((r) => setTimeout(r, 3000));
   if (globalThis.gc) globalThis.gc();
-  const endMem = process.memoryUsage();
-  const endFd = getFdCount();
+  const settledMem = process.memoryUsage();
+  const settledFd = getFdCount();
 
   const peakHeap = Math.max(...samples.map((s) => s.heapUsedMB));
   const peakRss = Math.max(...samples.map((s) => s.rssMB));
@@ -252,15 +255,18 @@ async function main() {
     resources: {
       startHeapMB: +(startMem.heapUsed / 1048576).toFixed(1),
       peakHeapMB: peakHeap,
-      endHeapMB: +(endMem.heapUsed / 1048576).toFixed(1),
+      endLoadHeapMB: +(endLoadMem.heapUsed / 1048576).toFixed(1),
+      settledHeapMB: +(settledMem.heapUsed / 1048576).toFixed(1),
       startRssMB: +(startMem.rss / 1048576).toFixed(1),
       peakRssMB: peakRss,
-      endRssMB: +(endMem.rss / 1048576).toFixed(1),
+      endLoadRssMB: +(endLoadMem.rss / 1048576).toFixed(1),
+      settledRssMB: +(settledMem.rss / 1048576).toFixed(1),
       startFds: startFd,
       peakFds: peakFds,
-      endFds: endFd,
+      endLoadFds: endLoadFd,
+      settledFds: settledFd,
       maxDispatchers: peakDispatchers,
-      endDispatchers: proxyDispatchers ? proxyDispatchers.size : 0
+      settledDispatchers: proxyDispatchers ? proxyDispatchers.size : 0
     },
     eventLoop: {
       meanMs: +(Number(loop.mean) / 1e6).toFixed(3),
