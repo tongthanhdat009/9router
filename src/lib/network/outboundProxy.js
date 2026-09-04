@@ -22,6 +22,20 @@ export function applyOutboundProxyEnv(
 ) {
   if (typeof process === "undefined" || !process.env) return;
   const enabled = Boolean(outboundProxyEnabled);
+
+  // Bun's native fetch honors HTTP_PROXY/HTTPS_PROXY from the environment
+  // (Node's fetch ignores them), so env vars 9router did not set itself would
+  // silently route every plain fetch through a foreign proxy under Bun.
+  // Strip unmanaged env proxies for parity with Node behavior. Managed values
+  // (NINE_ROUTER_PROXY_MANAGED=1) are written below and stay untouched.
+  if (process.versions.bun && process.env.NINE_ROUTER_PROXY_MANAGED !== "1") {
+    for (const key of ["HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"]) {
+      if (process.env[key]) {
+        delete process.env[key];
+        console.warn("[OutboundProxy] Removed unmanaged " + key + " (Bun fetch honors env proxies natively; Node does not)");
+      }
+    }
+  }
   const proxyUrl = normalizeString(outboundProxyUrl);
   const noProxy = normalizeString(outboundNoProxy);
 

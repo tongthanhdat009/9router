@@ -30,7 +30,9 @@ async function tryBetterSqlite() {
 }
 
 async function tryNodeSqlite() {
-  // Built-in since Node 22.5.0 — no install needed. Skip under Bun (no node:sqlite).
+  // Built-in since Node 22.5.0 — no install needed. Skip under Bun: bun:sqlite
+  // is the preferred adapter there (node:sqlite does function under Bun 1.4.1,
+  // verified — re-enable as a Bun fallback only if bun:sqlite ever proves flaky).
   if (process.versions.bun) return null;
   const [maj, min] = process.versions.node.split(".").map(Number);
   if (maj < 22 || (maj === 22 && min < 5)) return null;
