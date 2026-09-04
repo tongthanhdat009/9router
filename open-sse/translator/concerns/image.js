@@ -14,11 +14,17 @@ export function parseDataUri(url) {
 
 import { lookup } from "node:dns/promises";
 import { Agent } from "undici";
+import http from "node:http";
+import https from "node:https";
 import { MAX_IMAGE_BYTES, FETCH_TIMEOUT_MS, IMAGE_SIGNATURES, BLOCKED_HOSTS } from "../../config/mediaConfig.js";
+
+const IS_BUN = typeof globalThis.Bun !== "undefined";
 
 // Single shared dispatcher for all image fetches (previously one Agent per fetch).
 // Its connect.lookup re-validates and pins the resolved IP at connect time,
 // preserving the SSRF/TOCTOU guard without per-request Agent churn.
+// Node-only: under Bun both global fetch and npm undici ignore the
+// dispatcher option and connect.lookup, so the Bun path uses node:http(s).request.
 const imageDispatcher = new Agent({
   connect: {
     lookup: (hostname, _options, callback) => {
@@ -79,6 +85,61 @@ function detectImageMime(buf) {
   return null;
 }
 
+// Bun path: fetch+dispatcher cannot pin DNS there, but node:http(s).request
+// honors options.lookup under Bun 1.4.1 (verified). Same SSRF guarantees:
+// connect-time re-validation via resolvePinnedIps, no redirect following
+// (node:http(s) never follows redirects), byte cap applied by the reader.
+function pinnedImageRequest(url, signal) {
+  return new Promise((resolve) => {
+    let req;
+    try {
+      const lib = url.protocol === "https:" ? https : http;
+      req = lib.request(
+        {
+          hostname: url.hostname,
+          port: url.port || (url.protocol === "https:" ? 443 : 80),
+          path: url.pathname + url.search,
+          method: "GET",
+          servername: url.protocol === "https:" ? url.hostname : undefined,
+          lookup: (hostname, _options, callback) => {
+            resolvePinnedIps(hostname)
+              .then((ips) => {
+                if (!ips) { callback(new Error("blocked host")); return; }
+                callback(null, [{ address: ips[0].address, family: ips[0].family }]);
+              })
+              .catch(callback);
+          },
+        },
+        (res) => resolve(res)
+      );
+    } catch { resolve(null); return; }
+    signal.addEventListener("abort", () => req.destroy(), { once: true });
+    req.on("error", () => resolve(null));
+    req.end();
+  });
+}
+
+// Read a node stream body with a hard byte cap; null on error or overflow.
+function readBodyWithCap(stream, maxBytes) {
+  return new Promise((resolve) => {
+    const chunks = [];
+    let total = 0;
+    stream.on("data", (c) => {
+      total += c.length;
+      if (total > maxBytes) { stream.destroy(); resolve(null); return; }
+      chunks.push(c);
+    });
+    stream.on("end", () => resolve(Buffer.concat(chunks)));
+    stream.on("error", () => resolve(null));
+  });
+}
+
+function bufToResult(buf) {
+  const mimeType = detectImageMime(buf);
+  if (!mimeType) return null; // not a recognized image — reject disguised payloads
+  return { url: "data:" + mimeType + ";base64," + buf.toString("base64"), mimeType };
+}
+
 /**
  * Fetch a remote image URL and return it as a base64 data URI.
  * Hardened against SSRF (private/metadata IPs), memory DoS (size cap),
@@ -104,7 +165,18 @@ export async function fetchImageAsBase64(imageUrl, options = {}) {
   const fetchSignal = signal || controller.signal;
 
   try {
-    // redirect:"manual" prevents a public URL redirecting to a private one (SSRF bypass).
+    if (IS_BUN) {
+      // Bun: fetch+dispatcher cannot pin DNS — node:http(s).request with
+      // connect-time resolvePinnedIps lookup (Bun honors options.lookup);
+      // node request never follows redirects, so redirect-SSRF stays covered.
+      const res = await pinnedImageRequest(url, fetchSignal);
+      if (!res || res.statusCode < 200 || res.statusCode >= 300) { res?.destroy?.(); return null; }
+      const buf = await readBodyWithCap(res, maxBytes);
+      if (!buf) return null;
+      return bufToResult(buf);
+    }
+
+    // Node: redirect:"manual" prevents a public URL redirecting to a private one (SSRF bypass).
     // Connect is pinned to the validated IP by the shared dispatcher's lookup.
     const response = await fetch(imageUrl, { signal: fetchSignal, redirect: "manual", dispatcher: imageDispatcher });
     if (!response.ok || !response.body) return null;
