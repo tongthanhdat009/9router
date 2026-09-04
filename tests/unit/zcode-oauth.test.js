@@ -15,6 +15,11 @@ describe("zcode oauth adapter", () => {
   beforeEach(() => { vi.clearAllMocks(); global.fetch = originalFetch; });
   afterEach(() => { global.fetch = originalFetch; });
 
+  it("declares the shared device-code adapter contract", () => {
+    expect(zcode.flowType).toBe("device_code");
+    expect(zcode.config).toEqual({});
+  });
+
   it("posts device init with Bearer poll_token and maps flow fields", async () => {
     const fetchMock = vi.fn(async (url, options) => {
       expect(url).toBe(INIT);

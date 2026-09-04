@@ -15,6 +15,8 @@ async function postInit(url, pollToken) {
 }
 
 const zcode = {
+  config: {},
+  flowType: "device_code",
   async requestDeviceCode() {
     const pollToken = crypto.randomBytes(32).toString("hex");
     const data = await postInit(ZCODE_INIT_URL, pollToken);
