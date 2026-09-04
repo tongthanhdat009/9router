@@ -1,17 +1,28 @@
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 import { zcodeRequestHeaders, zcodeSessionId } from "../../utils/zcodeIdentity.js";
+import { ensureCodingPlanKey } from "../zcodeKey.js";
 import { parseResetTime } from "./shared.js";
 
 // ZCode coding-plan usage: GET billing/balance with the connection JWT and map
 // grant/used/remaining/total_units into the shared quota shape.
 export async function getZcodeUsage(credentials, proxyOptions = null, { force } = {}) {
   void force;
-  const jwt = credentials?.providerSpecificData?.zcodeJwtToken;
+  const psd = credentials?.providerSpecificData || {};
+  const jwt = psd.zcodeJwtToken;
   if (!jwt) return { message: "ZCode JWT not available. Complete the device-flow login first." };
+  let codingPlanApiKey;
+  try {
+    // Same lazy mint path as inference: quota tracker works before the first
+    // Test Connection persistence pass, while never writing connection state.
+    codingPlanApiKey = await ensureCodingPlanKey(credentials, proxyOptions);
+  } catch (error) {
+    return { message: "ZCode coding-plan key unavailable: " + (error?.message || error) };
+  }
+  if (!codingPlanApiKey) return { message: "ZCode coding-plan key not available. Test the connection or paste a key first." };
   try {
     const response = await proxyAwareFetch(
       "https://zcode.z.ai/api/v1/zcode-plan/billing/balance",
-      { headers: { ...zcodeRequestHeaders(zcodeSessionId(credentials)), Authorization: "Bearer " + jwt, Accept: "application/json" } },
+      { headers: { ...zcodeRequestHeaders(zcodeSessionId(credentials)), Authorization: "Bearer " + jwt, "X-Coding-Plan-Api-Key": codingPlanApiKey, Accept: "application/json" } },
       proxyOptions,
     );
     if (!response.ok) {
