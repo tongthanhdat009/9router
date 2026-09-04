@@ -74,6 +74,13 @@ describe("zcode oauth adapter", () => {
     expect(tokens.providerSpecificData.codingPlanApiKey).toBe("df8d-minted-key.secret123");
   });
 
+  it("postExchange gracefully handles mint failures without aborting login", async () => {
+    const { mintCodingPlanKey } = await import("open-sse/services/zcodeKey.js");
+    vi.mocked(mintCodingPlanKey).mockRejectedValueOnce(new Error("Z.ai 500 error"));
+    const extra = await zcode.postExchange({ access_token: "tok-err" });
+    expect(extra).toEqual({ codingPlanApiKey: null });
+  });
+
   it("registers the four device-flow gates", () => {
     const route = readFileSync(resolve("../src/app/api/oauth/[provider]/[action]/route.js"), "utf8");
     expect(route).toContain('"zcode"');

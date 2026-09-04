@@ -104,6 +104,10 @@ async function mintOnce(credentials, proxyOptions = null) {
   }
   const customerResp = await fetchJson(HOST + "/api/biz/customer/getCustomerInfo", { headers: headersFor(bizToken) }, proxyOptions);
   const customerBiz = await bizJson(customerResp);
+  if (customerBiz.transport !== 200) {
+    const status = customerBiz.transport || 500;
+    throw coded("coding_plan_auth_failed", status, status === 429 || status >= 500, "zcode: customer info failed (" + status + ")");
+  }
   const org = pickOrgProject(customerBiz.data);
   if (!org) {
     const hay = JSON.stringify(customerBiz.payload ?? "").toLowerCase();

@@ -48,11 +48,17 @@ const zcode = {
     return { ok: false, data: { error: "access_denied", error_description: "Unexpected ZCode flow status" } };
   },
   async postExchange(tokens) {
-    const accessToken = tokens.access_token || tokens.zai?.access_token;
-    if (!accessToken) return null;
-    const { mintCodingPlanKey } = await import("open-sse/services/zcodeKey.js");
-    const minted = await mintCodingPlanKey({ accessToken });
-    return { codingPlanApiKey: minted?.key || null };
+    const raw = tokens.zai?.access_token || tokens.access_token;
+    const accessToken = raw && raw !== "zcode-ready" ? raw : null;
+    if (!accessToken) return { codingPlanApiKey: null };
+    try {
+      const { mintCodingPlanKey } = await import("open-sse/services/zcodeKey.js");
+      const minted = await mintCodingPlanKey({ accessToken });
+      return { codingPlanApiKey: minted?.key || null };
+    } catch {
+      // Non-fatal: connection saves successfully; user can paste key manually or lazy-mint on next inference
+      return { codingPlanApiKey: null };
+    }
   },
   mapTokens(tokens, extra) {
     return {
