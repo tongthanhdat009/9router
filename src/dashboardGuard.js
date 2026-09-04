@@ -159,9 +159,8 @@ async function canAccessPublicLlmApi(request) {
 }
 
 // Public LLM API gate, callable from route handlers. Semantically identical to the
-// middleware branch for PUBLIC_PREFIXES paths; invoked in-handler because the
-// proxy matcher skips /v1, /api/v1, /v1beta, /api/v1beta, /codex, /responses
-// to keep the inference hot path off the middleware runtime.
+// middleware branch for PUBLIC_PREFIXES paths; chat-completions invokes it in-handler
+// because the proxy matcher skips that hot path.
 export async function guardPublicLlmApi(request) {
   if (await canAccessPublicLlmApi(request)) return null;
   return NextResponse.json({ error: "API key required for remote API access" }, { status: 401 });
