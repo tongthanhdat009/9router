@@ -84,7 +84,7 @@ function truncateField(obj, maxSize) {
   // escaping/keys/brackets only add chars), so exceeding maxSize here means
   // truncated without paying a full multi-MB stringify inside the flush
   // transaction (measured ~1.2ms per 1MB field, ×N buffered records).
-  const messages = obj.messages;
+  const messages = obj.messages ?? obj.input;
   if (Array.isArray(messages) && messages.length > 0) {
     let lowerBound = 2 * messages.length;
     for (const m of messages) {
