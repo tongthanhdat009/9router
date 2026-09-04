@@ -203,6 +203,11 @@ export const MUSE_MINT_BASE =
   process.env.TBH_MINT_BASE_URL || "https://api.meta.ai";
 export const MUSE_CLIENT_ID = "1031625952748946";
 export const MUSE_API_BASE = "https://api.meta.ai/v1";
+
+export const ZCODE_CLIENT_ID = "client_P8X5CMWmlaRO9gyO-KSqtg";
+export const ZCODE_INIT_URL = "https://zcode.z.ai/api/v1/oauth/cli/init";
+export const ZCODE_POLL_URL = "https://zcode.z.ai/api/v1/oauth/cli/poll/";
+export const ZCODE_TOKEN_URL = "https://zcode.z.ai/api/v1/oauth/token";
 export const MUSE_CONFIG = {
   ...PROVIDER_OAUTH["muse"],
   authBase: MUSE_AUTH_BASE,

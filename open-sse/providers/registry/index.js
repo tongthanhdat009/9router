@@ -61,6 +61,7 @@ import p58 from "./minimax-cn.js";
 import p59 from "./minimax.js";
 import p60 from "./mistral.js";
 import museEntry from "./muse.js";
+import zcodeEntry from "./zcode.js";
 import p61 from "./mmf.js";
 import p62 from "./nanobanana.js";
 import p63 from "./nebius.js";
@@ -188,6 +189,7 @@ export default [
   p59,
   p60,
   museEntry,
+  zcodeEntry,
   p61,
   p62,
   p63,
