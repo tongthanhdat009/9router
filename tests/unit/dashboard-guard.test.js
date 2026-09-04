@@ -33,7 +33,7 @@ vi.mock("@/lib/auth/dashboardSession", () => ({
   verifyDashboardAuthToken: mocks.verifyDashboardAuthToken,
 }));
 
-const { proxy, __test__ } = await import("../../src/dashboardGuard.js");
+const { proxy, guardPublicLlmApi, __test__ } = await import("../../src/dashboardGuard.js");
 
 const PEER_TOKEN = "peer-token-fixture";
 
@@ -52,6 +52,33 @@ function request(pathname, headers = {}) {
 function localRequest(pathname, headers = {}) {
   return request(pathname, { "x-9r-peer-token": PEER_TOKEN, "x-9r-real-ip": "127.0.0.1", ...headers });
 }
+
+describe("route-level public LLM API guard", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.NINEROUTER_PEER_TOKEN = PEER_TOKEN;
+    mocks.validateApiKey.mockResolvedValue(false);
+    mocks.getConsistentMachineId.mockResolvedValue("cli-token");
+  });
+
+  it("preserves local access after the middleware bypass", async () => {
+    expect(await guardPublicLlmApi(localRequest("/api/v1/chat/completions"))).toBeNull();
+    expect(mocks.validateApiKey).not.toHaveBeenCalled();
+  });
+
+  it("preserves remote API-key rejection after the middleware bypass", async () => {
+    const response = await guardPublicLlmApi(request("/api/v1/chat/completions", { host: "router.example.com" }));
+    expect(response.status).toBe(401);
+    expect(response.body.error).toBe("API key required for remote API access");
+  });
+
+  it("preserves valid remote API-key access after the middleware bypass", async () => {
+    mocks.validateApiKey.mockResolvedValue(true);
+    expect(await guardPublicLlmApi(request("/api/v1/chat/completions", {
+      host: "router.example.com", authorization: "Bearer perf-key",
+    }))).toBeNull();
+  });
+});
 
 describe("dashboard guard public LLM API access", () => {
   beforeEach(() => {

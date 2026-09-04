@@ -1,4 +1,5 @@
 import { handleChat } from "@/sse/handlers/chat.js";
+import { guardPublicLlmApi } from "@/dashboardGuard";
 
 export async function OPTIONS() {
   return new Response(null, {
@@ -11,6 +12,8 @@ export async function OPTIONS() {
 }
 
 export async function POST(request) {  
+  const deniedLlm = await guardPublicLlmApi(request);
+  if (deniedLlm) return deniedLlm;
   // Fallback to local handling
   
   return await handleChat(request);
