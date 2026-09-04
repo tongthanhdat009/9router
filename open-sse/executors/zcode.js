@@ -4,6 +4,7 @@ import { refreshProviderCredentials } from "../services/oauthCredentialManager.j
 import { resolveSessionId } from "../utils/sessionManager.js";
 import { ZCODE_IDENTITY_HEADERS, zcodeRequestHeaders } from "../utils/zcodeIdentity.js";
 import { resolveOffPeakAccess, settleTicket } from "../services/offpeak/zcode.js";
+import { ensureCodingPlanKey, invalidateCodingPlanKey, mintCodingPlanKey } from "../services/zcodeKey.js";
 
 const ZCODE_OFFPEAK_URL = "https://zcode.z.ai/api/v1/off-peak/anthropic/v1/messages";
 const ZCODE_NORMAL_URL = "https://api.z.ai/api/anthropic/v1/messages";
@@ -21,6 +22,29 @@ export class ZcodeExecutor extends BaseExecutor {
     // (chatCore passes a fresh object per invocation) — never the executor.
     credentials.__zcodeChannel = { channel: "normal", ticketId: null, sessionId, recovered: false };
     const ch = credentials.__zcodeChannel;
+
+    // Option B ensure-key gate: mint-or-cache df8d before ANY dispatch; without a
+    // key api.z.ai 401s, so fail closed with remediation (no empty-string headers).
+    let keyError = null;
+    ch.key = await ensureCodingPlanKey(credentials, proxyOptions).catch((error) => {
+      keyError = error;
+      return null;
+    });
+    if (!ch.key) {
+      const message = keyError?.code === "coding_plan_not_entitled"
+        ? "zcode: account has no coding plan. Paste a key from https://z.ai/manage-apikey or upgrade."
+        : keyError?.code === "coding_plan_not_connected"
+          ? "zcode: coding plan not connected. Paste a key from https://z.ai/manage-apikey or connect the plan."
+          : "zcode: no coding-plan API key. Paste one (dashboard connection edit, from https://z.ai/manage-apikey) or re-login to mint.";
+      // Return an upstream-shaped 401 rather than throwing: chatCore records the real
+      // status and may run its existing OAuth refresh/retry path exactly once.
+      return {
+        response: new Response(JSON.stringify({ error: { message, code: keyError?.code || "coding_plan_key_missing" } }), { status: 401, headers: { "Content-Type": "application/json" } }),
+        url: ZCODE_NORMAL_URL,
+        headers: {},
+        transformedBody: body,
+      };
+    }
 
     // Channel pick (E1/E2): eligible model + open window -> off-peak ticket.
     if (credentials?.providerSpecificData?.zcodeJwtToken) {
@@ -48,6 +72,8 @@ export class ZcodeExecutor extends BaseExecutor {
           const haystack = JSON.stringify(payload ?? "") + " " + (await response.clone().text().catch(() => ""));
           if (code === 3105 || haystack.includes("3105")) return { code: 3105, retryAfterMs: Number(response.headers?.get?.("retry-after")) * 1000 || null };
           if (code === 3102 || haystack.includes("3102")) return { code: 3102, retryAfterMs: null };
+          const statusCode = response.status;
+          if (statusCode === 401 || statusCode === 403) return { code: "auth", retryAfterMs: null };
           return null;
         } catch {
           return null;
@@ -56,6 +82,8 @@ export class ZcodeExecutor extends BaseExecutor {
       const message = typeof result === "string" ? result : result?.response?.message || result?.message || "";
       if (String(message).includes("3105")) return { code: 3105, retryAfterMs: Number(result?.response?.retryAfterMs) || null };
       if (String(message).includes("3102")) return { code: 3102, retryAfterMs: null };
+  const status = result?.response?.status ?? result?.error?.status;
+  if (status === 401 || status === 403) return { code: "auth", retryAfterMs: null };
       return null;
     };
 
@@ -72,7 +100,13 @@ export class ZcodeExecutor extends BaseExecutor {
     }
 
     ch.recovered = true;
-    if (hit.code === 3105) {
+    if (hit.code === "auth") {
+      // Option B: stale/invalid df8d -> single-flight re-mint, retry once.
+      // OAuth token refresh stays owned by the GENERIC chatCore 401 path.
+      invalidateCodingPlanKey(credentials.connectionId);
+      ch.key = await mintCodingPlanKey(credentials, proxyOptions).then((m) => (m ? m.key : null)).catch(() => null);
+      if (!ch.key) return this.dispatchNormal(args);
+    } else if (hit.code === 3105) {
       await sleep(Math.min(10000, hit.retryAfterMs || Number(result?.response?.retryAfterMs) || 3000));
     } else {
       await settleTicket(credentials, ch.ticketId, proxyOptions);
@@ -124,10 +158,10 @@ export class ZcodeExecutor extends BaseExecutor {
     const psd = credentials?.providerSpecificData || {};
     if (ch?.channel === "offpeak") {
       headers["Authorization"] = "Bearer " + (psd.zcodeJwtToken || "");
-      headers["X-Coding-Plan-Api-Key"] = psd.codingPlanApiKey || "";
+      headers["X-Coding-Plan-Api-Key"] = ch.key || psd.codingPlanApiKey || "";
       headers["X-Off-Peak-Ticket-ID"] = ch.ticketId || "";
     } else {
-      const apiKey = psd.codingPlanApiKey || credentials?.apiKey || null;
+      const apiKey = ch.key || psd.codingPlanApiKey || credentials?.apiKey || null;
       headers["x-api-key"] = apiKey || "";
       headers["Authorization"] = "Bearer " + (apiKey || "");
     }

@@ -152,3 +152,124 @@ describe("zcode executor", () => {
     for (const s of specs) expect(s.startsWith("node:") || s.startsWith("../") || s.startsWith("./")).toBe(true);
   });
 });
+
+describe("zcode executor Option B (key provisioning)", () => {
+  beforeEach(() => clearZcodeOffpeakStateForTests());
+
+  it("B2a no key anywhere fails closed WITHOUT upstream dispatch", async () => {
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    vi.mocked(proxyAwareFetch).mockImplementation(openWindow());
+    const executor = new ZcodeExecutor();
+    const credentials = { connectionId: "c-nokey", rawHeaders: {}, providerSpecificData: { zcodeJwtToken: "jwt-1" } };
+    let dispatched = 0;
+    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async () => { dispatched += 1; return okUpstream(); });
+    const result = await executor.execute({ model: "glm-5.3", body: { model: "glm-5.3", messages: [] }, stream: false, credentials, log: console });
+    expect(result.response.status).toBe(401);
+    expect(await result.response.json()).toMatchObject({ error: { code: "coding_plan_auth_failed" } });
+    expect(dispatched).toBe(0);
+    superExecute.mockRestore();
+  });
+
+  it("B2b 401 on offpeak triggers single re-mint then retry, not normal dispatch", async () => {
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    const { clearZcodeKeyStateForTests } = await import("../../open-sse/services/zcodeKey.js");
+    clearZcodeKeyStateForTests();
+    // Mint 1: first ensure; Mint 2: re-mint on 401. Assert exactly 2 customer-info calls.
+    let mintCalls = 0;
+    const superCalls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") {
+        mintCalls += 1;
+        return res({ code: 0, data: { codingPlanApiKey: "df8dminted00000001" } });
+      }
+      if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
+      if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
+      if (url === TAKE && options.method === "POST") return res({ code: 0, data: { ticket_id: "tk-b2", status: "active" } });
+      if (url === STATUS) return res({ code: 0, data: { status: "active", next_poll_after: 0 } });
+      throw new Error("unexpected " + url);
+    });
+    const executor = new ZcodeExecutor();
+    // NOTE: no paste key -> ensure mints (call 1).
+    const credentials = { connectionId: "c-b2", rawHeaders: {}, providerSpecificData: { zcodeJwtToken: "jwt-1" }, accessToken: "tok-1" };
+    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async (args) => {
+      superCalls.push({ key: args.credentials.__zcodeChannel.key, channel: args.credentials.__zcodeChannel.channel });
+      if (superCalls.length === 1) {
+        return { response: { ok: false, status: 401, headers: { get: () => null }, clone: () => ({ json: async () => ({ error: "unauthorized" }), text: async () => "unauthorized" }) }, url: "", headers: {}, transformedBody: {} };
+      }
+      return okUpstream();
+    });
+    const result = await executor.execute({ model: "glm-5.3-flash", body: { model: "glm-5.3-flash", messages: [] }, stream: false, credentials, log: console });
+    expect(superCalls.length).toBe(2);
+    expect(superCalls[0].key).toBe("df8dminted00000001");
+    expect(superCalls[1].key).toBe("df8dminted00000001");
+    expect(mintCalls).toBe(2);
+    expect(result.response.ok).toBe(true);
+    superExecute.mockRestore();
+  });
+
+  it("B2c normal channel uses ch.key (minted) in dual headers", async () => {
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    const { clearZcodeKeyStateForTests } = await import("../../open-sse/services/zcodeKey.js");
+    clearZcodeKeyStateForTests();
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 0, data: { codingPlanApiKey: "df8dmintednormal01" } });
+      throw new Error("unexpected " + url);
+    });
+    const executor = new ZcodeExecutor();
+    const credentials = { connectionId: "c-b2c", rawHeaders: {}, providerSpecificData: {}, accessToken: "tok-1" };
+    let headers;
+    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async (args) => {
+      headers = executor.buildHeaders(args.credentials, false, null, null, {});
+      return okUpstream();
+    });
+    await executor.execute({ model: "glm-5.3", body: { model: "glm-5.3", messages: [] }, stream: false, credentials, log: console });
+    expect(headers["x-api-key"]).toBe("df8dmintednormal01");
+    expect(headers["Authorization"]).toBe("Bearer df8dmintednormal01");
+    superExecute.mockRestore();
+  });
+});
+
+describe("zcode executor Option B (routing)", () => {
+  beforeEach(() => clearZcodeOffpeakStateForTests());
+
+  it("B5 3103-backoff take failure serves normal channel same request", async () => {
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 0, data: { codingPlanApiKey: "df8db5routing000001" } });
+      if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
+      if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
+      if (url === TAKE && options.method === "POST") return res({ code: 3103, data: { next_take_at: future } }, 429);
+      throw new Error("unexpected " + url);
+    });
+    const executor = new ZcodeExecutor();
+    const credentials = { connectionId: "c-b5", rawHeaders: {}, providerSpecificData: { zcodeJwtToken: "jwt-1" }, accessToken: "tok-1" };
+    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async (args) => {
+      expect(args.credentials.__zcodeChannel.channel).toBe("normal");
+      return okUpstream();
+    });
+    const result = await executor.execute({ model: "glm-5.3-flash", body: { model: "glm-5.3-flash", messages: [] }, stream: false, credentials, log: console });
+    expect(result.response.ok).toBe(true);
+    expect(credentials.__zcodeChannel.channel).toBe("normal");
+    const headers = executor.buildHeaders(credentials, false, null, null, {});
+    expect(headers["x-api-key"]).toBe("df8db5routing000001");
+    superExecute.mockRestore();
+  });
+
+  it("B5 off-peak requires JWT: key only (no JWT) serves normal", async () => {
+    const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
+      if (url === "https://api.z.ai/api/biz/customer/getCustomerInfo") return res({ code: 0, data: { codingPlanApiKey: "df8db5nojwt00000001" } });
+      throw new Error("unexpected " + url);
+    });
+    const executor = new ZcodeExecutor();
+    const credentials = { connectionId: "c-b5b", rawHeaders: {}, providerSpecificData: {}, accessToken: "tok-1" };
+    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async (args) => {
+      expect(args.credentials.__zcodeChannel.channel).toBe("normal");
+      return okUpstream();
+    });
+    await executor.execute({ model: "glm-5.3-flash", body: { model: "glm-5.3-flash", messages: [] }, stream: false, credentials, log: console });
+    expect(credentials.__zcodeChannel.channel).toBe("normal");
+    superExecute.mockRestore();
+  });
+});

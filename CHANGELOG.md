@@ -2,6 +2,7 @@
 ## Unreleased
 
 - feat(zcode): Z.ai Coding Plan OAuth provider with ticketed off-peak inference, usage lookup, and Coding Plan API Key connection field.
+- feat(zcode): auto-provisions coding-plan keys from OAuth customer info, caches single-flight per connection, fails closed with entitlement status, and backs off off-peak free-tier ticket limits.
 
 - fix(codex): WS transport no longer bypasses SSE transient-error classification —
   200-OK SSE-shaped error events inside WebSocket streams (e.g.

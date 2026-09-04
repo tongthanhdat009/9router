@@ -135,3 +135,34 @@ describe("zcode offpeak module", () => {
     expect(specs.some((s) => s.includes("src/"))).toBe(false);
   });
 });
+
+describe("zcode offpeak Option B (3103 backoff)", () => {
+  beforeEach(() => { clearZcodeOffpeakStateForTests(); vi.mocked(proxyAwareFetch).mockReset(); });
+
+  it("B4 429/3103 caches nextTakeAt and suppresses probes until deadline", async () => {
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    vi.mocked(proxyAwareFetch).mockImplementation(mockFlow({ takeCode: 0 }));
+    // First call: take hits 429/3103 once with next_take_at
+    let takes = 0;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
+      if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
+      if (url === TAKE && options.method === "POST") {
+        takes += 1;
+        if (takes === 1) return res({ code: 3103, data: { next_take_at: future } }, 429);
+        return res({ code: 0, data: { ticket_id: "tk-late", status: "active" } });
+      }
+      if (url === STATUS) return res({ code: 0, data: { status: "active", next_poll_after: 0 } });
+      throw new Error("unexpected " + url);
+    });
+    const r1 = await resolveOffPeakAccess(creds(), "glm-5.3-flash");
+    expect(r1).toEqual({ ok: false, code: 3103 });
+    const avail1 = vi.mocked(proxyAwareFetch).mock.calls.filter((c) => c[0] === AVAIL).length;
+    // Second call: availability probe suppressed until next_take_at
+    const r2 = await resolveOffPeakAccess(creds(), "glm-5.3-flash");
+    expect(r2.ok).toBe(false);
+    const avail2 = vi.mocked(proxyAwareFetch).mock.calls.filter((c) => c[0] === AVAIL).length;
+    expect(avail2).toBe(avail1);
+    expect(takes).toBe(1);
+  });
+});

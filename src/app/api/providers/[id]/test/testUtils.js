@@ -334,8 +334,51 @@ async function probeMuseConnection(connection, effectiveProxy = null) {
   }
 }
 
+// Option B: zcode probe = getCustomerInfo with stored RAW access token (no
+// "Bearer " prefix). Maps mint outcome to {valid,error} for the GENERIC writer
+// (testStatus active/error + lastError); runtime surfacing rides the generic
+// markAccountUnavailable/clearAccountError path — zero schema/UI changes.
+async function probeZcodeConnection(connection, effectiveProxy = null) {
+  const accessToken = connection.accessToken;
+  // Pasted-key-only connections (apiKey/PSD df8d key, no token) are valid:
+  // the executor dispatches fine with a manual key (plan B2 remediation path).
+  const pastedKey = (connection.providerSpecificData?.codingPlanApiKey || connection.apiKey || "").trim();
+  if (!accessToken) {
+    return pastedKey
+      ? { valid: true, error: null, refreshed: false }
+      : { valid: false, error: "No access token. Log in again, or paste a coding-plan key from https://z.ai/manage-apikey.", refreshed: false };
+  }
+  try {
+    const response = await fetchWithConnectionProxy("https://api.z.ai/api/biz/customer/getCustomerInfo", {
+      headers: { Authorization: accessToken, "Content-Type": "application/json" },
+    }, effectiveProxy);
+    // 200 can still carry an entitlement error body — classify BEFORE the
+    // ok return so the probe matches mint classification (review P1).
+    const body = await response.text().catch(() => "");
+    const hay = String(body).toLowerCase();
+    if (response.ok && !hay.includes("not_entitled") && !hay.includes("not entitled") && !hay.includes("no coding plan") && !hay.includes("unsubscribed") && !hay.includes("not_connected") && !hay.includes("not connected") && !hay.includes("unbound") && !hay.includes("unlinked")) {
+      return { valid: true, error: null, refreshed: false };
+    }
+    if (response.status === 401 || response.status === 403) {
+      return pastedKey
+        ? { valid: true, error: null, refreshed: false }
+        : { valid: false, error: "ZCode login expired or invalid (coding_plan_auth_failed). Log in again, or paste a coding-plan key from https://z.ai/manage-apikey.", refreshed: false };
+    }
+    if (hay.includes("not_entitled") || hay.includes("not entitled") || hay.includes("no coding plan") || hay.includes("unsubscribed")) {
+      return { valid: false, error: "Account has no coding plan (coding_plan_not_entitled). Paste a key from https://z.ai/manage-apikey or upgrade.", refreshed: false };
+    }
+    if (hay.includes("not_connected") || hay.includes("not connected") || hay.includes("unbound") || hay.includes("unlinked")) {
+      return { valid: false, error: "Coding plan not connected (coding_plan_not_connected). Connect the plan or paste a key from https://z.ai/manage-apikey.", refreshed: false };
+    }
+    return { valid: false, error: "ZCode customer check returned " + response.status, refreshed: false };
+  } catch (error) {
+    return { valid: false, error: error.message, refreshed: false };
+  }
+}
+
 async function testOAuthConnection(connection, effectiveProxy = null) {
   if (connection.provider === "muse") return probeMuseConnection(connection, effectiveProxy);
+  if (connection.provider === "zcode") return probeZcodeConnection(connection, effectiveProxy);
   const config = OAUTH_TEST_CONFIG[connection.provider];
   if (!config) return { valid: false, error: "Provider test not supported", refreshed: false };
   if (!connection.accessToken) return { valid: false, error: "No access token", refreshed: false };
@@ -587,6 +630,9 @@ async function testApiKeyConnection(connection, effectiveProxy = null) {
       case "openrouter": {
         const res = await fetchWithConnectionProxy("https://openrouter.ai/api/v1/auth/key", { headers: { Authorization: `Bearer ${connection.apiKey}` } }, effectiveProxy);
         return { valid: res.ok, error: res.ok ? null : "Invalid API key" };
+      }
+      case "zcode": {
+        return probeZcodeConnection(connection, effectiveProxy);
       }
       case "glm": {
         const res = await fetchWithConnectionProxy("https://api.z.ai/api/anthropic/v1/messages", {

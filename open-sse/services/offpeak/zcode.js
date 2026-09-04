@@ -11,6 +11,12 @@ const POLL_MAX_WAIT_MS = 30 * 1000;
 
 const stateByConnection = new Map();
 
+// Server timestamps may arrive in seconds or ms; normalize to ms (review P2).
+function toMs(value) {
+  const n = Number(value) || 0;
+  return n > 1e12 ? n : n * 1000;
+}
+
 function stateFor(credentials) {
   const key = credentials?.connectionId || "";
   let state = stateByConnection.get(key);
@@ -42,6 +48,8 @@ async function getJson(url, headers, proxyOptions = null) {
     err.status = response.status;
     const code = payload && (payload.code ?? payload.data?.code);
     if (code !== undefined && code !== null) err.code = code;
+    const nextTakeAt = payload && (payload.next_take_at ?? payload.data?.next_take_at);
+    if (nextTakeAt !== undefined && nextTakeAt !== null) err.nextTakeAt = nextTakeAt;
     const retryAfter = Number(response.headers?.get?.("retry-after"));
     if (Number.isFinite(retryAfter)) err.retryAfterMs = retryAfter * 1000;
     throw err;
@@ -64,7 +72,7 @@ async function fetchEligibility(credentials, model, proxyOptions = null) {
 async function availability(credentials, proxyOptions = null) {
   const payload = await getJson(ORIGIN + "/ticket/availability", authHeaders(credentials), proxyOptions);
   const data = payload?.data || {};
-  return { canTake: data.can_take_number === true, nextTakeAt: Number(data.next_take_at) || 0 };
+  return { canTake: data.can_take_number === true, nextTakeAt: toMs(data.next_take_at) };
 }
 
 async function takeTicket(credentials, proxyOptions = null) {
@@ -79,6 +87,8 @@ async function takeTicket(credentials, proxyOptions = null) {
     err.status = response.status;
     const code = payload && (payload.code ?? payload.data?.code);
     if (code !== undefined && code !== null) err.code = code;
+    const nextTakeAt = payload && (payload.next_take_at ?? payload.data?.next_take_at);
+    if (nextTakeAt !== undefined && nextTakeAt !== null) err.nextTakeAt = nextTakeAt;
     throw err;
   }
   return payload?.data || {};
@@ -92,6 +102,8 @@ async function postJson(url, credentials, proxyOptions = null) {
     err.status = response.status;
     const code = payload && (payload.code ?? payload.data?.code);
     if (code !== undefined && code !== null) err.code = code;
+    const nextTakeAt = payload && (payload.next_take_at ?? payload.data?.next_take_at);
+    if (nextTakeAt !== undefined && nextTakeAt !== null) err.nextTakeAt = nextTakeAt;
     throw err;
   }
   return payload;
@@ -153,7 +165,7 @@ export async function resolveOffPeakAccess(credentials, model, proxyOptions = nu
 
     const avail = await availability(credentials, proxyOptions);
     if (!avail.canTake) {
-      if (avail.nextTakeAt) state.nextTakeAt = avail.nextTakeAt * 1000;
+      if (avail.nextTakeAt) state.nextTakeAt = avail.nextTakeAt;
       offpeakLog(conn, model, "availability", avail.nextTakeAt, "", "closed");
       return { ok: false };
     }
@@ -190,6 +202,14 @@ export async function resolveOffPeakAccess(credentials, model, proxyOptions = nu
       }
       offpeakLog(conn, model, "3102", "", "", 3102);
       return { ok: false, code: 3102 };
+    }
+    // Option B: 429 free-tier limit — back off to the server's next_take_at,
+    // no immediate retry; the caller serves the normal channel meanwhile.
+    if (error.code === 3103) {
+      const nextTakeAt = toMs(error.nextTakeAt);
+      if (nextTakeAt) state.nextTakeAt = nextTakeAt;
+      offpeakLog(conn, model, "3103-backoff", nextTakeAt, "", 3103);
+      return { ok: false, code: 3103 };
     }
     offpeakLog(conn, model, "error", "", "", error.code || error.status || "");
     return { ok: false };

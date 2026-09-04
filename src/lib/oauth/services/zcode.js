@@ -37,5 +37,17 @@ export async function refreshZcodeToken(refreshToken, credentials, log) {
   if (typeof data.token === "string" && data.token.split(".").length === 3) {
     result.providerSpecificData = { zcodeJwtToken: data.token };
   }
+  // Option B: opportunistically mint the coding-plan key so the GENERIC PSD merge
+  // (ocm:99-104 + chat.js onCredentialsRefreshed) persists it. Mint failure must
+  // never fail the refresh — key is lazily minted at next inference instead.
+  try {
+    if (result.accessToken && !result.providerSpecificData?.codingPlanApiKey) {
+      const { mintCodingPlanKey } = await import("../../../../open-sse/services/zcodeKey.js");
+      const minted = await mintCodingPlanKey({ accessToken: result.accessToken, connectionId: credentials?.connectionId }, credentials?.__proxyOptions || null);
+      result.providerSpecificData = { ...(result.providerSpecificData || {}), codingPlanApiKey: minted.key };
+    }
+  } catch (e) {
+    log?.warn?.("TOKEN_REFRESH", "zcode coding-plan key mint deferred: " + (e.code || e.message));
+  }
   return result;
 }
