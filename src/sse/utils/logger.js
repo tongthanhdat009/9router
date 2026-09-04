@@ -9,8 +9,10 @@ const LOG_LEVELS = {
 
 const LEVEL = LOG_LEVELS[process.env.LOG_LEVEL?.toUpperCase?.()] ?? LOG_LEVELS.INFO;
 
+const p2 = (n) => (n < 10 ? "0" + n : "" + n);
 function formatTime() {
-  return new Date().toLocaleTimeString("en-US", { hour12: false });
+  const d = new Date();
+  return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds());
 }
 
 // Colored-dot tags to correlate request lines by session (same session → same color)

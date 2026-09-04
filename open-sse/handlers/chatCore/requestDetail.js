@@ -121,7 +121,9 @@ export function saveUsageStats({ provider, model, tokens, connectionId, apiKey, 
   if (inTokens === 0 && outTokens === 0) return;
 
   if (!silent) {
-    const time = new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const d = new Date();
+    const p2 = (n) => (n < 10 ? "0" + n : "" + n);
+    const time = p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds());
     const accountSuffix = connectionId ? ` | account=${connectionId.slice(0, 8)}...` : "";
     console.log(`${COLORS.green}[${time}] 📊 [${label}] ${provider.toUpperCase()} | in=${inTokens} | out=${outTokens}${accountSuffix}${COLORS.reset}`);
   }

@@ -2,8 +2,10 @@
 // Outputs are tagged with [DBG:tag] for easy grep/filter
 const isDev = process.env.NODE_ENV !== "production";
 
+const p2 = (n) => (n < 10 ? "0" + n : "" + n);
 function ts() {
-  return new Date().toLocaleTimeString("en-US", { hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  const d = new Date();
+  return p2(d.getHours()) + ":" + p2(d.getMinutes()) + ":" + p2(d.getSeconds());
 }
 
 export function dbg(tag, msg) {
