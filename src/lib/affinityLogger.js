@@ -19,12 +19,18 @@ async function enabled() {
   try { return (await getSettings()).enableObservability === true; } catch { return false; }
 }
 
+let dirEnsured = false;
+
 export async function logAffinity(event, details = {}) {
   try {
     if (!(await enabled())) return false;
     const file = process.env.AFFINITY_LOG_FILE || path.join(DATA_DIR, "logs", "affinity.jsonl");
-    fs.mkdirSync(path.dirname(file), { recursive: true });
-    fs.appendFileSync(file, `${JSON.stringify({ timestamp: new Date().toISOString(), pid: process.pid, event, ...safeValue(details) })}\n`);
+    if (!dirEnsured) {
+      await fs.promises.mkdir(path.dirname(file), { recursive: true });
+      dirEnsured = true;
+    }
+    const line = `${JSON.stringify({ timestamp: new Date().toISOString(), pid: process.pid, event, ...safeValue(details) })}\n`;
+    await fs.promises.appendFile(file, line);
     return true;
   } catch { return false; }
 }
