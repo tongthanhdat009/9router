@@ -34,7 +34,12 @@ function emitFunctionCall(functionCall, state) {
 
 // Convert Gemini response chunk to OpenAI format
 export function geminiToOpenAIResponse(chunk, state) {
-  if (!chunk) return null;
+  if (!chunk) {
+    if (!state.messageId || state.finishReason) return null;
+    const finishReason = state.geminiToolCallCount > 0 ? OPENAI_FINISH.TOOL_CALLS : OPENAI_FINISH.STOP;
+    state.finishReason = finishReason;
+    return buildChunk(chunkMeta(state), {}, finishReason);
+  }
   
   // Handle Antigravity wrapper
   const response = chunk.response || chunk;

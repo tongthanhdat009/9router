@@ -4,6 +4,7 @@ import "./registerAll.js";
 import { translateRequest, translateResponse, initState } from "../../open-sse/translator/index.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { AntigravityExecutor } from "../../open-sse/executors/antigravity.js";
+import { createSSETransformStreamWithLogger } from "../../open-sse/utils/stream.js";
 import { openaiToAntigravityRequest } from "../../open-sse/translator/request/openai-to-gemini.js";
 import { ANTIGRAVITY_DEFAULT_SYSTEM } from "../../open-sse/config/appConstants.js";
 
@@ -78,6 +79,56 @@ describe("Antigravity → Claude", () => {
     );
     expect(jsonDelta).toMatchObject({ index: expect.any(Number) });
     expect(JSON.parse(jsonDelta.delta.partial_json)).toEqual({ command: "git status" });
+  });
+});
+
+describe("Antigravity clean EOF", () => {
+  const response = (parts, finishReason) => ({
+    response: { responseId: "resp-clean-eof", modelVersion: "gemini-pro", candidates: [{ content: { role: "model", parts }, ...(finishReason ? { finishReason } : {}) }] },
+  });
+  const run = async (chunks, fail = false) => {
+    const encoder = new TextEncoder();
+    const source = new ReadableStream({
+      start(controller) {
+        for (const chunk of chunks) controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+        if (fail) controller.error(new Error("upstream aborted")); else controller.close();
+      },
+    });
+    const reader = source.pipeThrough(createSSETransformStreamWithLogger(FORMATS.ANTIGRAVITY, FORMATS.CLAUDE)).getReader();
+    const decoder = new TextDecoder();
+    let output = "";
+    try { for (;;) { const { done, value } = await reader.read(); if (done) break; output += decoder.decode(value, { stream: true }); } } catch { /* source errors skip flush */ }
+    return output.split("\n").filter((line) => line.startsWith("data: ")).map((line) => JSON.parse(line.slice(6)));
+  };
+
+  it("clean content EOF closes Claude text once", async () => {
+    const events = await run([response([{ text: "done" }])]);
+    expect(events.map((event) => event.type)).toEqual(["message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"]);
+    expect(events.find((event) => event.type === "message_delta").delta.stop_reason).toBe("end_turn");
+  });
+
+  it("real STOP does not duplicate the Claude terminal", async () => {
+    const events = await run([response([{ text: "done" }], "STOP")]);
+    expect(events.filter((event) => event.type === "message_delta")).toHaveLength(1);
+    expect(events.filter((event) => event.type === "message_stop")).toHaveLength(1);
+  });
+
+  it("clean functionCall EOF flushes and closes tool use", async () => {
+    const events = await run([response([{ functionCall: { name: "bash", args: { command: "pwd" } } }])]);
+    expect(events.find((event) => event.delta?.type === "input_json_delta").delta.partial_json).toBe('{"command":"pwd"}');
+    expect(events.find((event) => event.type === "message_delta").delta.stop_reason).toBe("tool_use");
+    expect(events.at(-1).type).toBe("message_stop");
+  });
+
+  it("clean thinking EOF closes the thinking block", async () => {
+    const events = await run([response([{ text: "consider", thought: true }])]);
+    expect(events.map((event) => event.type)).toContain("content_block_stop");
+    expect(events.at(-2).delta.stop_reason).toBe("end_turn");
+  });
+
+  it("source errors do not synthesize a terminal", async () => {
+    const events = await run([response([{ text: "partial" }])], true);
+    expect(events.some((event) => event.type === "message_delta" || event.type === "message_stop")).toBe(false);
   });
 });
 
