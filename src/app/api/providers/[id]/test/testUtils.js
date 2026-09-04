@@ -361,9 +361,12 @@ async function probeZcodeConnection(connection, effectiveProxy = null) {
   } catch (error) {
     const remediation = " Log in again, or paste a coding-plan key from https://z.ai/manage-apikey.";
     if (error.code === "coding_plan_auth_failed") {
-      return pastedKey
-        ? { valid: true, error: null, refreshed: false }
-        : { valid: false, error: "ZCode login expired or invalid (coding_plan_auth_failed)." + remediation, refreshed: false };
+      if (pastedKey) return { valid: true, error: null, refreshed: false };
+      if (error.status === 401) {
+        return { valid: false, error: "ZCode login expired or invalid (coding_plan_auth_failed)." + remediation, refreshed: false };
+      }
+      const retry = error.retryable ? " Retry Test Connection shortly." : "";
+      return { valid: false, error: "ZCode coding-plan key unavailable: " + (error.message || "business login failed") + "." + retry, refreshed: false };
     }
     if (error.code === "coding_plan_not_entitled") {
       return { valid: false, error: "Account has no coding plan (coding_plan_not_entitled). Paste a key from https://z.ai/manage-apikey or upgrade.", refreshed: false };

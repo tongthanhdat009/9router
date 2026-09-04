@@ -21,6 +21,8 @@ describe("zcode Option B fixture and dashboard contract", () => {
     expect(source).toContain('if (connection.provider === "zcode") return probeZcodeConnection');
     expect(source).toContain('mintCodingPlanKey({ accessToken, connectionId: connection.id }');
     expect(source).toContain('coding_plan_not_entitled');
+    expect(source).toContain('if (error.status === 401)');
+    expect(source).toContain('ZCode coding-plan key unavailable:');
     expect(source).toContain('testStatus: result.valid ? "active" : "error"');
   });
 });
