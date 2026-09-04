@@ -107,11 +107,13 @@ describe("zcode offpeak module", () => {
     expect(settles.length).toBe(1);
   });
 
-  it("import-surface: only open-sse/ and node builtins", () => {
+  it("import-surface: only relative engine paths and node builtins", () => {
     const text = readFileSync(new URL("../../open-sse/services/offpeak/zcode.js", import.meta.url), "utf8");
     const specs = [];
     for (const m of text.matchAll(/from ["']([^"']+)["']/g)) specs.push(m[1]);
     expect(specs.length).toBeGreaterThan(0);
-    for (const s of specs) expect(s.startsWith("open-sse/") || s.startsWith("node:")).toBe(true);
+    // open-sse modules import the engine relatively; src/ is never a dep.
+    for (const s of specs) expect(s.startsWith("node:") || s.startsWith("../../") || s.startsWith("../")).toBe(true);
+    expect(specs.some((s) => s.includes("src/"))).toBe(false);
   });
 });

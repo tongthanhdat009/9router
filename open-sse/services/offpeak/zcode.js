@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { proxyAwareFetch } from "open-sse/utils/proxyFetch.js";
+import { proxyAwareFetch } from "../../utils/proxyFetch.js";
 
 // ZCode off-peak ticketing (take/poll layer ONLY — inference-layer 3105/3102
 // retry lives in the executor). Per-connection lazy caches; window detection

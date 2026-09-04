@@ -19,7 +19,8 @@ import {
   refreshWindsurfToken,
   classifyOAuthRefreshError,
 } from "./tokenRefresh/providers.js";
-import { refreshZcodeToken } from "../../src/lib/oauth/services/zcode.js";
+// zcode refresh is imported lazily inside the handler (open-sse/* never
+// statically imports src/* at module top-level outside Next/bundler).
 import { monitorOAuthRefresh } from "../../src/lib/oauthRefreshMonitor.js";
 
 // Re-export all provider refresh functions (preserves public API for all consumers)
@@ -149,7 +150,10 @@ const REFRESH_HANDLERS = {
   "codebuddy-cn": (c, log) => refreshCodebuddyToken(c.refreshToken, log),
   "codebuddy-intl": (c, log) => refreshCodebuddyIntlToken(c.refreshToken, log),
   trae: (c, log) => refreshTraeToken(c.refreshToken, c, log),
-  zcode: (c, log) => refreshZcodeToken(c.refreshToken, c, log),
+  zcode: async (c, log) => {
+    const { refreshZcodeToken } = await import("../../src/lib/oauth/services/zcode.js");
+    return refreshZcodeToken(c.refreshToken, c, log);
+  },
   cline: (c, log) => refreshClineToken(c.refreshToken, log),
   zed: () => refreshZedToken(),
   windsurf: (c, log) => refreshWindsurfToken(c, log),

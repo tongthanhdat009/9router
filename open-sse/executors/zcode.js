@@ -1,8 +1,9 @@
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { refreshProviderCredentials } from "../services/oauthCredentialManager.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { resolveOffPeakAccess, settleTicket } from "../services/offpeak/zcode.js";
 
 const ZCODE_OFFPEAK_URL = "https://zcode.z.ai/api/v1/off-peak/anthropic/v1/messages";
 const ZCODE_NORMAL_URL = "https://api.z.ai/api/anthropic/v1/messages";
@@ -34,8 +35,68 @@ export class ZcodeExecutor extends BaseExecutor {
     // Per-request channel state rides the per-request credentials object
     // (chatCore passes a fresh object per invocation) — never the executor.
     credentials.__zcodeChannel = { channel: "normal", ticketId: null, sessionId, recovered: false };
+    const ch = credentials.__zcodeChannel;
 
-    // TODO(Task5): channel decision + inference retry wrapper here.
+    // Channel pick (E1/E2): eligible model + open window -> off-peak ticket.
+    if (credentials?.providerSpecificData?.zcodeJwtToken) {
+      const access = await resolveOffPeakAccess(credentials, model, proxyOptions);
+      if (access.ok) {
+        ch.channel = "offpeak";
+        ch.ticketId = access.ticketId;
+      }
+    }
+    return this.dispatchOffPeak({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest });
+  }
+
+  // Inference-layer retry (E3/E4): bounded 2 off-peak dispatches + 1 normal.
+  async dispatchOffPeak(args) {
+    const { model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest } = args;
+    const ch = credentials.__zcodeChannel;
+    const classify = (result) => {
+      const message = typeof result === "string" ? result : result?.response?.message || result?.message || "";
+      if (String(message).includes("3105")) return 3105;
+      if (String(message).includes("3102")) return 3102;
+      return null;
+    };
+
+    let result;
+    try {
+      result = await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest });
+    } catch (error) {
+      result = { error };
+    }
+    let code = classify(result);
+    if (!code || ch.recovered) {
+      if (result && result.error) throw result.error;
+      return result;
+    }
+
+    ch.recovered = true;
+    if (code === 3105) {
+      await sleep(Math.min(10000, Number(result?.response?.retryAfterMs) || 3000));
+    } else {
+      await settleTicket(credentials, ch.ticketId, proxyOptions);
+      const fresh = await resolveOffPeakAccess(credentials, model, proxyOptions);
+      if (!fresh.ok) return this.dispatchNormal(args);
+      ch.channel = "offpeak";
+      ch.ticketId = fresh.ticketId;
+    }
+
+    try {
+      result = await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest });
+      code = classify(result);
+    } catch (error) {
+      return this.dispatchNormal(args);
+    }
+    if (!code) return result;
+    return this.dispatchNormal(args);
+  }
+
+  async dispatchNormal(args) {
+    const { model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest } = args;
+    const ch = credentials.__zcodeChannel;
+    ch.channel = "normal";
+    ch.ticketId = null;
     return super.execute({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest });
   }
 
