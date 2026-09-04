@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { zcodeRequestHeaders, zcodeSessionId } from "../../utils/zcodeIdentity.js";
 
 // ZCode off-peak ticketing (take/poll layer ONLY — inference-layer 3105/3102
 // retry lives in the executor). Per-connection lazy caches; window detection
@@ -22,7 +23,11 @@ function stateFor(credentials) {
 
 function authHeaders(credentials) {
   const psd = credentials?.providerSpecificData || {};
-  return { Authorization: "Bearer " + (psd.zcodeJwtToken || ""), "X-Coding-Plan-Api-Key": psd.codingPlanApiKey || "" };
+  return {
+    ...zcodeRequestHeaders(zcodeSessionId(credentials)),
+    Authorization: "Bearer " + (psd.zcodeJwtToken || ""),
+    "X-Coding-Plan-Api-Key": psd.codingPlanApiKey || "",
+  };
 }
 
 function offpeakLog(conn, model, layer, avail, ticket, code) {
@@ -105,16 +110,16 @@ async function pollTicketStatus(credentials, ticketId, proxyOptions = null) {
   return false;
 }
 
-async function takeFreshTicket(credentials, model) {
+async function takeFreshTicket(credentials, model, proxyOptions = null) {
   const state = stateFor(credentials);
   state.inFlightTake = state.inFlightTake || (async () => {
     try {
       const conn = credentials?.connectionId || "";
       offpeakLog(conn, model, "take", "", "", "");
-      const data = await takeTicket(credentials);
+      const data = await takeTicket(credentials, proxyOptions);
       const ticketId = data.ticket_id || data.id;
       if (!ticketId) return null;
-      const active = await pollTicketStatus(credentials, ticketId);
+      const active = await pollTicketStatus(credentials, ticketId, proxyOptions);
       if (!active) return null;
       state.activeTicket = ticketId;
       return ticketId;
@@ -132,7 +137,7 @@ export async function resolveOffPeakAccess(credentials, model, proxyOptions = nu
   const state = stateFor(credentials);
 
   try {
-    const eligible = await fetchEligibility(credentials, model);
+    const eligible = await fetchEligibility(credentials, model, proxyOptions);
     if (!eligible) {
       offpeakLog(conn, model, "eligibility", "", "", "not-eligible");
       return { ok: false };
@@ -146,14 +151,14 @@ export async function resolveOffPeakAccess(credentials, model, proxyOptions = nu
       return { ok: false };
     }
 
-    const avail = await availability(credentials);
+    const avail = await availability(credentials, proxyOptions);
     if (!avail.canTake) {
       if (avail.nextTakeAt) state.nextTakeAt = avail.nextTakeAt * 1000;
       offpeakLog(conn, model, "availability", avail.nextTakeAt, "", "closed");
       return { ok: false };
     }
 
-    const ticketId = await takeFreshTicket(credentials, model);
+    const ticketId = await takeFreshTicket(credentials, model, proxyOptions);
     if (!ticketId) {
       offpeakLog(conn, model, "take", "", "", "no-ticket");
       return { ok: false };
@@ -175,7 +180,7 @@ export async function resolveOffPeakAccess(credentials, model, proxyOptions = nu
       state.activeTicket = null;
       state.nextTakeAt = 0;
       try {
-        const ticketId = await takeFreshTicket(credentials, model);
+        const ticketId = await takeFreshTicket(credentials, model, proxyOptions);
         if (ticketId) {
           offpeakLog(conn, model, "3102-retake", "", ticketId, 3102);
           return { ok: true, ticketId };

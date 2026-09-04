@@ -22,6 +22,10 @@ describe("zcode usage", () => {
     const [url, options] = vi.mocked(proxyAwareFetch).mock.calls[0];
     expect(url).toBe("https://zcode.z.ai/api/v1/zcode-plan/billing/balance");
     expect(options.headers.Authorization).toBe("Bearer jwt-1");
+    expect(options.headers["User-Agent"]).toBe("ZCode/3.10.2.6414");
+    expect(options.headers["X-ZCode-Agent"]).toBe("glm");
+    expect(typeof options.headers["X-Request-Id"]).toBe("string");
+    expect(typeof options.headers["X-Session-Id"]).toBe("string");
   });
 
   it("falls back to derived totals when grant/remaining missing", async () => {

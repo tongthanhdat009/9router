@@ -93,14 +93,19 @@ describe("zcode executor", () => {
     superExecute.mockRestore();
   });
 
+  function liveResponse(payload, status, retryAfter) {
+    const body = JSON.stringify(payload);
+    const response = new Response(body, { status, headers: { "content-type": "application/json", ...(retryAfter ? { "retry-after": String(retryAfter) } : {}) } });
+    return { response, url: "https://zcode.z.ai/api/v1/off-peak/anthropic/v1/messages", headers: {}, transformedBody: {} };
+  }
+
   it("E3 inference 3105 retries same ticket then normal re-dispatch", async () => {
     const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
     vi.mocked(proxyAwareFetch).mockImplementation(openWindow());
     const executor = new ZcodeExecutor();
     const credentials = baseCreds();
-    const fail3105 = { response: { ok: false, status: 429, message: "ticket not ready 3105" } };
     const calls = [];
-    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async () => { calls.push(credentials.__zcodeChannel.ticketId); return calls.length < 3 ? fail3105 : okUpstream(); });
+    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async () => { calls.push(credentials.__zcodeChannel.ticketId); return calls.length < 3 ? liveResponse({ code: 3105, message: "ticket not ready" }, 429, 1) : okUpstream(); });
     vi.spyOn(executor, "dispatchNormal").mockImplementation(async (args) => { credentials.__zcodeChannel.channel = "normal"; credentials.__zcodeChannel.ticketId = null; return okUpstream(); });
     await executor.execute({ model: "glm-5.3-flash", body: { model: "glm-5.3-flash", messages: [] }, stream: false, credentials, log: console });
     expect(calls[0]).toBe("tk-e1");
@@ -123,8 +128,7 @@ describe("zcode executor", () => {
     });
     const executor = new ZcodeExecutor();
     const credentials = baseCreds();
-    const fail3102 = { response: { ok: false, status: 400, message: "ticket expired 3102" } };
-    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async () => (takes >= 2 ? okUpstream() : fail3102));
+    const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockImplementation(async () => (takes >= 2 ? okUpstream() : liveResponse({ code: 3102, message: "ticket expired" }, 400)));
     await executor.execute({ model: "glm-5.3-flash", body: { model: "glm-5.3-flash", messages: [] }, stream: false, credentials, log: console });
     expect(takes).toBeGreaterThanOrEqual(2);
     superExecute.mockRestore();

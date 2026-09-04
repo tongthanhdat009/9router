@@ -98,6 +98,24 @@ describe("zcode offpeak module", () => {
     expect(takes.length).toBe(1);
   });
 
+  it("every off-peak request receives proxy options and identity headers", async () => {
+    const proxy = { httpProxy: "http://proxy:8080" };
+    vi.mocked(proxyAwareFetch).mockImplementation(mockFlow());
+    await resolveOffPeakAccess(creds(), "glm-5.3-flash", proxy);
+    await settleTicket(creds(), "tk-1", proxy);
+    const calls = vi.mocked(proxyAwareFetch).mock.calls;
+    expect(calls.length).toBeGreaterThan(0);
+    for (const [, options, proxyArg] of calls) {
+      expect(proxyArg).toBe(proxy);
+      expect(options.headers["User-Agent"]).toBe("ZCode/3.10.2.6414");
+      expect(options.headers["X-ZCode-Agent"]).toBe("glm");
+      expect(typeof options.headers["X-Request-Id"]).toBe("string");
+      expect(typeof options.headers["X-Query-Id"]).toBe("string");
+      expect(typeof options.headers["X-ZCode-Trace-Id"]).toBe("string");
+      expect(typeof options.headers["X-Session-Id"]).toBe("string");
+    }
+  });
+
   it("settleTicket posts settle and clears active ticket", async () => {
     vi.mocked(proxyAwareFetch).mockImplementation(mockFlow());
     await resolveOffPeakAccess(creds(), "glm-5.3-flash");

@@ -1,4 +1,5 @@
 import { proxyAwareFetch } from "../../utils/proxyFetch.js";
+import { zcodeRequestHeaders, zcodeSessionId } from "../../utils/zcodeIdentity.js";
 import { parseResetTime } from "./shared.js";
 
 // ZCode coding-plan usage: GET billing/balance with the connection JWT and map
@@ -10,7 +11,7 @@ export async function getZcodeUsage(credentials, proxyOptions = null, { force } 
   try {
     const response = await proxyAwareFetch(
       "https://zcode.z.ai/api/v1/zcode-plan/billing/balance",
-      { headers: { Authorization: "Bearer " + jwt, Accept: "application/json" } },
+      { headers: { ...zcodeRequestHeaders(zcodeSessionId(credentials)), Authorization: "Bearer " + jwt, Accept: "application/json" } },
       proxyOptions,
     );
     if (!response.ok) {
