@@ -127,3 +127,29 @@ describe("OpenAI Responses same-format semantic generation", () => {
     expect(completed.firstSemanticGenerationAt).toBeLessThanOrEqual(Date.now());
   });
 });
+
+describe("passthrough terminal sentinel", () => {
+  it.each([
+    ["normal", ["data: [DONE]\n\n"]],
+    ["split chunks", ["data: [DO", "NE]\n\n"]],
+    ["unterminated", ["data:[DO", "NE]"]],
+    ["missing", []],
+  ])("emits exactly one DONE: %s", async (_name, chunks) => {
+    let completions = 0;
+    const stream = new ReadableStream({ start(controller) {
+      controller.enqueue(new TextEncoder().encode('data: {"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}\n\n'));
+      for (const chunk of chunks) controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    } }).pipeThrough(createSSEStream({ mode: "passthrough", provider: "openai", onStreamComplete: () => { completions++; } }));
+    const text = await new Response(stream).text();
+    expect(text.match(/data: \[DONE\]/g)).toHaveLength(1);
+    expect(text.trim().endsWith("data: [DONE]")).toBe(true);
+    expect(completions).toBe(1);
+  });
+
+  it.each(["antigravity", "gemini", "vertex"])("does not synthesize DONE for %s", async (provider) => {
+    const stream = new ReadableStream({ start(controller) { controller.close(); } })
+      .pipeThrough(createSSEStream({ mode: "passthrough", provider }));
+    expect(await new Response(stream).text()).not.toContain("[DONE]");
+  });
+});
