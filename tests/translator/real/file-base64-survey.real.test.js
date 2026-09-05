@@ -113,14 +113,14 @@ describe.skipIf(!RUN_REAL)("REAL file base64 survey", () => {
     const model = (RUN_REAL ? chatModels(providerId)[0]?.id : null);
     if (!model) continue;
     for (const [kind, mime, b64] of FILE_TYPES) {
-      it.concurrent(`${kind} | ${providerId} / ${model}`, async () => {
+      it.concurrent(`${kind} | ${providerId} / ${model}`, async (ctx) => {
         const fmt = getTargetFormat(providerId);
         const { sourceFormat, body } = buildFileBody(fmt, mime, b64);
 
         const credentials = await getProviderCredentials(providerId, new Set(), model);
         if (!credentials || credentials.allRateLimited) {
           results.push({ kind, providerId, model, fmt, status: "no-cred", verdict: "skip" });
-          return expect(true).toBe(true);
+          return ctx.skip("no-cred");
         }
         const refreshed = await checkAndRefreshToken(providerId, credentials);
 
@@ -144,7 +144,6 @@ describe.skipIf(!RUN_REAL)("REAL file base64 survey", () => {
 
         if (ok) await drainSSE(result.response).catch(() => {});
         results.push({ kind, providerId, model, fmt, status, verdict, error: ok ? "" : errMsg.slice(0, 90) });
-        return expect(true).toBe(true);
       }, TIMEOUT_MS);
     }
   }

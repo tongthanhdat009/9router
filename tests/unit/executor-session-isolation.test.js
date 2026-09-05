@@ -14,6 +14,46 @@ const { OpenCodeExecutor } = await import("../../open-sse/executors/opencode.js"
 const { OpenCodeGoExecutor } = await import("../../open-sse/executors/opencode-go.js");
 const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
 
+const { generateOpencodeSessionId, normalizeOpencodeSessionId } = await import("../../open-sse/utils/sessionManager.js");
+
+describe("shared OpenCode session formatting", () => {
+  it("preserves exact normalization and generated ID shape", () => {
+    for (const [input, expected] of [[null, null], [undefined, null], ["", null], [false, null], [0, null], ["ses_", null], ["---", null], ["abc-def", "ses_abcdef"], ["ses_abc-def", "ses_abcdef"], ["ses_ses_a-b", "ses_ses_ab"]]) {
+      expect(normalizeOpencodeSessionId(input)).toBe(expected);
+    }
+    expect(generateOpencodeSessionId()).toMatch(/^ses_[a-f0-9]{32}$/);
+  });
+
+  it.each([OpenCodeExecutor, OpenCodeGoExecutor])("keeps raw header precedence and concurrent request contexts for %s", async (Executor) => {
+    const ex = new Executor();
+    const body = (id) => ({ model: "m", session_id: id, messages: [{ role: "user", content: "hi" }] });
+    const a = ex.deriveRequestContext(body("thread-a"), creds);
+    const b = ex.deriveRequestContext(body("thread-b"), creds);
+    expect(a.sessionId).not.toBe(b.sessionId);
+    expect(ex.deriveRequestContext(body("thread-a"), creds)).toEqual(a);
+    expect(ex.buildHeaders({ ...creds, rawHeaders: { "X-OpenCode-Session": "raw-header-verbatim" } }, true, null, "m", a)["x-opencode-session"]).toBe("raw-header-verbatim");
+    expect(ex.buildHeaders(creds, true, null, "m")["x-opencode-session"]).toMatch(/^ses_[a-f0-9]{32}$/);
+    fetchMock.mockResolvedValue(res(200));
+    await Promise.all(["thread-a", "thread-b"].map((id) => ex.execute({ model: "m", body: body(id), stream: true, credentials: creds })));
+    expect(capturedHeaders().map((h) => h["x-opencode-session"]).sort()).toEqual([a.sessionId, b.sessionId].sort());
+  });
+
+  it("retains provider scope and inherited Go configuration", () => {
+    const free = new OpenCodeExecutor();
+    const go = new OpenCodeGoExecutor();
+    const explicit = { session_id: "same-thread" };
+    expect(free.deriveRequestContext(explicit, creds).sessionId).toBe(go.deriveRequestContext(explicit, creds).sessionId);
+    const body = { messages: [{ role: "assistant", content: "Conversation context. ".repeat(100) }] };
+    expect(free.deriveRequestContext(body, creds).sessionId).not.toBe(go.deriveRequestContext(body, creds).sessionId);
+    const defaults = new DefaultExecutor("opencode-go");
+    expect(go.config).toBe(defaults.config);
+    expect(go.buildUrl("m")).toBe(defaults.buildUrl("m"));
+    const { "x-opencode-session": session, ...headers } = go.buildHeaders(creds, true, null, "m");
+    expect(session).toMatch(/^ses_[a-f0-9]{32}$/);
+    expect(headers).toEqual(defaults.buildHeaders(creds, true, null, "m"));
+  });
+});
+
 function res(status, headers = {}) {
   return { status, ok: status >= 200 && status < 300, headers: { get: (k) => headers[k] ?? "" } };
 }

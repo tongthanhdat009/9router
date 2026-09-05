@@ -1,7 +1,7 @@
 // B2: REAL behavior assertions for the risky provider-specific cases.
 // Unlike smoke (only "doesn't crash"), each test asserts concrete OUTPUT.
 // Gated by RUN_REAL=1; any provider lacking creds/model or returning an auth/quota
-// status (401/402/403/429) is skipped (console.warn + pass).
+// status (401/402/403/429) is skipped (console.warn + ctx.skip).
 //
 //   RUN_REAL=1 npx vitest run --config tests/vitest.config.js tests/translator/real/provider-cases.real.test.js
 import { describe, it, expect } from "vitest";
@@ -70,23 +70,23 @@ async function runChat(providerId, prep, body) {
 
 describe.skipIf(!RUN_REAL)("REAL provider behavior cases", () => {
   // Case #1: Gemini normal prompt -> finish_reason "stop".
-  it("gemini: finish_reason stop", async () => {
+  it("gemini: finish_reason stop", async (ctx) => {
     const prep = await prepare("gemini");
-    if (!prep) return expect(true).toBe(true);
+    if (!prep) return ctx.skip("[skip] gemini: no cred/model");
     // Generous max_tokens so reasoning models (gemini-3 pro) don't hit "length" first.
     const out = await runChat("gemini", prep, {
       stream: true,
       max_tokens: 2048,
       messages: [{ role: "user", content: "Reply with the single word: hi" }],
     });
-    if (!out) return expect(true).toBe(true);
+    if (!out) return ctx.skip("[skip] gemini: credential/quota");
     expect(/"finish_reason"\s*:\s*"stop"/.test(out.raw), "no stop finish_reason").toBe(true);
   }, TIMEOUT_MS);
 
   // Case #4: Kiro tool turn -> tool_calls finish_reason + tool_calls delta.
-  it("kiro: tool turn -> tool_calls", async () => {
+  it("kiro: tool turn -> tool_calls", async (ctx) => {
     const prep = await prepare("kiro");
-    if (!prep) return expect(true).toBe(true);
+    if (!prep) return ctx.skip("[skip] kiro: no cred/model");
     const out = await runChat("kiro", prep, {
       stream: true,
       max_tokens: 128,
@@ -105,33 +105,33 @@ describe.skipIf(!RUN_REAL)("REAL provider behavior cases", () => {
       }],
       messages: [{ role: "user", content: "What's the weather in Paris? Use the get_weather tool." }],
     });
-    if (!out) return expect(true).toBe(true);
+    if (!out) return ctx.skip("[skip] kiro: credential/quota");
     expect(/"finish_reason"\s*:\s*"tool_calls"/.test(out.raw), "no tool_calls finish_reason").toBe(true);
     expect(/"tool_calls"/.test(out.raw), "no tool_calls delta").toBe(true);
   }, TIMEOUT_MS);
 
   // Case #3: Ollama tiny max_tokens + long prompt -> finish_reason "length".
-  it("ollama: max_tokens -> length", async () => {
+  it("ollama: max_tokens -> length", async (ctx) => {
     const prep = await prepare("ollama");
-    if (!prep) return expect(true).toBe(true);
+    if (!prep) return ctx.skip("[skip] ollama: no cred/model");
     const out = await runChat("ollama", prep, {
       stream: true,
       max_tokens: 4,
       messages: [{ role: "user", content: "Write a long detailed essay about the history of computing." }],
     });
-    if (!out) return expect(true).toBe(true);
+    if (!out) return ctx.skip("[skip] ollama: credential/quota");
     // length is model-dependent; if the model stopped on its own, skip rather than fail.
     if (!/"finish_reason"\s*:\s*"length"/.test(out.raw)) {
       console.warn("[skip] ollama: model did not hit length (output shorter than max_tokens)");
-      return expect(true).toBe(true);
+      return ctx.skip("[skip] ollama: model did not hit length (output shorter than max_tokens)");
     }
     expect(/"finish_reason"\s*:\s*"length"/.test(out.raw)).toBe(true);
   }, TIMEOUT_MS);
 
   // Case #4/#5: Codex multi-turn -> session stickiness (prompt-cache hit on 2nd turn).
-  it("codex: session stickiness (cached_tokens on 2nd turn)", async () => {
+  it("codex: session stickiness (cached_tokens on 2nd turn)", async (ctx) => {
     const prep = await prepare("codex");
-    if (!prep) return expect(true).toBe(true);
+    if (!prep) return ctx.skip("[skip] codex: no cred/model");
     const longContext = "The capital of France is Paris. ".repeat(40);
     const messages = [
       { role: "user", content: longContext },
@@ -140,28 +140,28 @@ describe.skipIf(!RUN_REAL)("REAL provider behavior cases", () => {
     ];
     const body = { stream: true, max_tokens: 32, messages };
     const first = await runChat("codex", prep, body);
-    if (!first) return expect(true).toBe(true);
+    if (!first) return ctx.skip("[skip] codex: credential/quota");
     const second = await runChat("codex", prep, body);
-    if (!second) return expect(true).toBe(true);
+    if (!second) return ctx.skip("[skip] codex: credential/quota");
     // 2nd identical-context turn should hit prompt cache when session is sticky.
     const m = second.raw.match(/"cached_tokens"\s*:\s*(\d+)/);
     if (!m) {
       console.warn("[skip] codex: no cached_tokens in usage (provider may not report)");
-      return expect(true).toBe(true);
+      return ctx.skip("[skip] codex: no cached_tokens in usage (provider may not report)");
     }
     expect(Number(m[1]), "cached_tokens not > 0 on 2nd turn").toBeGreaterThan(0);
   }, TIMEOUT_MS);
 
   // Case #1/#2: Antigravity normal prompt -> valid SSE response.
-  it("antigravity: responds OK", async () => {
+  it("antigravity: responds OK", async (ctx) => {
     const prep = await prepare("antigravity");
-    if (!prep) return expect(true).toBe(true);
+    if (!prep) return ctx.skip("[skip] antigravity: no cred/model");
     const out = await runChat("antigravity", prep, {
       stream: true,
       max_tokens: 32,
       messages: [{ role: "user", content: "Reply with the single word: hi" }],
     });
-    if (!out) return expect(true).toBe(true);
+    if (!out) return ctx.skip("[skip] antigravity: credential/quota");
     expect(out.raw.length, "empty response").toBeGreaterThan(0);
     expect(/data:|finish_reason|"delta"|"content"|event:/.test(out.raw), "not SSE").toBe(true);
   }, TIMEOUT_MS);

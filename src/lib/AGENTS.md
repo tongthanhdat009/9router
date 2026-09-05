@@ -13,7 +13,6 @@ Server-side libraries for the 9Router gateway: persistence (SQLite layer in `db/
 |------|-------------|
 | `localDb.js` | **Backward-compat shim** — re-exports `@/lib/db/index.js`. New code imports `@/lib/db/index.js` directly |
 | `usageDb.js` | **Shim** → `@/lib/db/index.js` (usage/logs). Usage + request logs persist in SQLite; `usage.json` survives only as a legacy-migration ref |
-| `requestDetailsDb.js` | **Shim** → `@/lib/db/index.js` (request-detail observability) |
 | `disabledModelsDb.js` | **Shim** → `@/lib/db/index.js` |
 | `mitmAliasCache.js` | NOT a DB shim — JSON read-replica of the SQLite `mitmAlias` map for the standalone MITM server (no SQLite native binding). Synced on app start and after every UI write; writes atomic via tmp+rename |
 | `dataDir.js` | Resolves `DATA_DIR` (env) else `~/.9router` (Windows: `%APPDATA%/9router`); Unix path on Windows → fallback. Exports `DATA_DIR` |
@@ -42,7 +41,7 @@ Server-side libraries for the 9Router gateway: persistence (SQLite layer in `db/
 ### Working In This Directory
 
 - Plain JavaScript (ESM), no TypeScript. `@/*` → `src/*`.
-- **Persistence is SQLite** (`db/`), not `db.json`. Import from `@/lib/db/index.js`; `localDb.js`/`usageDb.js`/`requestDetailsDb.js`/`disabledModelsDb.js` are backward-compat shims — don't add new exports there. Per-entity logic lives in `db/repos/*`.
+- **Persistence is SQLite** (`db/`), not `db.json`. Import from `@/lib/db/index.js`; `localDb.js`/`usageDb.js`/`disabledModelsDb.js` are backward-compat shims — don't add new exports there. Per-entity logic lives in `db/repos/*`.
 - `db/driver.js` picks the SQLite adapter per runtime (Bun: `bun:sqlite` → `sql.js`; Node: `better-sqlite3` → `node:sqlite` ≥22.5 → `sql.js`). Don't depend on a specific driver.
 - `mitmAliasCache.js` reads SQLite via `aliasRepo` but writes a JSON replica for the MITM process — DB is the source of truth; keep the two in sync.
 - Tunnels (cloudflare/tailscale) call `getSettings`/`updateSettings` through `@/lib/localDb` (the shim) — changing DB entry points must keep those imports working.

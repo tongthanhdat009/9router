@@ -5,7 +5,7 @@
 //   RUN_REAL=1 npx vitest run --config tests/vitest.config.js tests/translator/real/all-formats.real.test.js
 //   RUN_REAL=1 REAL_PROVIDERS=gemini,kiro,codex npx vitest run ... (optional filter)
 //
-// Skips (console.warn + pass) when: no credential/model, auth/quota status (401/402/403/429),
+// Skips (console.warn + ctx.skip) when: no credential/model, auth/quota status (401/402/403/429),
 // or the model rejects a capability (e.g. image on a non-vision model).
 import { describe, it, expect } from "vitest";
 import { getProviderCredentials } from "../../../src/sse/services/auth.js";
@@ -276,13 +276,13 @@ describe.skipIf(!RUN_REAL)("REAL all-formats matrix", () => {
   for (const providerId of providers) {
     for (const fmt of FORMATS) {
       for (const scn of SCENARIOS) {
-        it.concurrent(`${providerId} | ${fmt} | ${scn}`, async () => {
+        it.concurrent(`${providerId} | ${fmt} | ${scn}`, async (ctx) => {
           const prep = await prepare(providerId);
-          if (!prep) { console.warn(`[skip] ${providerId}: no cred/model`); return expect(true).toBe(true); }
+          if (!prep) { console.warn(`[skip] ${providerId}: no cred/model`); return ctx.skip(`[skip] ${providerId}: no cred/model`); }
 
           const body = BUILDERS[fmt][scn]();
           const out = await runChat(providerId, prep, body, fmt);
-          if (out === "skip") { console.warn(`[skip] ${providerId} ${fmt}/${scn}: cred/quota/capability`); return expect(true).toBe(true); }
+          if (out === "skip") { console.warn(`[skip] ${providerId} ${fmt}/${scn}: cred/quota/capability`); return ctx.skip(`[skip] ${providerId} ${fmt}/${scn}: cred/quota/capability`); }
 
           expect(out.raw.length, `${providerId} ${fmt}/${scn}: empty SSE`).toBeGreaterThan(0);
           expect(SSE_MARKER[fmt].test(out.raw), `${providerId} ${fmt}/${scn}: invalid SSE shape`).toBe(true);

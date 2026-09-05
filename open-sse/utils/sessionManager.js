@@ -11,6 +11,15 @@
 import crypto from "crypto";
 import { MEMORY_CONFIG } from "../config/runtimeConfig.js";
 
+export function generateOpencodeSessionId() {
+  return `ses_${crypto.randomUUID().replace(/-/g, "")}`;
+}
+
+export function normalizeOpencodeSessionId(id) {
+  const stripped = String(id || "").replace(/^ses_/, "").replace(/-/g, "");
+  return stripped ? `ses_${stripped}` : null;
+}
+
 // Runtime storage: Key = connectionId, Value = { sessionId, lastUsed }
 const runtimeSessionStore = new Map();
 const continuationStore = new Map();

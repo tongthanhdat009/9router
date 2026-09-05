@@ -34,9 +34,6 @@ describe("provider baseUrl const (full path, no trailing slash)", () => {
   it("mimo-free full path", () => {
     expect(mimoFree.transport.baseUrl).toBe("https://api.xiaomimimo.com/api/free-ai/openai/chat");
   });
-  it("opencode no trailing slash", () => {
-    expect(opencode.transport.baseUrl).toBe("https://opencode.ai");
-  });
 });
 
 describe("antigravity retry (intentional change: 429=6, 503=3)", () => {

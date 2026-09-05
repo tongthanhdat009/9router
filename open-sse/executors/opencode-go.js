@@ -1,16 +1,5 @@
-import crypto from "crypto";
 import { DefaultExecutor } from "./default.js";
-import { PROVIDERS } from "../config/providers.js";
-import { resolveSessionId } from "../utils/sessionManager.js";
-
-function generateSessionId() {
-  return `ses_${crypto.randomUUID().replace(/-/g, "")}`;
-}
-
-function toGoSession(id) {
-  const stripped = String(id || "").replace(/^ses_/, "").replace(/-/g, "");
-  return stripped ? `ses_${stripped}` : null;
-}
+import { resolveSessionId, generateOpencodeSessionId, normalizeOpencodeSessionId } from "../utils/sessionManager.js";
 
 // Provider-scoped OpenCode Go session injection: preserve the supplied
 // x-opencode-session header or mint one ses_ id per logical request (stable
@@ -18,12 +7,11 @@ function toGoSession(id) {
 export class OpenCodeGoExecutor extends DefaultExecutor {
   constructor() {
     super("opencode-go");
-    this.config = PROVIDERS["opencode-go"];
   }
 
   deriveRequestContext(body, credentials) {
     return {
-      sessionId: toGoSession(resolveSessionId({
+      sessionId: normalizeOpencodeSessionId(resolveSessionId({
         headers: credentials?.rawHeaders,
         body,
         connectionId: credentials?.connectionId,
@@ -37,7 +25,7 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
     const raw = credentials?.rawHeaders || {};
     const lower = {};
     for (const [k, v] of Object.entries(raw)) lower[k.toLowerCase()] = v;
-    headers["x-opencode-session"] = lower["x-opencode-session"] || ctx.sessionId || generateSessionId();
+    headers["x-opencode-session"] = lower["x-opencode-session"] || ctx.sessionId || generateOpencodeSessionId();
     return headers;
   }
 }

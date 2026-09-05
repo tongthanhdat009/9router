@@ -119,13 +119,13 @@ describe.skipIf(!RUN_REAL)("REAL vision capability survey", () => {
       const model = m.id;
       for (const probeName of ACTIVE_PROBES) {
       const probe = CAPABILITY_PROBES[probeName];
-      it.concurrent(`${probeName} | ${providerId} / ${model}`, async () => {
+      it.concurrent(`${probeName} | ${providerId} / ${model}`, async (ctx) => {
         const caps = getCapabilitiesForModel(providerId, model);
         const capOn = !!caps[probe.cap];
         const credentials = await getProviderCredentials(providerId, new Set(), model);
         if (!credentials || credentials.allRateLimited) {
           results.push({ probe: probeName, providerId, model, cap: capOn, status: "no-cred", verdict: "skip" });
-          return expect(true).toBe(true);
+          return ctx.skip("no-cred");
         }
         const refreshed = await checkAndRefreshToken(providerId, credentials);
 
@@ -157,7 +157,6 @@ describe.skipIf(!RUN_REAL)("REAL vision capability survey", () => {
         if (ok) await drainSSE(result.response).catch(() => {});
         results.push({ probe: probeName, providerId, model, cap: capOn, status, verdict, error: ok ? "" : String(result.error || "").slice(0, 80) });
         // Survey never fails on capability outcome.
-        return expect(true).toBe(true);
       }, TIMEOUT_MS);
       }
     }

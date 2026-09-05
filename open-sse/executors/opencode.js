@@ -3,7 +3,7 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { injectReasoningContent } from "../utils/reasoningContentInjector.js";
-import { resolveSessionId } from "../utils/sessionManager.js";
+import { resolveSessionId, generateOpencodeSessionId, normalizeOpencodeSessionId } from "../utils/sessionManager.js";
 
 const OPENCODE_UA = "opencode";
 // Models served by /zen/v1/responses; every other model stays on /chat/completions.
@@ -12,15 +12,6 @@ const RESPONSES_MODEL_PATTERN = /^muse-spark-[\w.-]+-contributor-free$/;
 
 function generateRequestId() {
   return `msg_${crypto.randomUUID().replace(/-/g, "")}`;
-}
-
-function generateSessionId() {
-  return `ses_${crypto.randomUUID().replace(/-/g, "")}`;
-}
-
-function toOpencodeSession(id) {
-  const stripped = String(id || "").replace(/^ses_/, "").replace(/-/g, "");
-  return stripped ? `ses_${stripped}` : null;
 }
 
 // Strip the thinking suffix "model(level)" so registry lookups hit the base id.
@@ -34,7 +25,7 @@ function isResponsesModel(model) {
 }
 
 function resolveOpencodeSession(body, credentials) {
-  return toOpencodeSession(resolveSessionId({
+  return normalizeOpencodeSessionId(resolveSessionId({
     headers: credentials?.rawHeaders,
     body,
     connectionId: credentials?.connectionId,
@@ -111,7 +102,7 @@ export class OpenCodeExecutor extends BaseExecutor {
       "Authorization": "Bearer public",
       "User-Agent": isOpencodeDownstream ? downstreamUa : OPENCODE_UA,
       "x-opencode-client": lower["x-opencode-client"] || "desktop",
-      "x-opencode-session": lower["x-opencode-session"] || ctx.sessionId || generateSessionId(),
+      "x-opencode-session": lower["x-opencode-session"] || ctx.sessionId || generateOpencodeSessionId(),
       "x-opencode-request": lower["x-opencode-request"] || generateRequestId(),
       "x-opencode-project": lower["x-opencode-project"] || "global",
       "Accept": stream ? "text/event-stream" : "*/*",

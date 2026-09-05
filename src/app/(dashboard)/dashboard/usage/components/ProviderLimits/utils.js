@@ -145,10 +145,6 @@ export function getConnectionsEmptyMessage(totals, providerFilter, accountFilter
   };
 }
 
-export function sortRequestFromExpiringFirst(expiringFirst) {
-  return expiringFirst ? "expiring" : "priority";
-}
-
 export function getPageSizeLabel(pageSize, isCustomPageSize) {
   return isCustomPageSize ? `Custom: ${pageSize} / page` : `${pageSize} / page`;
 }

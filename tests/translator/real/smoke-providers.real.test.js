@@ -57,14 +57,14 @@ describe.skipIf(!RUN_REAL).concurrent("REAL provider smoke", () => {
   for (const providerId of (RUN_REAL ? targetProviders() : [])) {
     it.concurrent(
       `${providerId}: responds to a short prompt`,
-      async () => {
+      async (ctx) => {
         const model = firstLlmModel(providerId);
-        if (!model) return expect(true).toBe(true); // no llm model → skip silently
+        if (!model) return ctx.skip(`[skip] ${providerId}: no llm model`);
 
         const credentials = await getProviderCredentials(providerId, new Set(), model);
         if (!credentials || credentials.allRateLimited) {
           console.warn(`[skip] ${providerId}: no usable credential`);
-          return expect(true).toBe(true);
+          return ctx.skip(`[skip] ${providerId}: no usable credential`);
         }
 
         const refreshed = await checkAndRefreshToken(providerId, credentials);
@@ -85,7 +85,7 @@ describe.skipIf(!RUN_REAL).concurrent("REAL provider smoke", () => {
           const credIssue = [401, 402, 403, 429].includes(Number(result.status));
           if (credIssue) {
             console.warn(`[skip] ${providerId}: ${result.status} (credential/quota)`);
-            return expect(true).toBe(true);
+            return ctx.skip(`[skip] ${providerId}: ${result.status} (credential/quota)`);
           }
           throw new Error(`${providerId} failed: ${result.status} ${result.error}`);
         }

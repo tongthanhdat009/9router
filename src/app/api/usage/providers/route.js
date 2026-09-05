@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getDistinctProviders } from "@/lib/requestDetailsDb";
+import { getDistinctProviders } from "@/lib/db/index.js";
 import { getProviderNodes } from "@/lib/localDb";
 import { AI_PROVIDERS, getProviderByAlias } from "@/shared/constants/providers";
 
