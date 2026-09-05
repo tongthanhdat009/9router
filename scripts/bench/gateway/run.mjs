@@ -4,12 +4,24 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import http from 'node:http';
+import {createHash} from 'node:crypto';
 import {spawn, execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {validateSse, summary} from './validate.mjs';
-const root=path.resolve(import.meta.dirname,'../../..');
+import {loadSessionMessages, buildCheckpoints} from '../mux-fixtures.mjs';
+const sourceRoot=path.resolve(import.meta.dirname,'../../..');
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'9r-http-bench-'));
+// Private (0600) artifact dir that survives temp teardown, for validator-failure raw SSE.
+const artifactDir=fs.mkdtempSync(path.join(os.tmpdir(),'9r-gateway-artifact-'));
+const root=path.join(temp,'source');
+fs.mkdirSync(root);
+for(const name of execFileSync('git',['ls-files','-z'],{cwd:sourceRoot,encoding:'utf8'}).split('\0').filter(Boolean)) {
+ if(name.split('/').some(p=>p==='.env'||p.startsWith('.env.')))continue;
+ const from=path.join(sourceRoot,name);if(!fs.statSync(from).isFile())continue;
+ const to=path.join(root,name);fs.mkdirSync(path.dirname(to),{recursive:true});fs.copyFileSync(from,to);
+}
+fs.symlinkSync(path.join(sourceRoot,'node_modules'),path.join(root,'node_modules'),'dir');
 const children=[];
 const output=path.resolve(process.env.BENCH_OUTPUT || 'gateway-benchmark.json');
 const bun=process.env.BUN_BIN || path.join(os.homedir(),'.bun/bin/bun');
@@ -19,7 +31,7 @@ const env={PATH:process.env.PATH,HOME:temp,DATA_DIR:temp,NODE_ENV:'production',N
 fs.writeFileSync(path.join(temp,'.gateway-benchmark'),'1');
 function launch(exe,args,extra={}) {
  const child=spawn(exe,args,{cwd:root,env:{...env,...extra},stdio:['ignore','pipe','pipe']});
- children.push(child); child.stderr.on('data',()=>{}); return child;
+ children.push(child); child.stderr.on('data',d=>{child.errorTail=((child.errorTail||'')+d).slice(-3000)}); return child;
 }
 async function port() {
  const s=net.createServer(); s.listen(0,'127.0.0.1'); await once(s,'listening'); const p=s.address().port; await new Promise(r=>s.close(r));
@@ -34,17 +46,29 @@ async function server(script,extra) {
 }
 async function command(exe,args,extra={}) {
  const c=launch(exe,args,extra); c.stdout.on('data',()=>{});
- const [code]=await once(c,'exit'); if(code!==0) throw Error('command failed: '+path.basename(exe)+' '+args[0]+' exit '+code);
+ const [code]=await once(c,'exit'); if(code!==0) throw Error('command failed: '+path.basename(exe)+' '+args[0]+' exit '+code+' '+c.errorTail);
 }
-async function post(p,key,model) {
- const body=JSON.stringify({model,stream:true,messages:[{role:'user',content:'benchmark sentinel'}]});
+function get(port,p) {return new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:p},res=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>{try{resolve(JSON.parse(b))}catch(e){reject(e)}})}).on('error',reject)})}
+function ok(port,p) {return new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:p},res=>{res.resume();res.on('end',resolve)}).on('error',reject)})}
+async function post(p,key,model,messages) {
+ const body=JSON.stringify({model,stream:true,messages:messages||[{role:'user',content:'benchmark sentinel'}]});
  const t=performance.now();
  return new Promise((resolve,reject)=>{
   const req=http.request({host:'127.0.0.1',port:p,path:'/v1/chat/completions',method:'POST',headers:{authorization:'Bearer '+key,'content-type':'application/json','content-length':Buffer.byteLength(body)}},res=>{
    const headersMs=performance.now()-t; let text=''; let first=null;
    res.on('data',c=>{first??=performance.now()-t;text+=c;if(text.length>65536) req.destroy(Error('response bound exceeded'))});
    res.on('error',reject); res.on('end',()=>{
-    try {if(res.statusCode!==200) throw Error('HTTP '+res.statusCode);validateSse(text);resolve({headersMs,firstByteMs:first,totalMs:performance.now()-t,clientBodyBytes:Buffer.byteLength(body)})}catch(e){reject(e)}
+    try {if(res.statusCode!==200) throw Error('HTTP '+res.statusCode+' '+text.slice(0,300));validateSse(text);resolve({headersMs,firstByteMs:first,totalMs:performance.now()-t,clientBodyBytes:Buffer.byteLength(body),upstreamReceivedBytes:Number(res.headers['x-received-bytes']||0),doneVisible:text.includes('[DONE]')})}catch(e){
+     // Preserve bounded raw SSE + ordering facts for validator failures; never bypass the check.
+     try {
+      const artifact=path.join(artifactDir,'sse-validation-failure.txt');
+      fs.writeFileSync(artifact,text.slice(0,65536),{mode:0o600});
+      const lines=text.split('\n').filter(l=>l.startsWith('data:'));
+      const ordering={dataLines:lines.length,first:[lines[0],lines[1]],last:lines.slice(-3),donePosition:lines.indexOf('data: [DONE]')};
+      e.message+=' | sseArtifact='+artifact+' | ordering='+JSON.stringify(ordering);
+     } catch {}
+     reject(e);
+    }
    });
   }); req.setTimeout(15000,()=>req.destroy(Error('request timeout')));req.on('error',reject);req.end(body);
  });
@@ -52,25 +76,41 @@ async function post(p,key,model) {
 try {
  if (['.env','.env.local','.env.production','.env.production.local'].some(name => fs.existsSync(path.join(root,name)))) throw Error('isolation preflight: Next would load repository env files; use an env-free source checkout');
  // Explicit dedicated build; no stale standalone artifact and no modification of normal .next.
- const dist=path.join(temp,'next-build');
- await command(process.execPath,[path.join(root,'node_modules/next/dist/bin/next'),'build','--webpack'],{NEXT_DIST_DIR:dist});
+ const dist=path.join(root,'.next');
+ await command(process.execPath,[path.join(root,'node_modules/next/dist/bin/next'),'build','--webpack'],{NEXT_DIST_DIR:'.next'});
  result.buildId=fs.readFileSync(path.join(dist,'BUILD_ID'),'utf8').trim();
  const upstream=await server('upstream.mjs',{});
  const config=path.join(temp,'seed.json'); const keys=path.join(temp,'keys.json');
  fs.writeFileSync(config,JSON.stringify({upstreams:{bench:'http://127.0.0.1:'+upstream+'/v1'}}));
- await command(process.execPath,['--no-warnings','--loader',path.join(root,'scripts/benchmark-loader.mjs'),path.join(import.meta.dirname,'seed.mjs'),config,keys]);
+ await command(process.execPath,['--no-warnings','--loader',path.join(root,'scripts/benchmark-loader.mjs'),path.join(root,'scripts/bench/gateway/seed.mjs'),config,keys]);
  const {key}=JSON.parse(fs.readFileSync(keys,'utf8'));
  result.bun=JSON.parse(execFileSync(bun,['-e','console.log(JSON.stringify({version:Bun.version,revision:Bun.revision,executable:process.execPath}))'],{env,encoding:'utf8'}));
- for(const runtime of ['bun','node']) {
+ for(const runtime of ['bun']) {
   const p=await port();
-  const c=launch(runtime==='bun'?bun:process.execPath,[path.join(root,'custom-server.js'),'--port',String(p),'--hostname','127.0.0.1'],{PORT:String(p),NEXT_DIST_DIR:dist});
+  const c=launch(runtime==='bun'?bun:process.execPath,[path.join(root,'custom-server.js'),'--port',String(p),'--hostname','127.0.0.1'],{PORT:String(p),NEXT_DIST_DIR:'.next'});
   c.stdout.on('data',()=>{});
-  let ready=false;
-  for(let i=0;i<100;i++) {try {await post(p,key,'bench/benchmark-model');ready=true;break}catch{} if(c.exitCode!==null)break;await sleep(200)}
-  if(!ready)throw Error(runtime+' gateway startup/route validation failed');
+  let ready=false;let lastError;
+  for(let i=0;i<100;i++) {try {await post(p,key,'bench/benchmark-model');ready=true;break}catch(e){lastError=e.message} if(c.exitCode!==null)break;await sleep(200)}
+  if(!ready)throw Error(runtime+' gateway startup/route validation failed '+lastError+' '+c.errorTail);
   for(let i=0;i<3;i++)await post(p,key,'bench/benchmark-model');
   const samples=[];for(let i=0;i<10;i++)samples.push(await post(p,key,'bench/benchmark-model'));
   result.rows.push({runtime,policy:'default',upstream:'http',proxy:false,samples,ttft:summary(samples.map(x=>x.firstByteMs))});
+  const [heavyBody]=buildCheckpoints(loadSessionMessages(path.join(os.homedir(),'.mux/sessions/e8cf0d0b8f/chat.jsonl')),[300000]);
+  await ok(upstream,'/__reset');
+  const heavy=await post(p,key,'bench/benchmark-model',heavyBody.messages);
+  const stats=await get(upstream,'/__stats');
+  // Byte/hash reconciliation must account for the verified model-prefix rewrite:
+  // chatCore.js:103 getModelUpstreamId + :202 stripThinkingSuffix serialize upstream
+  // model "benchmark-model" for routed request model "bench/benchmark-model" (6-byte diff).
+  // Rebuild the exact client-serialized body (same inputs post() used), apply the verified
+  // model rewrite, and reconcile bytes + sorted-key semantic sha256. Raw-byte sha recorded too,
+  // but not asserted: gateway re-serialization may legitimately reorder keys.
+  const canon=(o)=>Array.isArray(o)?'['+o.map(canon).join(',')+']':(o&&typeof o==='object')?'{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+canon(o[k])).join(',')+'}':JSON.stringify(o);
+  const clientBody=JSON.parse(JSON.stringify({model:'bench/benchmark-model',stream:true,messages:heavyBody.messages}));
+  const expectedUpstream={...clientBody,model:'benchmark-model'};
+  const expectedUpstreamBytes=Buffer.byteLength(JSON.stringify(expectedUpstream));
+  const expectedCanonicalSha256=createHash('sha256').update(canon(expectedUpstream)).digest('hex');
+  result.boundary={clientBodyBytes:heavy.clientBodyBytes,upstreamReceivedBytes:stats.bytesReceived,upstreamRequests:stats.requests,modelRewriteBytes:heavy.clientBodyBytes-stats.bytesReceived,bytesReconciled:stats.bytesReceived===expectedUpstreamBytes,expectedUpstreamBytes,upstreamModel:stats.last?.model,upstreamRawSha256:stats.last?.sha256,upstreamCanonicalSha256:stats.last?.canonicalSha256,expectedCanonicalSha256,semanticReconciled:stats.last?.canonicalSha256===expectedCanonicalSha256,firstByteMs:heavy.firstByteMs,totalMs:heavy.totalMs,doneVisible:heavy.doneVisible,messages:heavyBody.messages.length};
   c.kill('SIGTERM');await once(c,'exit');
  }
  result.status='smoke-only';

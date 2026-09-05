@@ -4,11 +4,12 @@
 import http from "node:http";
 import https from "node:https";
 import fs from "node:fs";
+import { createHash } from "node:crypto";
 
 const tls = process.env.UPSTREAM_TLS === "1";
 const chunks = Number(process.env.UPSTREAM_CHUNKS || 8);
 const id = process.env.UPSTREAM_ID || "up";
-let stats = { id: id, requests: 0, bytesReceived: 0, aborted: 0, arrivalMs: [] };
+let stats = { id: id, requests: 0, bytesReceived: 0, aborted: 0, arrivalMs: [], last: null };
 
 function chunk(delta, finish) {
   return "data: " + JSON.stringify({ id: "chatcmpl-bench", object: "chat.completion.chunk", choices: [{ index: 0, delta: delta, finish_reason: finish }] }) + "\n\n";
@@ -21,15 +22,16 @@ function handler(req, res) {
     return;
   }
   if (req.method === "GET" && req.url === "/__reset") {
-    stats = { id: id, requests: 0, bytesReceived: 0, aborted: 0, arrivalMs: [] };
+    stats = { id: id, requests: 0, bytesReceived: 0, aborted: 0, arrivalMs: [], last: null };
     res.writeHead(200); res.end("ok");
     return;
   }
   let bytes = 0;
+  const chunks = [];
   let finished = false;
   const t0 = Date.now();
   stats.requests++;
-  req.on("data", (c) => { if (!finished) bytes += c.length; });
+  req.on("data", (c) => { if (!finished) { bytes += c.length; chunks.push(c); } });
   req.on("aborted", () => {
     if (finished) return;
     finished = true; stats.aborted++;
@@ -40,6 +42,12 @@ function handler(req, res) {
     finished = true;
     stats.bytesReceived += bytes;
     stats.arrivalMs.push(Date.now() - t0);
+    // Semantic identity of the last received body: byte-exact sha256 + observed model field.
+    const body = Buffer.concat(chunks);
+    const canon = (o) => Array.isArray(o) ? "[" + o.map(canon).join(",") + "]" : (o && typeof o === "object") ? "{" + Object.keys(o).sort().map(k => JSON.stringify(k) + ":" + canon(o[k])).join(",") + "}" : JSON.stringify(o);
+    const last = { bytes, sha256: createHash("sha256").update(body).digest("hex"), canonicalSha256: null, model: null };
+    try { const parsed = JSON.parse(body); last.model = parsed.model || null; last.canonicalSha256 = createHash("sha256").update(canon(parsed)).digest("hex"); } catch {}
+    stats.last = last;
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", "x-received-bytes": String(bytes) });
     let i = 0;
     const send = () => {
