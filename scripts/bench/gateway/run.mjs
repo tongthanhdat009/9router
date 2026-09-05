@@ -85,12 +85,14 @@ try {
  await command(process.execPath,['--no-warnings','--loader',path.join(root,'scripts/benchmark-loader.mjs'),path.join(root,'scripts/bench/gateway/seed.mjs'),config,keys]);
  const {key}=JSON.parse(fs.readFileSync(keys,'utf8'));
  result.bun=JSON.parse(execFileSync(bun,['-e','console.log(JSON.stringify({version:Bun.version,revision:Bun.revision,executable:process.execPath}))'],{env,encoding:'utf8'}));
+ const attribution=process.env.BENCH_MODE==='attribution';
  const sweep=process.env.BENCH_MODE==='policies';
  const policies=sweep?[['default15',{}],['OFF',{TRAFFIC_PACER:'off'}],...['5','10','20'].map(ms=>[ms,{TRAFFIC_PACING_SPACING_MS:ms}])]:[['default15',{}]];
- for(const [policy,policyEnv] of policies) {
-  const runtime='bun';
+ for(const [policy,policyEnv] of policies) for(const runtime of attribution?['bun','node']:['bun']) {
+  const profiling=attribution&&runtime==='bun';
+  const profileArgs=profiling?['--cpu-prof','--cpu-prof-md','--cpu-prof-dir=/tmp','--cpu-prof-name=m3-bun.cpuprofile']:[];
   const p=await port();
-  const c=launch(runtime==='bun'?bun:process.execPath,[path.join(root,'custom-server.js'),'--port',String(p),'--hostname','127.0.0.1'],{PORT:String(p),NEXT_DIST_DIR:'.next',...policyEnv});
+  const c=launch(runtime==='bun'?bun:process.execPath,[...profileArgs,path.join(root,'custom-server.js'),'--port',String(p),'--hostname','127.0.0.1'],{PORT:String(p),NEXT_DIST_DIR:'.next',...policyEnv});
   c.stdout.on('data',()=>{});
   let ready=false;let lastError;
   for(let i=0;i<100;i++) {try {await post(p,key,'bench/benchmark-model');ready=true;break}catch(e){lastError=e.message} if(c.exitCode!==null)break;await sleep(200)}
@@ -98,15 +100,16 @@ try {
   const [heavyBody]=buildCheckpoints(loadSessionMessages(path.join(os.homedir(),'.mux/sessions/e8cf0d0b8f/chat.jsonl')),[300000]);
   const ctx={key,model:'bench/benchmark-model',heavyMessages:heavyBody.messages,summary,post:(model,messages)=>post(p,key,model,messages),get:(q)=>get(upstream,q),reset:()=>ok(upstream,'/__reset')};
   for(let i=0;i<3;i++)await post(p,key,'bench/benchmark-model');
-  const small=sweep?undefined:await runSmallC1(ctx,100);
-  const single=sweep?undefined:await runHeavySingle(ctx);
-  const conc=await runHeavyConcurrent(ctx,8);
-  const fan=sweep?undefined:await runFanoutBurst(ctx,16);
-  const vic=await runVictimProbes(ctx,[0,1,2,4,8],100,1);
+  const small=sweep||profiling?undefined:await runSmallC1(ctx,100);
+  const single=sweep||attribution?undefined:await runHeavySingle(ctx);
+  const conc=profiling?undefined:await runHeavyConcurrent(ctx,8);
+  const fan=sweep||attribution?undefined:await runFanoutBurst(ctx,16);
+  const vic=await runVictimProbes(ctx,profiling?[8]:[0,1,2,4,8],100,1);
   result.rows.push({runtime,policy,policyEnv,upstream:'http',proxy:false,small,single,conc,fan,vic,runtimeIdentity:{bun:result.bun,buildId:result.buildId,client:result.client}});
   c.kill('SIGTERM');await once(c,'exit');
+  if(attribution)fs.writeFileSync('/tmp/m3-'+runtime+'.json',JSON.stringify({...result,rows:[result.rows.at(-1)],status:'measured',profileScope:profiling?'process lifetime: startup, warmup, victim@8; not window-isolated':undefined},null,2));
  }
- result.status=sweep?'policy-sweep-measured':'milestone-1-measured';
+ result.status=attribution?'attribution-measured':sweep?'policy-sweep-measured':'milestone-1-measured';
 } catch(e) {result.error=e.message;process.exitCode=1}
 finally {
  for(const c of children)if(c.exitCode===null&&!c.signalCode)c.kill('SIGTERM');
