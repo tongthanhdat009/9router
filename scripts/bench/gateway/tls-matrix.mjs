@@ -1,4 +1,7 @@
 // Node orchestrator/client/upstreams fixed; only actual Next gateway runtime varies.
+// Plain-vs-TLS upstream x bun/node gateway matrix: ONE build, four cells.
+// Client->gateway stays HTTP; gateway->upstream scheme varies by seeded prefix.
+// Ephemeral self-signed cert; identical trust env injected into every cell.
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -23,9 +26,9 @@ for(const name of execFileSync('git',['ls-files','-z'],{cwd:sourceRoot,encoding:
 }
 fs.symlinkSync(path.join(sourceRoot,'node_modules'),path.join(root,'node_modules'),'dir');
 const children=[];
-const output=path.resolve(process.env.BENCH_OUTPUT || 'gateway-benchmark.json');
+const output=path.resolve(process.env.TLS_OUTPUT || '/tmp/m4-tls-matrix.json');
 const bun=process.env.BUN_BIN || path.join(os.homedir(),'.bun/bin/bun');
-const result={schema:1,status:'incomplete',rows:[],missing:['policy matrix','request-internal stages','independent sentinel','body/serialization A/B','resource settle','native CPU profile','60s sustained'],client:{executable:process.execPath,version:process.version}};
+const result={schema:1,status:'incomplete',rows:[],client:{executable:process.execPath,version:process.version}};
 // Do not inherit host secrets, proxy settings, HOME state, or repo .env contents.
 const env={PATH:process.env.PATH,HOME:temp,DATA_DIR:temp,NODE_ENV:'production',NEXT_TELEMETRY_DISABLED:'1',JWT_SECRET:'benchmark-local-only',API_KEY_SECRET:'benchmark-local-only',MACHINE_ID_SALT:'benchmark-local-only'};
 fs.writeFileSync(path.join(temp,'.gateway-benchmark'),'1');
@@ -79,39 +82,42 @@ try {
  const dist=path.join(root,'.next');
  await command(process.execPath,[path.join(root,'node_modules/next/dist/bin/next'),'build','--webpack'],{NEXT_DIST_DIR:'.next'});
  result.buildId=fs.readFileSync(path.join(dist,'BUILD_ID'),'utf8').trim();
- const upstream=await server('upstream.mjs',{});
+ const certDir=fs.mkdtempSync(path.join(os.tmpdir(),'9r-tls-cert-'));
+ const certP=path.join(certDir,'cert.pem');
+ const keyP=path.join(certDir,'key.pem');
+ execFileSync('openssl',['req','-x509','-newkey','rsa:2048','-nodes','-keyout',keyP,'-out',certP,'-days','2','-subj','/CN=127.0.0.1','-addext','subjectAltName=IP:127.0.0.1']);
+ result.cert={subject:'/CN=127.0.0.1',san:'IP:127.0.0.1',days:2,ephemeral:true,equalTrust:true};
+ const plainPort=await server('upstream.mjs',{});
+ const tlsPort=await server('upstream.mjs',{UPSTREAM_TLS:'1',UPSTREAM_KEY:keyP,UPSTREAM_CERT:certP});
  const config=path.join(temp,'seed.json'); const keys=path.join(temp,'keys.json');
- fs.writeFileSync(config,JSON.stringify({upstreams:{bench:'http://127.0.0.1:'+upstream+'/v1'}}));
+ fs.writeFileSync(config,JSON.stringify({upstreams:{'bench-plain':'http://127.0.0.1:'+plainPort+'/v1','bench-tls':'https://127.0.0.1:'+tlsPort+'/v1'}}));
  await command(process.execPath,['--no-warnings','--loader',path.join(root,'scripts/benchmark-loader.mjs'),path.join(root,'scripts/bench/gateway/seed.mjs'),config,keys]);
  const {key}=JSON.parse(fs.readFileSync(keys,'utf8'));
  result.bun=JSON.parse(execFileSync(bun,['-e','console.log(JSON.stringify({version:Bun.version,revision:Bun.revision,executable:process.execPath}))'],{env,encoding:'utf8'}));
- const attribution=process.env.BENCH_MODE==='attribution';
- const sweep=process.env.BENCH_MODE==='policies';
- // TRAFFIC_THRESHOLD_SWEEP=131072,262144,524288 reuses the one-build policy loop as a TRAFFIC_PACING_THRESHOLD sweep.
- const thresholds=process.env.TRAFFIC_THRESHOLD_SWEEP?process.env.TRAFFIC_THRESHOLD_SWEEP.split(',').map(Number):null;
- const policies=sweep?(thresholds?thresholds.map(t=>[String(t),{TRAFFIC_PACING_THRESHOLD:String(t)}]):[['default15',{}],['OFF',{TRAFFIC_PACER:'off'}],...['5','10','20'].map(ms=>[ms,{TRAFFIC_PACING_SPACING_MS:ms}])]):[['default15',{}]];
- for(const [policy,policyEnv] of policies) for(const runtime of attribution?['bun','node']:['bun']) {
-  const profiling=attribution&&runtime==='bun';
-  const profileArgs=profiling?['--cpu-prof','--cpu-prof-md','--cpu-prof-dir=/tmp','--cpu-prof-name=m3-bun.cpuprofile']:[];
+ const trustEnv={NODE_EXTRA_CA_CERTS:certP,NODE_TLS_REJECT_UNAUTHORIZED:'0'};
+ const [heavyBody]=buildCheckpoints(loadSessionMessages(path.join(os.homedir(),'.mux/sessions/e8cf0d0b8f/chat.jsonl')),[300000]);
+ const matrix=[['http','bun'],['http','node'],['https','bun'],['https','node']];
+ for(const [scheme,runtime] of matrix) {
+  const prefix=scheme==='https'?'bench-tls':'bench-plain';
+  const model=prefix+'/benchmark-model';
+  const upPort=scheme==='https'?tlsPort:plainPort;
   const p=await port();
-  const c=launch(runtime==='bun'?bun:process.execPath,[...profileArgs,path.join(root,'custom-server.js'),'--port',String(p),'--hostname','127.0.0.1'],{PORT:String(p),NEXT_DIST_DIR:'.next',...policyEnv});
+  const c=launch(runtime==='bun'?bun:process.execPath,[path.join(root,'custom-server.js'),'--port',String(p),'--hostname','127.0.0.1'],{PORT:String(p),NEXT_DIST_DIR:'.next',...trustEnv});
   c.stdout.on('data',()=>{});
-  let ready=false;let lastError;
-  for(let i=0;i<100;i++) {try {await post(p,key,'bench/benchmark-model');ready=true;break}catch(e){lastError=e.message} if(c.exitCode!==null)break;await sleep(200)}
-  if(!ready)throw Error(runtime+' gateway startup/route validation failed '+lastError+' '+c.errorTail);
-  const [heavyBody]=buildCheckpoints(loadSessionMessages(path.join(os.homedir(),'.mux/sessions/e8cf0d0b8f/chat.jsonl')),[300000]);
-  const ctx={key,model:'bench/benchmark-model',heavyMessages:heavyBody.messages,summary,post:(model,messages)=>post(p,key,model,messages),get:(q)=>get(upstream,q),reset:()=>ok(upstream,'/__reset')};
-  for(let i=0;i<3;i++)await post(p,key,'bench/benchmark-model');
-  const small=sweep||profiling?undefined:await runSmallC1(ctx,100);
-  const single=sweep||attribution?undefined:await runHeavySingle(ctx);
-  const conc=profiling?undefined:await runHeavyConcurrent(ctx,8);
-  const fan=sweep||attribution?undefined:await runFanoutBurst(ctx,16);
-  const vic=await runVictimProbes(ctx,profiling||thresholds?[4,8]:[0,1,2,4,8],100,1);
-  result.rows.push({runtime,policy,policyEnv,upstream:'http',proxy:false,small,single,conc,fan,vic,runtimeIdentity:{bun:result.bun,buildId:result.buildId,client:result.client}});
+  let conc=null; let vic=null; let cellError=null;
+  try {
+   let ready=false;let lastError;
+   for(let i=0;i<100;i++) {try {await post(p,key,model);ready=true;break}catch(e){lastError=e.message} if(c.exitCode!==null)break;await sleep(200)}
+   if(!ready)throw Error(runtime+' gateway startup/route validation failed '+lastError+' '+c.errorTail);
+   const ctx={key,model,heavyMessages:heavyBody.messages,summary,post:(m,messages)=>post(p,key,m,messages),get:(q)=>get(upPort,q),reset:()=>ok(upPort,'/__reset')};
+   for(let i=0;i<3;i++)await post(p,key,model);
+   conc=await runHeavyConcurrent(ctx,8);
+   vic=await runVictimProbes(ctx,[8],100,1);
+  } catch(e) {cellError=String(e&&e.message||e)}
+  result.rows.push({cell:scheme+'/'+runtime,scheme,runtime,gatewayEnv:Object.keys(trustEnv),conc,vic,error:cellError,runtimeIdentity:{bun:result.bun,buildId:result.buildId,client:result.client}});
   c.kill('SIGTERM');await once(c,'exit');
-  if(attribution)fs.writeFileSync('/tmp/m3-'+runtime+'.json',JSON.stringify({...result,rows:[result.rows.at(-1)],status:'measured',profileScope:profiling?'process lifetime: startup, warmup, victim@8; not window-isolated':undefined},null,2));
  }
- result.status=attribution?'attribution-measured':sweep?'policy-sweep-measured':'milestone-1-measured';
+ result.status='tls-matrix-measured';
 } catch(e) {result.error=e.message;process.exitCode=1}
 finally {
  for(const c of children)if(c.exitCode===null&&!c.signalCode)c.kill('SIGTERM');
