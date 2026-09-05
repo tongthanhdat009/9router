@@ -1,0 +1,11 @@
+import assert from 'node:assert/strict';
+import {validateSse,summary} from './validate.mjs';
+const content='data: {"choices":[{"delta":{"content":"ok"}}]}\n\n';
+const finish='data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n\n';
+const done='data: [DONE]\n\n';
+validateSse(content+finish+done);
+for(const broken of [content+finish,finish+done,content+done,content+finish+done+'data: {}\n\n','data: broken\n\n'+done]) assert.throws(()=>validateSse(broken));
+assert.equal(summary([3,1,2]).p50,2);assert.equal(summary([1]).p95,null);
+assert.throws(()=>summary([]));assert.throws(()=>summary([NaN]));
+assert.equal(Buffer.byteLength('é'),2);
+console.log('gateway validator self-check passed');
