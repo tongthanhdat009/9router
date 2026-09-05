@@ -3,7 +3,7 @@
 import http from "node:http";
 import net from "node:net";
 
-let stats = { connects: 0, tunnelsActive: 0, tunneledBytes: 0, forwarded: 0, forwardedReqBytes: 0, forwardedResBytes: 0, refused: 0 };
+let stats = { connects: 0, successes: 0, failures: 0, peak: 0, tunnelsActive: 0, tunneledBytes: 0, forwarded: 0, forwardedReqBytes: 0, forwardedResBytes: 0, refused: 0 };
 
 const server = http.createServer((req, res) => {
   if (req.url && req.url.startsWith("http://")) {
@@ -20,8 +20,9 @@ const server = http.createServer((req, res) => {
     req.on("aborted", () => preq.destroy());
     return;
   }
+  if (req.url === "/__window") { stats.connects=0; stats.successes=0; stats.failures=0; stats.refused=0; stats.peak=stats.tunnelsActive; res.end("ok"); return; }
   if (req.url === "/__stats") { res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify(stats)); return; }
-  if (req.url === "/__reset") { stats = { connects: 0, tunnelsActive: 0, tunneledBytes: 0, forwarded: 0, forwardedReqBytes: 0, forwardedResBytes: 0, refused: 0 }; res.writeHead(200); res.end("ok"); return; }
+  if (req.url === "/__reset") { stats = { connects: 0, successes: 0, failures: 0, peak: 0, tunnelsActive: 0, tunneledBytes: 0, forwarded: 0, forwardedReqBytes: 0, forwardedResBytes: 0, refused: 0 }; res.writeHead(200); res.end("ok"); return; }
   res.writeHead(404); res.end();
 });
 
@@ -30,9 +31,12 @@ server.on("connect", (req, clientSocket, head) => {
   const host = parts[0];
   const port = Number(parts[1] || 443);
   stats.connects++;
+  let established = false;
+  clientSocket.on("error", () => {});
   const up = net.connect(port, host, () => {
+    established = true;
     clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
-    stats.tunnelsActive++;
+    stats.successes++; stats.tunnelsActive++; stats.peak = Math.max(stats.peak, stats.tunnelsActive);
     if (head && head.length) { stats.tunneledBytes += head.length; up.write(head); }
     up.on("data", (c) => { stats.tunneledBytes += c.length; });
     clientSocket.on("data", (c) => { stats.tunneledBytes += c.length; });
@@ -50,7 +54,7 @@ server.on("connect", (req, clientSocket, head) => {
     up.on("error", bye); clientSocket.on("error", bye);
   });
   up.on("error", () => {
-    stats.refused++;
+    stats.refused++; if (!established) stats.failures++;
     try { clientSocket.write("HTTP/1.1 502 Bad Gateway\r\n\r\n"); clientSocket.destroy(); } catch {}
   });
 });
