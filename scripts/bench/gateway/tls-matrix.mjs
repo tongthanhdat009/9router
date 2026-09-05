@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import http from 'node:http';
+import https from 'node:https';
 import {spawn, execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {setTimeout as sleep} from 'node:timers/promises';
@@ -51,8 +52,8 @@ async function command(exe,args,extra={}) {
  const c=launch(exe,args,extra); c.stdout.on('data',()=>{});
  const [code]=await once(c,'exit'); if(code!==0) throw Error('command failed: '+path.basename(exe)+' '+args[0]+' exit '+code+' '+c.errorTail);
 }
-function get(port,p) {return new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:p},res=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>{try{resolve(JSON.parse(b))}catch(e){reject(e)}})}).on('error',reject)})}
-function ok(port,p) {return new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:p},res=>{res.resume();res.on('end',resolve)}).on('error',reject)})}
+function get(port,p,tls) {const mod=tls?https:http;const extra=tls?{rejectUnauthorized:false}:{};return new Promise((resolve,reject)=>{mod.get({host:'127.0.0.1',port,path:p,...extra},res=>{let b='';res.on('data',c=>b+=c);res.on('end',()=>{try{resolve(JSON.parse(b))}catch(e){reject(e)}})}).on('error',reject)})}
+function ok(port,p,tls) {const mod=tls?https:http;const extra=tls?{rejectUnauthorized:false}:{};return new Promise((resolve,reject)=>{mod.get({host:'127.0.0.1',port,path:p,...extra},res=>{res.resume();res.on('end',resolve)}).on('error',reject)})}
 async function post(p,key,model,messages) {
  const body=JSON.stringify({model,stream:true,messages:messages||[{role:'user',content:'benchmark sentinel'}]});
  const t=performance.now();
@@ -109,7 +110,8 @@ try {
    let ready=false;let lastError;
    for(let i=0;i<100;i++) {try {await post(p,key,model);ready=true;break}catch(e){lastError=e.message} if(c.exitCode!==null)break;await sleep(200)}
    if(!ready)throw Error(runtime+' gateway startup/route validation failed '+lastError+' '+c.errorTail);
-   const ctx={key,model,heavyMessages:heavyBody.messages,summary,post:(m,messages)=>post(p,key,m,messages),get:(q)=>get(upPort,q),reset:()=>ok(upPort,'/__reset')};
+   const tlsUp=scheme==='https';
+   const ctx={key,model,heavyMessages:heavyBody.messages,summary,post:(m,messages)=>post(p,key,m,messages),get:(q)=>get(upPort,q,tlsUp),reset:()=>ok(upPort,'/__reset',tlsUp)};
    for(let i=0;i<3;i++)await post(p,key,model);
    conc=await runHeavyConcurrent(ctx,8);
    vic=await runVictimProbes(ctx,[8],100,1);
