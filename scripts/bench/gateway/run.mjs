@@ -4,11 +4,11 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import http from 'node:http';
-import {createHash} from 'node:crypto';
 import {spawn, execFileSync} from 'node:child_process';
 import {once} from 'node:events';
 import {setTimeout as sleep} from 'node:timers/promises';
 import {validateSse, summary} from './validate.mjs';
+import {runSmallC1, runHeavySingle, runHeavyConcurrent, runFanoutBurst, runVictimProbes} from './scenarios.mjs';
 import {loadSessionMessages, buildCheckpoints} from '../mux-fixtures.mjs';
 const sourceRoot=path.resolve(import.meta.dirname,'../../..');
 const temp=fs.mkdtempSync(path.join(os.tmpdir(),'9r-http-bench-'));
@@ -92,28 +92,18 @@ try {
   let ready=false;let lastError;
   for(let i=0;i<100;i++) {try {await post(p,key,'bench/benchmark-model');ready=true;break}catch(e){lastError=e.message} if(c.exitCode!==null)break;await sleep(200)}
   if(!ready)throw Error(runtime+' gateway startup/route validation failed '+lastError+' '+c.errorTail);
-  for(let i=0;i<3;i++)await post(p,key,'bench/benchmark-model');
-  const samples=[];for(let i=0;i<10;i++)samples.push(await post(p,key,'bench/benchmark-model'));
-  result.rows.push({runtime,policy:'default',upstream:'http',proxy:false,samples,ttft:summary(samples.map(x=>x.firstByteMs))});
   const [heavyBody]=buildCheckpoints(loadSessionMessages(path.join(os.homedir(),'.mux/sessions/e8cf0d0b8f/chat.jsonl')),[300000]);
-  await ok(upstream,'/__reset');
-  const heavy=await post(p,key,'bench/benchmark-model',heavyBody.messages);
-  const stats=await get(upstream,'/__stats');
-  // Byte/hash reconciliation must account for the verified model-prefix rewrite:
-  // chatCore.js:103 getModelUpstreamId + :202 stripThinkingSuffix serialize upstream
-  // model "benchmark-model" for routed request model "bench/benchmark-model" (6-byte diff).
-  // Rebuild the exact client-serialized body (same inputs post() used), apply the verified
-  // model rewrite, and reconcile bytes + sorted-key semantic sha256. Raw-byte sha recorded too,
-  // but not asserted: gateway re-serialization may legitimately reorder keys.
-  const canon=(o)=>Array.isArray(o)?'['+o.map(canon).join(',')+']':(o&&typeof o==='object')?'{'+Object.keys(o).sort().map(k=>JSON.stringify(k)+':'+canon(o[k])).join(',')+'}':JSON.stringify(o);
-  const clientBody=JSON.parse(JSON.stringify({model:'bench/benchmark-model',stream:true,messages:heavyBody.messages}));
-  const expectedUpstream={...clientBody,model:'benchmark-model'};
-  const expectedUpstreamBytes=Buffer.byteLength(JSON.stringify(expectedUpstream));
-  const expectedCanonicalSha256=createHash('sha256').update(canon(expectedUpstream)).digest('hex');
-  result.boundary={clientBodyBytes:heavy.clientBodyBytes,upstreamReceivedBytes:stats.bytesReceived,upstreamRequests:stats.requests,modelRewriteBytes:heavy.clientBodyBytes-stats.bytesReceived,bytesReconciled:stats.bytesReceived===expectedUpstreamBytes,expectedUpstreamBytes,upstreamModel:stats.last?.model,upstreamRawSha256:stats.last?.sha256,upstreamCanonicalSha256:stats.last?.canonicalSha256,expectedCanonicalSha256,semanticReconciled:stats.last?.canonicalSha256===expectedCanonicalSha256,firstByteMs:heavy.firstByteMs,totalMs:heavy.totalMs,doneVisible:heavy.doneVisible,messages:heavyBody.messages.length};
+  const ctx={key,model:'bench/benchmark-model',heavyMessages:heavyBody.messages,summary,post:(model,messages)=>post(p,key,model,messages),get:(q)=>get(upstream,q),reset:()=>ok(upstream,'/__reset')};
+  for(let i=0;i<3;i++)await post(p,key,'bench/benchmark-model');
+  const small=await runSmallC1(ctx,100);
+  const single=await runHeavySingle(ctx);
+  const conc=await runHeavyConcurrent(ctx,8);
+  const fan=await runFanoutBurst(ctx,16);
+  const vic=await runVictimProbes(ctx,[0,1,2,4,8],100,1);
+  result.rows.push({runtime,policy:'default15',upstream:'http',proxy:false,small,single,conc,fan,vic,runtimeIdentity:{bun:result.bun,buildId:result.buildId,client:result.client}});
   c.kill('SIGTERM');await once(c,'exit');
  }
- result.status='smoke-only';
+ result.status='milestone-1-measured';
 } catch(e) {result.error=e.message;process.exitCode=1}
 finally {
  for(const c of children)if(c.exitCode===null&&!c.signalCode)c.kill('SIGTERM');
