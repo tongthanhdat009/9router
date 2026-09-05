@@ -85,8 +85,9 @@ async function runHeavy(executor, provider, messages, creds) {
   while (!(await reader.read()).done) {}
 }
 
-async function startUpstreamChild(keyFile, certFile) {
-  const child = spawn("node", ["scripts/bench/upstream-child.mjs", keyFile, certFile], { stdio: ["ignore", "pipe", "inherit"] });
+async function startUpstreamChild(keyFile, certFile, schemeOverride) {
+  const childScheme = schemeOverride || (process.env.UPSTREAM_MODE === "http" ? "http" : "https");
+  const child = spawn("node", ["scripts/bench/upstream-child.mjs", keyFile, certFile], { stdio: ["ignore", "pipe", "inherit"], env: { ...process.env, UPSTREAM_MODE: childScheme } });
   const port = await new Promise((resolve, reject) => {
     let buf = "";
     const timer = setTimeout(() => reject(new Error("upstream child did not report port")), 10000);
@@ -97,7 +98,8 @@ async function startUpstreamChild(keyFile, certFile) {
     });
     child.on("exit", (code) => { clearTimeout(timer); reject(new Error("upstream child exited early code=" + code)); });
   });
-  return { child, port, url: "https://127.0.0.1:" + port };
+  const scheme = schemeOverride || (process.env.UPSTREAM_MODE === "http" ? "http" : "https");
+  return { child, port, url: scheme + "://127.0.0.1:" + port };
 }
 
 async function main() {
@@ -109,11 +111,11 @@ async function main() {
   const certFile = path.join(temp, "cert.pem");
   execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=127.0.0.1", "-keyout", keyFile, "-out", certFile, "-days", "1"], { stdio: "ignore" });
 
-  const upstream = await startUpstreamChild(keyFile, certFile);
+  const upstream = await startUpstreamChild(keyFile, certFile, process.env.UPSTREAM_MODE_HEAVY);
   const upstreamUrl = upstream.url;
   // Separate IDLE upstream for the victim: isolates gateway-side (client) interference
   // from server-side busy-decrypt artifacts of the shared heavy upstream.
-  const victimUpstream = await startUpstreamChild(keyFile, certFile);
+  const victimUpstream = await startUpstreamChild(keyFile, certFile, process.env.UPSTREAM_MODE_VICTIM);
   const victimUrl = victimUpstream.url;
 
   const modules = await Promise.all([

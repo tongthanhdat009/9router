@@ -176,10 +176,12 @@ export class BaseExecutor {
         // Space heavy upload starts (>=256KB serialized) 15ms apart on a global admission timeline;
         // unsynchronized multi-MB TLS/socket writes starve small interactive requests (perf 2026-09-05).
         await beforeUpload({ actualBytes: Buffer.byteLength(bodyStr, "utf8"), signal: mergedSignal });
+        // TRAFFIC_BODY_ENCODING=buffer is a benchmark-only A/B knob: pre-encode the body
+        // explicitly (encoding cost inside the request path) instead of string at dispatch.
         const response = await proxyAwareFetch(url, {
           method: "POST",
           headers,
-          body: bodyStr,
+          body: process.env.TRAFFIC_BODY_ENCODING === "buffer" ? Buffer.from(bodyStr, "utf8") : bodyStr,
           signal: mergedSignal
         }, proxyOptions);
         clearTimeout(connectTimer);

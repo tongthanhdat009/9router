@@ -9,11 +9,12 @@ const { createApiKey } = await import('../../../src/lib/db/repos/apiKeysRepo.js'
 const { updateSettings } = await import('../../../src/lib/db/repos/settingsRepo.js');
 const { createProxyPool } = await import('../../../src/lib/db/repos/proxyPoolsRepo.js');
 const config = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+const proxied = config.proxiedPrefixes ? new Set(config.proxiedPrefixes) : (config.proxy ? new Set(Object.keys(config.upstreams)) : new Set());
 for (const [prefix, url] of Object.entries(config.upstreams)) {
   const u = new URL(url);
   if (u.hostname !== '127.0.0.1' || ['20127','20128'].includes(u.port)) throw Error('unsafe upstream');
   const node = await createProviderNode({id:'openai-compatible-'+prefix,type:'openai-compatible',name:prefix,prefix,apiType:'chat',baseUrl:url});
-  await createProviderConnection({provider:node.id,authType:'apikey',name:prefix,apiKey:'benchmark-only',isActive:true,providerSpecificData:{baseUrl:url,apiType:'chat',...(config.proxy ? {proxyPoolId:'bench-pool'} : {})}});
+  await createProviderConnection({provider:node.id,authType:'apikey',name:prefix,apiKey:'benchmark-only',isActive:true,providerSpecificData:{baseUrl:url,apiType:'chat',...(proxied.has(prefix) ? {proxyPoolId:'bench-pool'} : {})}});
 }
 if (config.proxy) await createProxyPool({id:'bench-pool',name:'bench',proxyUrl:config.proxy,isActive:true,strictProxy:true});
 await updateSettings({requireApiKey:true,enableObservability:false,rtkEnabled:false,headroomEnabled:false,pxpipeEnabled:false});

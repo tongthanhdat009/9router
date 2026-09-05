@@ -1,49 +1,571 @@
-# Bun Runtime Follow-Up — Final Report (A–O)
+# Bun Runtime Follow-Up — Consolidated Evidence (A–V; authoritative acceptance table at end)
 
-Status: COMPLETE. All 18 completion criteria addressed; artifacts under /tmp (m1–m4, bun-*, tls-matrix, sustained).
+Status: CONSOLIDATED. Legacy A–P preserved below with caveats; controlled evidence in Q (eight Bun matrices), R (same-build pairs), and T (primary11 consolidation with runnable raw verification). Matched-offer validation passed (section U); runtime-attributed 60s settled RSS and FDs measured for all five repetitions per runtime. Authoritative 13-question acceptance table: final section V. No runtime migration recommendation. Artifacts cited under /tmp (m1–m4, bun-*, tls-matrix, sustained) are prior-harness outputs, not controlled-matrix artifacts.
 
 ## A. Runtime Environment
 Bun 1.4.1 (revision d296efbb4e5bfcd45cd0e93da312c793a1f5b701, ~/.bun/bin/bun); Node v22.23.2 (reference client + Node gateway cells); Fedora CachyOS kernel 7.2.0-cachyos1.lto.fc44 x86_64; 28-core CPU; benchmark host = this machine.
 
-## B. Bun Baseline (HEAD, scheduler default 15ms/256KB)
+## B. Bun Baseline (FULL GATEWAY, prior harness, scheduler default 15ms/256KB)
 Full-gateway Bun process (real Next build, custom-server, /v1/chat/completions, strict SSE validation, semantic sha256 reconciliation). buildId I4vVI9xZQbOQtNtLVWh4R-era rows: small-c1 TTFT p50 5.06/p95 7.71; single-300k TTFT 101.24 total 112.29 (semantic reconciled); 8-heavy conc wall 693.9; fanout-16 wall 50.5; victim TTFT 0→8 heavies: 4.10/5.32, 39.19/45.88, 85.66/93.69, 109.22/122.46, 238.01/254.66 (p50/p95).
 
-## C. Node vs Bun Baseline (identical harness, same build/machine)
-Node: small-c1 8.41/15.73; 8-heavy wall 752.26; victim@8 283.29/317.76. Bun: small-c1 8.42/15.73→5.06/7.71 (later build), victim@8 256.26/276.22. Gateway victim@8: Bun ~270/292 vs Node ~479/578 (TLS matrix run). Bun materially better on tail latency; batch wall parity.
+## C. Node vs Bun Baseline (prior harness; builds differed — not a controlled pair)
+Node: small-c1 8.41/15.73; 8-heavy wall 752.26; victim@8 283.29/317.76. Bun: small-c1 8.42/15.73→5.06/7.71 (later build), victim@8 256.26/276.22. Gateway victim@8: Bun ~270/292 vs Node ~479/578 (TLS matrix run). Builds differed across these runs; not a same-build comparison, so no runtime conclusion follows.
 
 ## D. Bun Scheduler Policy Sweep (victim@8 p50/p95, n=100, single run each)
-OFF 396.21/412.88 wall 676.7; 5ms 386.30/408.92 wall 727.2; 10ms 258.29/389.48 wall 704.3; 15ms(default) 256.26/276.22 wall 741.2; 20ms 245.91/263.99 wall 719.2. Threshold 128/256/512KB victim@8: 267.8/297.5, 268.4/295.0, 272.3/295.3 (flat). Decision: KEEP 15ms/256KB — 10-20ms cluster is within single-run noise of each other but all decisively beat OFF/5ms; 20ms gain (~10ms p50) is inside noise and costs +4.5% wall in OFF→15 trend; no Bun evidence justifies change (criterion 16: parameters NOT changed). Byte-weighted: rejected — Node-era prototype measured no better than fixed 15ms and Bun sweep shows the same flat 10-20ms plateau; not re-implemented at gateway (stated limitation, not silent skip).
+OFF 396.21/412.88 wall 676.7; 5ms 386.30/408.92 wall 727.2; 10ms 258.29/389.48 wall 704.3; 15ms(default) 256.26/276.22 wall 741.2; 20ms 245.91/263.99 wall 719.2. Threshold 128/256/512KB victim@8: 267.8/297.5, 268.4/295.0, 272.3/295.3 (flat). Legacy single-run reading only (n=1 per cell, FULL GATEWAY, prior harness): OFF/5ms grouped higher than 10/15/20ms, but with one run per cell no spacing decision can be drawn — INCONCLUSIVE. Production parameters NOT changed. Byte-weighted: not implemented at gateway; Node-era prototype precedent only, controlled mixed byte-weighted comparison NOT MEASURED.
 
 ## E. HTTP/HTTPS Matrix (heavy-scheme × runtime; victim shares scheme; gateway→upstream)
-http/bun: vic8 270.45/292.06 wall 812; https/bun: 269.61/299.16 wall 870; http/node: 479.32/578.16 wall 749; https/node: 385.59/519.30 wall 881. Bun victim identical across schemes → remaining Bun contention is NOT TLS-specific (runtime/pipeline pressure). Node shows scheme sensitivity. Harness limitation: heavy×victim scheme decoupling (4-way mixed cells) not supported by ctx.model design (one model per cell); scheme×runtime matrix completed instead — stated honestly.
+http/bun: vic8 270.45/292.06 wall 812; https/bun: 269.61/299.16 wall 870; http/node: 479.32/578.16 wall 749; https/node: 385.59/519.30 wall 881. FULL GATEWAY (prior harness, shared-scheme cells only): Bun victim ~270ms in both schemes; Node lower on https than http. Shared-scheme cells cannot isolate TLS-specific contention; independent 4-way heavy×victim TLS decoupling NOT MEASURED — INCONCLUSIVE.
 
 ## F. Bun Transport Stage Breakdown (where victim@8 ~256-270ms goes)
-Bun attribution run (m3-bun): victim waits inside the gateway pipeline, dominated by concurrent multi-MB body handling; EL p95 at 8-heavy ~10.6ms (vs Node 21.5) and stream-to-JSON ~9.5ms. Isolated direct-fetch transport shows NO knee to c16 (aggregate 235MB/s, victim idle ~1ms) — so transport/TLS/socket is not the Bun bottleneck; the gateway pipeline (request parse → transform → stringify → SSE forward under Next.js) is. Node-era ~47ms fetch + ~10ms scheduling does NOT reproduce under Bun in the same proportions.
+Legacy attribution, mixed levels: FULL GATEWAY victim pipeline observation (m3-bun, prior harness; EL p95 at 8-heavy ~10.6ms vs Node 21.5, stream-to-JSON ~9.5ms) plus COMPONENT PROBE isolated direct-fetch transport (no knee to c16, aggregate 235MB/s, victim idle ~1ms). Transport not implicated in isolation, but the pipeline-attribution breakdown inside the Bun gateway is NOT MEASURED — residual-cost split INCONCLUSIVE.
 
 ## G. String vs Buffer/Uint8Array (isolated c8, 1.7MB, direct Bun fetch)
-string: wall 98.57ms agg 132.9MB/s cpu 44.85ms; uint8array: wall 50.45 agg 259.6MB/s cpu 26.39ms. Send-path UTF-8 encode ≈2x wall in isolation, but victim idle in both (1.44 vs 1.20ms) → NOT productionized: no measured end-to-end gateway victim improvement (criterion 12 guard satisfied).
+string: wall 98.57ms agg 132.9MB/s cpu 44.85ms; uint8array: wall 50.45 agg 259.6MB/s cpu 26.39ms. COMPONENT PROBE only (isolated c8 direct Bun fetch, not gateway): send-path UTF-8 encode ≈2x wall, victim idle in both (1.44 vs 1.20ms). End-to-end encoding-inclusive gateway comparison NOT MEASURED — no causal encoding claim, NOT productionized.
 
-## H. Serialization Scaling (Bun JSON.stringify, real Mux checkpoint objects)
+## H. Serialization Scaling (COMPONENT PROBE: Bun JSON.stringify, real Mux checkpoint objects)
 p50 stringify / scheduling-lag p50 at c1→c16: 0.34MB: 1.77ms / 1.9→21.5ms; 0.72MB: 3.75 / 3.8→58.5; 1.43MB: 6.11 / 6.2→119.4; 2.14MB: 15.71 / 15.8→207.1; 2.91MB: 15.14 / 15.2→95.8(c8). Lag scales ≈ n×single (pure sync blocking). beforePrepare→setImmediate yield RETAINED: Bun stringify remains synchronous and blocking; no A/B evidence to remove.
 
-## I. Upload Throughput Scaling (isolated real transport path)
-c1 69.7MB/s wall 23.5; c2 158.9/20.6; c4 159.7/41.0; c8 193.6/67.6; c16 234.7/111.6. Victim flat 0.94-3.82ms idle throughout → no saturation knee ≤c16 on loopback; Bun transport is not the constraint for the gateway workload.
+## I. Upload Throughput Scaling (COMPONENT PROBE: isolated real transport path)
+c1 69.7MB/s wall 23.5; c2 158.9/20.6; c4 159.7/41.0; c8 193.6/67.6; c16 234.7/111.6. Victim flat 0.94-3.82ms idle throughout → no isolated-transport knee ≤c16 on loopback; gateway cost attribution remains unmeasured. Supplemental passive RSS/socket observation does not measure JS heap; settled heap is not instrumented.
 
-## J. Backlog Scaling (gateway scheduler engaged, bursts 8/16/25/50)
-admission p50/p95: 45.4/104.1, 104.1/224.1, 179.1/344.1, 359.1/704.1 (linear in burst × 15ms spacing, expected); RPS flat 67.6-70.1; heap delta ≤5.5MB; victim idle. Timeline admission behaves exactly as designed; no blowup, no leak.
+## J. Backlog Scaling (FULL GATEWAY, prior harness, bursts 8/16/25/50)
+admission p50/p95: 45.4/104.1, 104.1/224.1, 179.1/344.1, 359.1/704.1 (linear in burst × 15ms spacing, expected); RPS flat 67.6-70.1; heap delta ≤5.5MB; victim idle. Timeline admission scaled linearly as designed in these runs; leak-free NOT proven (3s settle only, stated limitation).
 
-## K. Accepted Bun Fixes
-None production-accepted. Measured candidates (G: 2x send-path; serialization offload) did not meet the end-to-end gateway-improvement bar. Harness fix accepted: tls-matrix.mjs stats-path over HTTPS (socket-hang-up bug, both runtimes) — https client for /__stats and /__reset; matrix completed after fix.
+## K. Legacy Fix Notes (no production change)
+No production fix accepted from this evidence. Component-probe candidates (G: send-path; H: serialization offload) never showed end-to-end gateway victim improvement. Harness note: tls-matrix.mjs stats-path over HTTPS (socket-hang-up, both runtimes) — prior-harness fix only, not controlled-matrix evidence.
 
-## L. Rejected Experiments (measured reasons)
-Byte-weighted pacing (D: flat plateau, prototype precedent); pre-encoded Uint8Array body (G: isolation-only win, no victim effect); scheduler spacing change 15→20ms (D: within single-run noise, +wall cost); threshold change (D: flat 128-512KB); worker-thread/stringify offload (H: sync cost small relative to pipeline; prior Node measurement also rejected).
+## L. Open Experiments (no rejection decision — controlled comparisons pending)
+Byte-weighted pacing, pre-encoded body, spacing/threshold variants, worker-thread/stringify offload: prior single-run or component-probe signals only; controlled gateway comparisons NOT MEASURED, so nothing here is rejected or retained.
 
-## M. Sustained Bun Result (75s, 6 projects, parent+sub-agent fan-out, proxy CONNECT leg, growing histories)
-15720 requests @ 209.6 RPS, 0 errors. Victim p50/p95/p99 0.60/3.03/5.90ms; parent p95 24.22, children p95 24.19, proxy-path p95 28.99. EL lag mean 0.68/p95 2.94/max 14.06ms. Heap 63→86.7 peak→48.6 settled; RSS 199.9→255.6 peak→192.1 settled; FDs 89→255 peak→251 settled (keep-alive held, no growth per-sample); proxy dispatchers 0 in executor-level harness (CONNECT exercised via proxy.mjs lane, connects counted, tunnels settle).
+## M. Sustained Bun Run (legacy 75s executor-level harness — NOT full-gateway CONNECT verification)
+FULL GATEWAY numbers below are legacy executor-level evidence, not controlled-matrix results. 15720 requests @ 209.6 RPS, 0 errors. Victim p50/p95/p99 0.60/3.03/5.90ms; parent p95 24.22, children p95 24.19, proxy-path p95 28.99. EL lag mean 0.68/p95 2.94/max 14.06ms. Heap 63→86.7 peak→48.6 settled; RSS 199.9→255.6 peak→192.1 settled; FDs 89→255 peak→251 settled (keep-alive held at settle snapshot; per-second time series NOT MEASURED, so no leak conclusion). Proxy dispatchers 0 in executor-level harness — full-gateway CONNECT tunnel verification was NOT MEASURED at legacy time; it is now measured in R (bun-sustained + pair-sustained: attempts/successes/failures/peak/tunneled bytes + settle tunnel decay), so this section remains legacy executor-level context only.
 
-## N. Final Node vs Bun Comparison (75s sustained, identical harness)
-RPS 174.5 vs 209.6 (+20%); victim p50 8.44 vs 0.60 (14x), p95 21.73 vs 3.03 (7x), p99 34.26 vs 5.90; EL p95 13.03 vs 2.94 (4.4x); peak RSS 413.3 vs 255.6 (-38%); settled RSS 315.8 vs 192.1; peak FDs 310 vs 255; errors 0/0. Gateway victim@8 contention: Bun ~270 vs Node ~479 p50. Verdict: Bun materially faster for realistic 9Router Mux workloads — latency, tail latency, throughput, and memory all better; streaming correctness validated by strict SSE checks throughout; bun:sqlite path clean.
+## N. Node vs Bun Sustained Runs (legacy executor-level harness; builds differed — not a controlled pair)
+RPS 174.5 vs 209.6; victim p50 8.44 vs 0.60, p95 21.73 vs 3.03, p99 34.26 vs 5.90; EL p95 13.03 vs 2.94; peak RSS 413.3 vs 255.6; settled RSS 315.8 vs 192.1; peak FDs 310 vs 255; errors 0/0. Gateway victim@8: Bun ~270 vs Node ~479 p50. Same-build pairing NOT established for these runs, so no faster/slower verdict follows — INCONCLUSIVE. SSE checks cited are legacy-harness checks, not controlled-matrix verification. Same-build sustained pairing is now established in R; the unmatched-build numbers above stay context only and support no verdict.
 
-## O. Final Runtime Recommendation
-Yes — 9Router should treat Bun as a viable preferred performance runtime for the gateway workload (keep Node as default deploy target until Bun proxy-pool parity is re-verified against production proxies; ALL_PROXY/socks divergence remains the known open compatibility item, memory 9router-bun-proxy-incompat). Remaining gap attribution (criterion 17): after pacing, the residual victim cost under Bun is 9Router application pipeline (Next request path + transform + stringify + SSE forward), NOT Bun runtime scheduling (EL p95 ~3ms), NOT TLS/socket saturation (E/I), NOT proxy path, NOT upstream. Scheduler: KEEP 15ms/256KB unchanged — Bun evidence shows pacing still decisively beats OFF (256 vs 396ms victim p50) and no spacing/threshold variant is outside noise. Further meaningful gains require pipeline work (stream-chunked serialization or worker offload) previously measured as low-ROI; classifying remaining gap as not worth further complexity at current traffic scale.
+## O. Runtime recommendation
 
+Bun is PROMISING for the measured local full-gateway workload: matched-offer latency/CPU/lag favor Bun (U), while same-build burst heavy wall favors Node (R/T). No universal runtime winner or production migration follows. KEEP provisional 15ms/256KiB, prepare yield ON, string body and fixed pacing; no proven optimum.
+
+## P. Acceptance ledger
+
+Obsolete mid-chain status table removed; legacy measurements and caveats A–O remain. Section V is the sole acceptance table.
+
+## Q. Persistent controlled full-gateway evidence
+
+EIGHT-MATRIX LEDGER — sustained and same-build pairs are recorded in R and T, not in this ledger. No final runtime recommendation from this ledger alone. This appendix supersedes pending statements in legacy A–P only for the eight measured modes; legacy caveats remain intact.
+
+### Method and units
+
+Five repetitions per runtime/cell, seeded randomized order. Percentiles use nearest-rank ceil(n*p)-1; tables report median [minimum, maximum] of the five per-repetition metrics, never pooling different policies or runtimes. Victim p95/p99 summarize 100 probes per repetition. Heavy sample counts are only 1–50 per burst: no heavy p95/p99 claims. Loaded means a heavy was in flight at victim dispatch; it does not establish continuous exposure through completion. Independent probes dispatched every 5ms span about 495ms; delayed client scheduling can shift that exposure. The full probe-window wall and last-heavy completion wall are distinct.
+
+Latency/wall/lag/CPU units: ms. CPU = (user + system) / 1000 from process CPU microseconds, measured over the full window including victim requests. Memory = peak bytes / 1048576, labeled MiB (not decimal MB). RPS = all completed samples / window seconds, not steady-state throughput. Heavy throughput = exact verified heavy-upstream byte sum / heavy-batch seconds / 1048576; neither rounded 1.7MB nor median body-size multiplication. FD is gateway PID peak count; memory/FD peaks alone do not establish a leak or settle result.
+
+### Artifact ledger
+
+| Raw artifact | SHA256 | Rows verified | Errors | Build |
+|---|---|---:|---:|---|
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-spacing.json | 89d6336d78b304f6941215d0663ff96d01e9f6881108c12d920cf1776cbd4b31 | 20/20 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-tls.json | 10db018a0ea173b3391023013bc54ab2fa9c5a976ac85d304f8229f57ab028e7 | 20/20 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-prepare.json | 7a9bef3c540d79836204ab6d95da60c85bdbda6e13c41c03b01a0b8daddf6ee2 | 40/40 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-encoding.json | 542cad7e1f0e8ac641fdf6f610160584696462a51abf6c9d028751aff2196b2d | 30/30 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-upload.json | e05674b94f8feba3ebcacf31abb27675e15193279d0393cf82ea7034a4f71743 | 50/50 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-backlog.json | dcf97985501a58247774eb403da906b8473195649ddcca76abfe64c5014ed7e9 | 40/40 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-threshold.json | 1081c189dc524b79c2302ddcb2142b459e10eb7727990153bef0825b39f74d6c | 300/300 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+| /mnt/ssd-250gb/9router-bench-artifacts/bun-mixed.json | 032fd3df5cb63fc85d13b7353a9ca5eebf4e4cea7af6c8280dc3f97b5ae3192f | 15/15 | 0 | U93p5GZqIRzb5Tg0yKBBy |
+
+Provenance is recorded in each raw artifact under provenance (head, dirtyFiles hashes, sourceSig, buildSig, controlledSchedulerSha256, controlledBaseSha256, Node/Bun versions). Matching HEAD alone is insufficient because these runs include hashed dirty experimental source. No production-default or runtime-choice inference from the ledger.
+
+### spacing — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/10 | 409.7 [389.4, 438.6] | 485.5 [470.0, 514.6] | 486.4 [471.1, 515.8] | 925.5 [886.0, 971.8] | 925.5 [886.0, 971.8] | 14.1 [13.5, 14.8] | 500/0 |
+| bun/15 | 407.7 [394.7, 419.9] | 487.4 [469.4, 497.5] | 488.9 [471.3, 498.5] | 944.1 [916.6, 966.2] | 944.1 [916.6, 966.2] | 13.9 [13.6, 14.3] | 500/0 |
+| bun/20 | 386.1 [368.7, 420.7] | 465.3 [453.7, 498.8] | 467.1 [454.8, 500.7] | 921.5 [883.0, 970.4] | 921.6 [883.0, 970.4] | 14.2 [13.5, 14.8] | 500/0 |
+| bun/OFF | 457.2 [382.3, 515.6] | 528.1 [454.1, 575.6] | 529.9 [457.0, 583.3] | 874.4 [853.4, 1011.7] | 874.4 [853.4, 1011.7] | 15.0 [12.9, 15.3] | 500/0 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/10 | 1147.3 [1082.5, 1187.5] | 148.1 [131.4, 164.2] | 310.8 [309.0, 317.8] | 91.7 [89.4, 123.0] | 66.9 [66.5, 97.3] | 98.0 [98.0, 99.0] | 116.7 [111.1, 121.9] |
+| bun/15 | 1081.8 [1060.6, 1114.8] | 134.8 [114.6, 141.6] | 374.6 [316.6, 399.2] | 153.2 [120.1, 178.6] | 130.4 [93.7, 154.6] | 98.0 [97.0, 98.0] | 114.4 [111.8, 117.8] |
+| bun/20 | 1075.5 [1070.9, 1181.0] | 141.6 [134.2, 156.5] | 325.8 [307.2, 328.7] | 113.9 [108.8, 123.0] | 88.7 [84.7, 98.2] | 98.0 [98.0, 98.0] | 117.2 [111.3, 122.3] |
+| bun/OFF | 1115.2 [1092.3, 1148.1] | 334.2 [171.8, 384.1] | 326.6 [304.6, 402.7] | 120.5 [88.9, 151.6] | 93.7 [66.7, 125.1] | 99.0 [97.0, 199.0] | 123.5 [106.7, 126.5] |
+
+### tls — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/false/false | 384.7 [363.0, 458.5] | 466.7 [438.6, 536.0] | 468.9 [440.3, 538.7] | 922.3 [887.9, 1019.8] | 922.3 [887.9, 1019.8] | 14.2 [12.8, 14.7] | 500/0 |
+| bun/false/true | 389.3 [368.9, 412.8] | 468.4 [444.7, 486.2] | 469.4 [446.1, 488.0] | 905.6 [880.6, 1010.5] | 905.7 [880.6, 1010.5] | 14.5 [13.0, 14.9] | 500/0 |
+| bun/true/false | 408.7 [370.2, 433.3] | 486.3 [452.4, 509.4] | 488.5 [453.3, 510.9] | 944.5 [901.8, 954.8] | 944.5 [901.8, 954.8] | 13.9 [13.7, 14.5] | 500/0 |
+| bun/true/true | 397.8 [383.9, 413.0] | 475.4 [461.0, 493.4] | 476.2 [461.6, 494.3] | 936.2 [933.7, 940.7] | 936.2 [933.7, 940.7] | 14.0 [13.9, 14.0] | 500/0 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/false/false | 1112.1 [1050.0, 1203.5] | 139.5 [123.8, 192.6] | 323.2 [319.3, 395.8] | 128.9 [97.9, 179.3] | 101.6 [73.4, 154.0] | 98.0 [97.0, 198.0] | 117.1 [105.9, 121.6] |
+| bun/false/true | 1087.8 [1085.6, 1159.2] | 149.3 [136.8, 176.2] | 326.0 [306.6, 377.9] | 111.9 [101.1, 168.6] | 86.3 [74.5, 140.7] | 98.0 [97.0, 98.0] | 119.3 [106.9, 122.6] |
+| bun/true/false | 1085.0 [1059.1, 1127.4] | 141.1 [132.3, 145.9] | 329.2 [315.1, 393.7] | 120.3 [102.6, 179.4] | 95.5 [78.1, 153.1] | 98.0 [98.0, 98.0] | 114.3 [113.1, 119.8] |
+| bun/true/true | 1074.1 [1064.4, 1149.0] | 134.4 [130.1, 148.2] | 379.3 [307.0, 405.8] | 179.3 [89.4, 184.3] | 155.3 [66.9, 158.9] | 98.0 [98.0, 99.0] | 115.4 [114.8, 115.7] |
+
+### prepare — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/off/1 | 35.0 [26.4, 39.3] | 85.5 [74.1, 146.3] | 94.7 [81.8, 148.8] | 229.7 [189.9, 246.7] | 499.2 [498.4, 500.2] | 7.1 [6.6, 8.6] | 225/275 |
+| bun/off/16 | 677.9 [605.1, 762.0] | 707.4 [629.4, 796.2] | 713.8 [637.2, 797.9] | 1262.0 [1224.3, 1292.5] | 1262.0 [1224.4, 1292.5] | 20.8 [20.3, 21.4] | 500/0 |
+| bun/off/4 | 192.9 [178.2, 254.3] | 316.1 [299.1, 391.4] | 320.0 [300.8, 392.2] | 544.4 [469.3, 650.2] | 597.1 [583.6, 650.3] | 12.0 [10.1, 14.0] | 492/8 |
+| bun/off/8 | 459.1 [446.2, 509.5] | 529.3 [514.2, 577.6] | 536.8 [522.8, 578.9] | 846.7 [735.5, 852.3] | 846.7 [757.7, 852.3] | 15.5 [15.4, 17.8] | 500/0 |
+| bun/on/1 | 34.0 [24.9, 41.8] | 78.2 [69.3, 120.8] | 87.0 [77.2, 123.2] | 256.0 [227.6, 259.7] | 499.5 [499.3, 508.2] | 6.4 [6.3, 7.2] | 247/253 |
+| bun/on/16 | 539.2 [492.7, 566.6] | 560.3 [508.1, 583.5] | 562.1 [510.0, 584.9] | 1595.7 [1492.6, 1688.7] | 1595.7 [1492.6, 1688.7] | 16.4 [15.5, 17.5] | 500/0 |
+| bun/on/4 | 136.5 [127.1, 162.0] | 255.1 [229.4, 288.0] | 257.4 [230.8, 290.8] | 615.7 [589.6, 628.0] | 615.7 [589.6, 628.0] | 10.6 [10.4, 11.1] | 500/0 |
+| bun/on/8 | 388.0 [338.7, 392.7] | 468.1 [424.5, 476.9] | 469.7 [427.6, 478.0] | 905.4 [899.5, 999.3] | 905.4 [899.5, 999.3] | 14.5 [13.1, 14.6] | 500/0 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/off/1 | 785.0 [776.3, 791.0] | 50.0 [40.4, 68.4] | 214.3 [198.3, 224.6] | 41.9 [37.5, 48.3] | 19.8 [16.4, 26.1] | 86.0 [86.0, 86.0] | 202.3 [201.9, 202.7] |
+| bun/off/16 | 1386.7 [1376.9, 1455.8] | 264.8 [250.8, 304.2] | 520.9 [454.9, 567.1] | 230.5 [177.2, 352.1] | 201.3 [153.4, 321.6] | 216.0 [210.0, 219.0] | 91.9 [89.7, 94.7] |
+| bun/off/4 | 916.3 [881.7, 939.2] | 250.6 [233.2, 317.1] | 254.1 [247.8, 266.4] | 68.4 [52.7, 84.5] | 42.7 [28.6, 58.9] | 91.0 [91.0, 91.0] | 174.2 [159.9, 178.2] |
+| bun/off/8 | 1127.1 [1082.2, 1162.3] | 384.6 [169.4, 440.6] | 314.6 [296.8, 343.4] | 114.7 [95.9, 152.7] | 88.7 [73.7, 134.6] | 97.0 [96.0, 97.0] | 127.6 [126.7, 142.5] |
+| bun/on/1 | 782.9 [775.7, 796.1] | 42.8 [41.1, 63.7] | 222.2 [214.3, 224.6] | 38.9 [37.2, 51.9] | 17.0 [16.0, 29.5] | 86.0 [86.0, 86.0] | 202.2 [198.7, 202.3] |
+| bun/on/16 | 1387.9 [1347.5, 1443.1] | 25.0 [16.9, 102.9] | 533.6 [519.6, 567.3] | 274.2 [182.9, 337.9] | 245.0 [159.5, 307.6] | 212.0 [212.0, 213.0] | 72.7 [68.7, 77.7] |
+| bun/on/4 | 882.3 [874.7, 909.5] | 196.1 [193.4, 250.6] | 255.4 [250.8, 271.8] | 72.8 [60.3, 72.9] | 48.5 [37.5, 49.6] | 91.0 [91.0, 92.0] | 168.9 [165.6, 176.4] |
+| bun/on/8 | 1084.6 [1019.7, 1126.5] | 139.7 [126.1, 189.7] | 391.0 [308.7, 408.5] | 147.2 [120.7, 182.6] | 124.3 [94.3, 158.6] | 98.0 [97.0, 98.0] | 119.3 [108.1, 120.1] |
+
+### encoding — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/buffer/1 | 70.9 [29.9, 315.8] | 200.4 [85.8, 491.4] | 203.4 [91.0, 493.5] | 303.9 [250.8, 727.0] | 500.8 [499.3, 727.0] | 5.4 [2.3, 6.5] | 334/166 |
+| bun/buffer/4 | 197.3 [162.5, 264.3] | 325.0 [290.3, 402.5] | 327.5 [292.1, 405.1] | 685.9 [610.0, 756.5] | 685.9 [610.0, 756.5] | 9.5 [8.7, 10.7] | 500/0 |
+| bun/buffer/8 | 428.2 [382.7, 431.1] | 505.6 [465.0, 511.9] | 505.9 [466.3, 512.3] | 940.4 [904.4, 946.9] | 940.4 [904.4, 946.9] | 13.9 [13.8, 14.5] | 500/0 |
+| bun/string/1 | 50.9 [32.7, 60.4] | 97.7 [78.1, 108.7] | 112.4 [86.6, 115.0] | 255.2 [242.9, 347.0] | 500.1 [498.4, 500.7] | 6.4 [4.7, 6.7] | 279/221 |
+| bun/string/4 | 185.4 [144.7, 197.4] | 289.8 [262.3, 340.7] | 292.5 [263.6, 342.1] | 678.1 [630.3, 720.9] | 678.1 [630.3, 720.9] | 9.7 [9.1, 10.4] | 500/0 |
+| bun/string/8 | 408.9 [396.2, 469.1] | 493.1 [477.9, 551.3] | 494.7 [479.1, 552.2] | 941.6 [922.2, 998.6] | 941.6 [922.2, 998.6] | 13.9 [13.1, 14.2] | 500/0 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/buffer/1 | 815.8 [780.5, 1098.6] | 180.3 [66.2, 479.5] | 225.3 [221.4, 230.0] | 37.7 [37.5, 61.4] | 18.3 [18.0, 38.8] | 86.0 [86.0, 86.0] | 201.7 [138.9, 202.3] |
+| bun/buffer/4 | 948.8 [912.0, 1029.1] | 287.8 [241.4, 351.1] | 265.2 [262.2, 311.8] | 90.7 [81.4, 128.2] | 65.2 [59.2, 102.5] | 91.0 [90.0, 91.0] | 151.6 [137.5, 170.5] |
+| bun/buffer/8 | 1093.2 [1071.0, 1163.5] | 145.3 [134.0, 148.3] | 325.2 [319.4, 400.8] | 134.7 [108.5, 201.3] | 109.0 [85.9, 174.0] | 98.0 [98.0, 98.0] | 114.8 [114.1, 119.4] |
+| bun/string/1 | 813.3 [776.1, 824.5] | 65.4 [43.1, 100.2] | 213.3 [204.0, 220.4] | 48.5 [37.4, 57.0] | 26.0 [16.3, 34.9] | 86.0 [86.0, 86.0] | 202.0 [201.7, 202.6] |
+| bun/string/4 | 935.2 [909.4, 994.1] | 253.1 [225.6, 297.5] | 255.6 [249.3, 301.4] | 72.8 [64.7, 116.8] | 48.5 [40.1, 90.5] | 91.0 [91.0, 91.0] | 153.4 [144.3, 165.0] |
+| bun/string/8 | 1118.3 [1067.9, 1180.0] | 136.6 [135.6, 146.4] | 322.5 [313.7, 392.0] | 103.1 [92.8, 177.3] | 78.1 [70.3, 151.5] | 98.0 [98.0, 98.0] | 114.7 [108.1, 117.1] |
+
+### upload — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/fixed/1 | 50.7 [26.6, 67.1] | 95.6 [70.0, 156.4] | 101.5 [77.9, 158.2] | 295.4 [250.5, 357.3] | 502.3 [498.5, 525.0] | 5.5 [4.6, 6.5] | 296/204 |
+| bun/fixed/16 | 591.5 [517.7, 603.5] | 613.5 [534.4, 626.4] | 616.0 [536.1, 628.1] | 1640.0 [1521.9, 1697.3] | 1640.0 [1521.9, 1697.3] | 16.0 [15.4, 17.2] | 500/0 |
+| bun/fixed/2 | 118.7 [95.0, 170.5] | 273.4 [172.4, 322.6] | 277.8 [175.0, 331.3] | 437.0 [363.4, 572.3] | 564.7 [508.0, 581.4] | 7.5 [5.7, 9.0] | 445/55 |
+| bun/fixed/4 | 193.2 [149.7, 321.1] | 313.0 [271.8, 457.6] | 314.5 [273.2, 459.4] | 703.6 [660.9, 815.5] | 703.6 [660.9, 815.5] | 9.3 [8.0, 9.9] | 500/0 |
+| bun/fixed/8 | 396.6 [372.6, 545.4] | 479.0 [455.8, 613.6] | 479.9 [457.5, 614.7] | 940.7 [914.4, 1082.7] | 940.7 [914.4, 1082.7] | 13.9 [12.1, 14.3] | 500/0 |
+| bun/off/1 | 46.3 [25.4, 83.2] | 97.6 [63.8, 183.1] | 105.2 [72.0, 187.0] | 322.4 [241.9, 419.6] | 499.7 [499.3, 530.0] | 5.1 [3.9, 6.8] | 312/188 |
+| bun/off/16 | 601.0 [548.6, 641.7] | 617.0 [568.8, 672.9] | 618.8 [570.7, 674.8] | 1570.6 [1488.3, 1600.4] | 1570.7 [1488.4, 1600.4] | 16.7 [16.4, 17.6] | 500/0 |
+| bun/off/2 | 89.9 [78.4, 108.9] | 208.1 [184.8, 254.7] | 216.3 [189.5, 262.0] | 431.1 [355.2, 507.9] | 533.1 [498.0, 547.8] | 7.6 [6.4, 9.2] | 423/77 |
+| bun/off/4 | 247.5 [151.0, 379.9] | 387.0 [247.6, 512.6] | 388.6 [249.4, 514.7] | 717.9 [595.5, 899.9] | 717.9 [596.0, 899.9] | 9.1 [7.3, 11.0] | 500/0 |
+| bun/off/8 | 486.8 [427.5, 521.6] | 545.2 [488.7, 586.1] | 553.1 [490.6, 587.9] | 857.7 [807.4, 933.4] | 857.7 [807.4, 933.4] | 15.3 [14.0, 16.2] | 500/0 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/fixed/1 | 831.5 [755.4, 872.6] | 77.0 [35.2, 138.9] | 222.9 [208.8, 225.3] | 37.4 [37.2, 48.6] | 16.3 [16.0, 26.3] | 86.0 [86.0, 86.0] | 201.1 [192.4, 202.6] |
+| bun/fixed/16 | 1454.1 [1383.9, 1505.3] | 52.8 [15.7, 111.2] | 555.0 [518.6, 561.3] | 324.9 [303.3, 335.0] | 294.7 [273.4, 304.8] | 212.0 [208.0, 213.0] | 70.7 [68.3, 76.2] |
+| bun/fixed/2 | 898.6 [825.7, 920.5] | 235.0 [138.8, 272.7] | 225.8 [225.2, 231.1] | 56.7 [39.5, 69.9] | 32.2 [17.7, 44.8] | 88.0 [88.0, 88.0] | 180.6 [175.5, 200.8] |
+| bun/fixed/4 | 969.1 [911.5, 1066.5] | 274.7 [224.7, 420.0] | 262.5 [249.4, 264.0] | 78.1 [65.5, 81.4] | 52.2 [41.4, 55.6] | 91.0 [91.0, 91.0] | 147.8 [127.5, 157.4] |
+| bun/fixed/8 | 1131.2 [1035.2, 1229.4] | 140.8 [112.9, 159.0] | 324.5 [309.1, 393.5] | 114.5 [111.0, 140.0] | 87.8 [86.2, 117.2] | 98.0 [97.0, 197.0] | 114.8 [99.8, 118.1] |
+| bun/off/1 | 830.8 [765.1, 872.8] | 80.8 [34.5, 166.8] | 220.8 [218.3, 231.6] | 37.7 [37.5, 57.7] | 16.6 [16.4, 35.2] | 86.0 [86.0, 86.0] | 202.1 [190.6, 202.3] |
+| bun/off/16 | 1438.3 [1402.1, 1495.3] | 107.4 [10.5, 160.4] | 533.4 [518.5, 554.9] | 265.9 [178.5, 302.5] | 236.5 [155.3, 272.4] | 212.0 [210.0, 213.0] | 73.9 [72.5, 77.9] |
+| bun/off/2 | 862.6 [794.4, 882.7] | 168.7 [149.6, 216.1] | 234.8 [221.3, 244.8] | 47.6 [39.8, 48.8] | 25.8 [17.6, 26.6] | 88.0 [88.0, 88.0] | 191.3 [186.2, 204.8] |
+| bun/off/4 | 1004.0 [903.5, 1151.6] | 332.3 [212.4, 459.9] | 263.3 [253.4, 297.8] | 76.3 [63.0, 117.0] | 49.6 [40.2, 89.9] | 91.0 [91.0, 91.0] | 144.9 [115.6, 174.5] |
+| bun/off/8 | 1113.5 [1058.7, 1148.4] | 173.0 [159.1, 348.2] | 325.9 [298.0, 395.8] | 114.3 [98.6, 145.0] | 87.6 [72.8, 122.1] | 99.0 [98.0, 99.0] | 125.9 [115.7, 133.8] |
+
+### backlog — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/fixed/16 | 610.6 [594.1, 776.9] | 631.0 [613.8, 792.3] | 632.6 [617.0, 793.4] | 1685.4 [1665.6, 1857.5] | 1685.4 [1665.6, 1857.5] | 15.5 [14.1, 15.7] | 500/0 |
+| bun/fixed/25 | 498.9 [393.4, 857.0] | 523.5 [415.5, 874.7] | 523.8 [417.6, 876.3] | 2545.7 [2241.9, 2692.6] | 2545.8 [2241.9, 2692.6] | 16.1 [15.2, 18.3] | 500/0 |
+| bun/fixed/50 | 425.0 [373.2, 573.7] | 449.8 [395.5, 591.6] | 452.5 [396.8, 592.9] | 4448.3 [4343.0, 4701.3] | 4448.3 [4343.0, 4701.3] | 18.4 [17.4, 18.8] | 500/0 |
+| bun/fixed/8 | 477.2 [409.6, 521.7] | 557.4 [480.5, 594.3] | 558.6 [482.7, 595.6] | 1017.1 [975.3, 1054.8] | 1017.1 [975.3, 1054.8] | 12.9 [12.4, 13.4] | 500/0 |
+| bun/off/16 | 666.0 [510.7, 779.4] | 682.6 [531.6, 799.0] | 685.3 [533.7, 800.5] | 1614.6 [1413.5, 1711.5] | 1614.6 [1413.5, 1711.5] | 16.2 [15.3, 18.5] | 500/0 |
+| bun/off/25 | 497.4 [389.2, 783.1] | 514.9 [416.2, 803.1] | 518.1 [418.2, 804.3] | 2431.0 [2211.2, 2489.9] | 2431.0 [2211.2, 2489.9] | 16.8 [16.4, 18.5] | 500/0 |
+| bun/off/50 | 743.9 [411.0, 928.7] | 763.7 [432.4, 956.6] | 766.9 [434.9, 959.6] | 4198.1 [4023.5, 4348.2] | 4198.1 [4023.5, 4348.2] | 19.5 [18.8, 20.3] | 500/0 |
+| bun/off/8 | 536.6 [436.5, 599.9] | 588.9 [490.3, 667.4] | 598.9 [493.6, 668.2] | 984.0 [901.5, 1027.2] | 984.0 [901.5, 1027.2] | 13.3 [12.7, 14.5] | 500/0 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/fixed/16 | 1469.9 [1459.0, 1667.1] | 44.1 [16.9, 87.4] | 528.9 [515.7, 536.2] | 298.1 [249.9, 312.0] | 268.0 [220.8, 282.0] | 212.0 [212.0, 213.0] | 68.8 [62.4, 69.6] |
+| bun/fixed/25 | 2072.0 [2008.0, 2209.2] | 17.7 [3.8, 42.9] | 751.3 [673.9, 773.2] | 498.2 [247.7, 524.1] | 465.7 [221.8, 491.3] | 230.0 [227.0, 231.0] | 49.1 [46.4, 55.8] |
+| bun/fixed/50 | 3291.2 [3120.9, 3302.2] | 7.3 [3.5, 29.7] | 814.0 [773.4, 842.1] | 452.2 [422.4, 477.8] | 424.6 [393.2, 450.0] | 277.0 [268.0, 277.0] | 33.7 [31.9, 34.5] |
+| bun/fixed/8 | 1145.9 [1100.8, 1204.2] | 155.0 [144.4, 177.5] | 324.0 [313.8, 389.6] | 120.4 [113.8, 177.6] | 93.7 [87.1, 151.4] | 197.0 [98.0, 197.0] | 106.2 [102.4, 110.7] |
+| bun/off/16 | 1525.7 [1397.2, 1609.5] | 88.7 [20.0, 299.4] | 541.1 [500.6, 550.9] | 258.4 [168.5, 305.0] | 229.4 [145.5, 275.0] | 212.0 [211.0, 213.0] | 71.8 [67.8, 82.1] |
+| bun/off/25 | 2027.0 [2005.8, 2081.8] | 16.2 [13.3, 125.7] | 770.3 [752.4, 806.8] | 391.7 [267.5, 508.9] | 243.3 [201.3, 476.3] | 230.0 [226.0, 231.0] | 51.4 [50.2, 56.5] |
+| bun/off/50 | 3226.3 [3188.0, 3462.1] | 25.6 [3.9, 49.2] | 875.4 [822.8, 1206.3] | 492.6 [475.2, 673.1] | 448.3 [445.1, 532.1] | 278.0 [268.0, 278.0] | 35.7 [34.5, 37.3] |
+| bun/off/8 | 1194.2 [1142.8, 1266.6] | 183.0 [171.6, 393.1] | 317.6 [312.8, 369.0] | 121.3 [111.8, 162.6] | 94.0 [85.1, 136.3] | 99.0 [97.0, 199.0] | 109.8 [105.1, 119.8] |
+
+### threshold — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/128/1048576 | 125.0 [117.2, 336.0] | 264.9 [251.8, 484.9] | 268.0 [254.7, 487.6] | 556.7 [517.3, 763.5] | 558.4 [539.6, 763.5] | 14.4 [10.5, 15.5] | 500/0 |
+| bun/128/131071 | 62.8 [27.6, 92.8] | 159.3 [110.8, 218.0] | 169.3 [123.0, 228.6] | 276.6 [201.0, 355.7] | 508.2 [500.0, 520.5] | 3.6 [2.8, 5.0] | 274/226 |
+| bun/128/131072 | 49.5 [16.1, 166.6] | 160.5 [104.3, 328.3] | 165.4 [115.8, 338.6] | 256.6 [192.1, 519.9] | 501.5 [498.7, 596.8] | 3.9 [1.9, 5.2] | 318/182 |
+| bun/128/131073 | 51.1 [39.0, 63.8] | 149.6 [139.4, 177.4] | 161.2 [149.0, 185.6] | 283.3 [233.9, 301.1] | 501.1 [500.4, 512.5] | 3.5 [3.3, 4.3] | 274/226 |
+| bun/128/1782784 | 284.7 [230.5, 352.0] | 420.0 [359.1, 478.1] | 421.2 [361.0, 479.5] | 632.8 [614.4, 876.4] | 632.8 [614.4, 876.4] | 21.5 [15.5, 22.1] | 500/0 |
+| bun/128/196608 | 87.1 [62.5, 308.5] | 224.8 [183.9, 494.2] | 234.8 [193.5, 496.4] | 352.3 [304.6, 603.8] | 518.4 [500.8, 634.5] | 4.3 [2.5, 4.9] | 365/135 |
+| bun/128/262143 | 67.9 [51.7, 145.3] | 193.3 [172.4, 306.2] | 196.9 [175.2, 310.0] | 284.6 [255.2, 389.1] | 512.4 [500.6, 576.3] | 7.0 [5.1, 7.8] | 304/196 |
+| bun/128/262144 | 58.8 [31.4, 198.9] | 173.9 [139.1, 377.1] | 179.2 [142.7, 381.3] | 279.9 [223.0, 480.8] | 500.2 [499.6, 595.4] | 7.1 [4.2, 9.0] | 329/171 |
+| bun/128/262145 | 75.7 [63.3, 169.6] | 192.6 [174.3, 327.5] | 195.8 [178.9, 330.1] | 280.8 [236.0, 420.9] | 513.6 [510.0, 594.2] | 7.1 [4.8, 8.5] | 299/201 |
+| bun/128/393216 | 79.2 [39.8, 337.2] | 224.5 [143.9, 503.0] | 226.3 [145.8, 505.8] | 346.8 [242.8, 712.1] | 515.8 [508.6, 712.1] | 8.7 [4.2, 12.4] | 356/144 |
+| bun/128/524287 | 104.4 [84.5, 180.7] | 251.9 [229.3, 346.3] | 255.1 [231.0, 349.8] | 462.8 [415.4, 612.1] | 539.2 [524.6, 614.1] | 8.6 [6.5, 9.6] | 457/43 |
+| bun/128/524288 | 92.3 [68.5, 273.4] | 241.5 [202.1, 444.4] | 244.7 [204.9, 447.3] | 392.0 [332.8, 645.9] | 526.7 [506.4, 651.2] | 10.2 [6.2, 12.0] | 408/92 |
+| bun/128/524289 | 89.5 [52.3, 342.7] | 217.9 [176.2, 507.3] | 219.6 [177.8, 510.3] | 381.5 [351.4, 774.4] | 518.4 [499.1, 774.4] | 10.5 [5.2, 11.4] | 413/87 |
+| bun/128/65536 | 49.9 [9.9, 65.0] | 161.6 [104.3, 199.1] | 177.4 [122.0, 229.3] | 177.3 [123.2, 215.0] | 500.8 [498.3, 506.5] | 2.8 [2.3, 4.1] | 176/324 |
+| bun/128/786432 | 76.3 [66.1, 321.6] | 181.7 [168.9, 475.0] | 184.4 [171.3, 478.1] | 422.1 [378.9, 753.3] | 503.0 [498.2, 753.4] | 14.2 [8.0, 15.8] | 438/62 |
+| bun/256/1048576 | 112.2 [74.1, 152.6] | 238.8 [197.5, 299.2] | 240.7 [200.0, 302.3] | 489.5 [422.1, 574.8] | 544.2 [499.4, 577.1] | 16.3 [13.9, 19.0] | 474/26 |
+| bun/256/131071 | 50.1 [26.0, 71.3] | 146.0 [132.6, 208.4] | 167.3 [144.9, 251.7] | 232.0 [218.9, 313.3] | 500.2 [498.9, 518.9] | 4.3 [3.2, 4.6] | 260/240 |
+| bun/256/131072 | 57.8 [38.4, 118.5] | 176.4 [131.7, 271.9] | 187.3 [143.1, 360.1] | 279.1 [210.6, 411.2] | 501.0 [500.0, 559.2] | 3.6 [2.4, 4.7] | 287/213 |
+| bun/256/131073 | 64.7 [46.4, 164.2] | 186.4 [162.5, 324.8] | 232.7 [181.9, 334.4] | 289.7 [249.6, 514.1] | 502.7 [499.4, 594.7] | 3.5 [1.9, 4.0] | 329/171 |
+| bun/256/1782784 | 303.7 [203.7, 356.3] | 437.8 [336.1, 483.8] | 439.3 [338.5, 485.6] | 701.3 [666.2, 755.9] | 701.3 [666.2, 755.9] | 19.4 [18.0, 20.4] | 500/0 |
+| bun/256/196608 | 79.8 [39.4, 160.4] | 201.7 [152.3, 310.5] | 248.9 [162.2, 319.1] | 210.1 [171.8, 326.1] | 520.4 [499.7, 585.2] | 7.1 [4.6, 8.7] | 231/269 |
+| bun/256/262143 | 65.2 [38.3, 305.5] | 186.8 [154.1, 495.3] | 210.0 [164.4, 553.1] | 203.3 [165.4, 514.9] | 512.1 [499.9, 633.1] | 9.8 [3.9, 12.1] | 284/216 |
+| bun/256/262144 | 63.6 [37.3, 100.4] | 194.9 [142.9, 214.0] | 197.7 [146.6, 216.6] | 253.2 [210.4, 273.8] | 505.2 [499.1, 540.4] | 7.9 [7.3, 9.5] | 250/250 |
+| bun/256/262145 | 56.3 [27.7, 173.7] | 174.4 [142.3, 322.1] | 177.7 [150.4, 327.1] | 234.8 [215.0, 425.5] | 507.0 [500.1, 593.1] | 8.5 [4.7, 9.3] | 274/226 |
+| bun/256/393216 | 173.3 [79.0, 215.1] | 314.8 [183.7, 381.4] | 318.4 [186.7, 383.1] | 419.9 [303.1, 589.0] | 589.0 [529.6, 599.5] | 7.1 [5.1, 9.9] | 420/80 |
+| bun/256/524287 | 91.9 [60.8, 116.6] | 220.5 [193.1, 250.7] | 223.2 [195.5, 253.1] | 378.5 [354.7, 450.6] | 541.4 [506.0, 552.2] | 10.6 [8.9, 11.3] | 400/100 |
+| bun/256/524288 | 73.2 [64.1, 231.6] | 206.9 [183.4, 404.4] | 210.3 [185.1, 407.3] | 385.4 [312.6, 657.4] | 506.6 [499.7, 657.4] | 10.4 [6.1, 12.8] | 408/92 |
+| bun/256/524289 | 88.8 [65.0, 103.8] | 218.7 [166.5, 247.2] | 221.2 [169.1, 251.1] | 400.9 [342.8, 408.8] | 528.3 [500.0, 544.4] | 10.0 [9.8, 11.7] | 390/110 |
+| bun/256/65536 | 51.8 [42.2, 134.8] | 169.9 [147.5, 309.6] | 194.0 [157.8, 323.3] | 165.9 [54.7, 325.6] | 508.6 [500.3, 562.5] | 3.0 [1.5, 9.1] | 197/303 |
+| bun/256/786432 | 124.6 [70.4, 298.0] | 242.9 [194.2, 457.2] | 245.6 [197.9, 461.6] | 488.3 [428.2, 711.4] | 547.1 [507.1, 711.4] | 12.3 [8.4, 14.0] | 474/26 |
+| bun/512/1048576 | 160.7 [78.2, 345.0] | 308.3 [212.2, 491.3] | 309.9 [214.1, 492.5] | 608.6 [445.4, 680.7] | 608.6 [519.8, 680.7] | 13.1 [11.8, 18.0] | 490/10 |
+| bun/512/131071 | 54.1 [20.9, 155.6] | 168.0 [112.8, 316.9] | 179.9 [123.8, 327.8] | 269.9 [190.8, 501.5] | 504.4 [499.6, 585.8] | 3.7 [2.0, 5.2] | 297/203 |
+| bun/512/131072 | 54.7 [35.5, 182.7] | 182.5 [117.7, 368.4] | 190.3 [129.7, 518.4] | 249.4 [197.2, 563.0] | 502.1 [500.6, 621.8] | 4.0 [1.8, 5.1] | 292/208 |
+| bun/512/131073 | 67.3 [13.9, 131.5] | 187.0 [97.8, 312.5] | 198.5 [110.9, 322.1] | 293.4 [180.8, 457.8] | 507.7 [498.9, 549.9] | 3.4 [2.2, 5.5] | 314/186 |
+| bun/512/1782784 | 268.9 [142.4, 364.5] | 399.2 [278.5, 487.4] | 400.9 [280.7, 488.8] | 728.0 [537.3, 781.3] | 728.0 [556.4, 781.3] | 18.7 [17.4, 25.3] | 500/0 |
+| bun/512/196608 | 61.4 [55.7, 327.2] | 204.5 [180.5, 517.1] | 214.0 [189.3, 521.2] | 215.4 [75.9, 530.0] | 504.5 [499.0, 643.6] | 7.0 [2.8, 19.8] | 263/237 |
+| bun/512/262143 | 88.2 [33.9, 236.9] | 256.7 [145.4, 421.3] | 261.7 [150.1, 424.9] | 273.5 [160.6, 441.5] | 516.6 [504.9, 595.2] | 7.3 [4.5, 12.5] | 275/225 |
+| bun/512/262144 | 60.8 [45.2, 289.1] | 193.7 [168.9, 472.6] | 199.3 [173.3, 476.1] | 213.1 [68.2, 491.3] | 501.0 [499.8, 629.4] | 9.4 [4.1, 29.3] | 242/258 |
+| bun/512/262145 | 47.3 [29.7, 65.5] | 171.6 [145.9, 208.3] | 188.0 [153.8, 216.7] | 191.4 [166.0, 230.2] | 499.9 [498.9, 500.9] | 10.4 [8.7, 12.0] | 193/307 |
+| bun/512/393216 | 65.2 [53.6, 147.4] | 191.7 [171.4, 309.8] | 194.0 [173.4, 314.8] | 314.7 [285.5, 485.0] | 507.2 [500.1, 569.2] | 9.5 [6.2, 10.5] | 354/146 |
+| bun/512/524287 | 82.2 [58.2, 229.9] | 222.2 [177.0, 399.7] | 225.1 [180.1, 401.5] | 360.8 [290.8, 609.0] | 520.2 [501.7, 610.3] | 11.1 [6.6, 13.8] | 401/99 |
+| bun/512/524288 | 101.1 [65.7, 172.2] | 209.1 [192.4, 312.0] | 211.0 [194.4, 314.8] | 362.7 [352.4, 577.2] | 522.2 [508.0, 584.2] | 11.0 [6.9, 11.4] | 397/103 |
+| bun/512/524289 | 99.3 [61.4, 187.6] | 253.9 [182.4, 356.0] | 256.7 [184.5, 358.8] | 402.1 [340.7, 585.6] | 533.8 [499.2, 605.4] | 9.9 [6.8, 11.7] | 422/78 |
+| bun/512/65536 | 46.1 [41.6, 131.5] | 150.7 [145.2, 299.6] | 165.0 [163.0, 313.4] | 168.9 [164.7, 316.2] | 502.3 [500.9, 558.8] | 3.0 [1.6, 3.0] | 203/297 |
+| bun/512/786432 | 98.6 [65.4, 204.1] | 221.5 [198.8, 370.3] | 225.1 [201.4, 372.6] | 482.9 [400.3, 647.3] | 535.3 [514.9, 647.3] | 12.4 [9.3, 15.0] | 459/41 |
+| bun/OFF/1048576 | 187.3 [151.1, 354.0] | 340.0 [304.9, 504.2] | 342.6 [307.7, 505.5] | 549.7 [519.2, 734.9] | 606.5 [570.8, 734.9] | 14.6 [10.9, 15.4] | 500/0 |
+| bun/OFF/131071 | 59.2 [43.5, 75.9] | 191.0 [136.3, 206.6] | 202.1 [147.8, 252.0] | 296.7 [234.0, 329.0] | 500.5 [499.9, 508.9] | 3.4 [3.0, 4.3] | 282/218 |
+| bun/OFF/131072 | 66.1 [32.9, 296.9] | 179.0 [106.8, 477.0] | 209.9 [132.4, 487.0] | 278.2 [179.4, 631.4] | 504.4 [499.8, 635.4] | 3.6 [1.6, 5.6] | 306/194 |
+| bun/OFF/131073 | 49.2 [18.5, 112.7] | 157.0 [138.1, 286.8] | 177.7 [150.6, 298.5] | 256.4 [153.6, 418.4] | 510.5 [498.8, 525.3] | 3.9 [2.4, 6.5] | 271/229 |
+| bun/OFF/1782784 | 249.8 [166.0, 366.5] | 373.5 [297.7, 489.8] | 375.5 [300.0, 491.9] | 627.2 [470.5, 753.5] | 653.8 [580.2, 753.5] | 21.7 [18.1, 28.9] | 495/5 |
+| bun/OFF/196608 | 91.1 [55.5, 113.4] | 253.3 [171.9, 276.1] | 260.1 [180.9, 285.8] | 278.8 [190.8, 296.2] | 517.1 [502.9, 537.7] | 5.4 [5.1, 7.9] | 267/233 |
+| bun/OFF/262143 | 60.9 [45.3, 76.8] | 197.3 [156.0, 224.8] | 215.0 [163.1, 243.6] | 211.5 [177.1, 244.3] | 501.8 [499.6, 525.6] | 9.5 [8.2, 11.3] | 215/285 |
+| bun/OFF/262144 | 61.9 [38.2, 118.2] | 199.1 [148.8, 292.0] | 213.3 [155.7, 335.0] | 188.8 [81.0, 222.8] | 503.8 [499.5, 550.1] | 10.6 [9.0, 24.7] | 177/323 |
+| bun/OFF/262145 | 58.9 [46.2, 216.1] | 178.3 [162.4, 393.8] | 216.8 [167.6, 399.3] | 192.5 [68.6, 414.3] | 506.0 [499.2, 605.1] | 10.4 [4.8, 29.1] | 222/278 |
+| bun/OFF/393216 | 99.7 [54.6, 188.2] | 230.5 [164.8, 360.2] | 235.5 [167.7, 365.2] | 277.4 [255.7, 559.6] | 543.3 [507.9, 603.9] | 10.8 [5.4, 11.7] | 353/147 |
+| bun/OFF/524287 | 100.9 [87.8, 132.7] | 243.4 [222.8, 285.2] | 246.8 [227.7, 289.9] | 397.4 [358.3, 451.2] | 544.3 [509.3, 554.4] | 10.1 [8.9, 11.2] | 403/97 |
+| bun/OFF/524288 | 96.3 [60.2, 117.0] | 228.1 [188.3, 277.0] | 231.1 [191.3, 280.5] | 372.4 [311.6, 387.5] | 517.0 [500.1, 535.0] | 10.7 [10.3, 12.8] | 357/143 |
+| bun/OFF/524289 | 77.1 [62.3, 344.4] | 210.8 [187.5, 512.9] | 214.7 [189.7, 514.7] | 353.8 [338.0, 714.4] | 517.8 [507.0, 714.4] | 11.3 [5.6, 11.8] | 386/114 |
+| bun/OFF/65536 | 48.5 [11.0, 219.5] | 174.0 [110.4, 501.0] | 189.1 [125.4, 525.8] | 136.3 [71.4, 281.4] | 501.2 [498.8, 616.8] | 3.7 [1.8, 7.0] | 165/335 |
+| bun/OFF/786432 | 114.2 [103.8, 331.2] | 258.3 [217.1, 485.8] | 264.1 [220.5, 487.8] | 474.3 [390.5, 720.6] | 555.1 [537.4, 720.6] | 12.7 [8.3, 15.4] | 457/43 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/128/1048576 | 905.0 [867.3, 1062.8] | 224.8 [218.8, 436.4] | 239.3 [235.9, 257.9] | 60.0 [56.5, 78.3] | 36.0 [33.2, 55.4] | 97.0 [96.0, 98.0] | 193.4 [141.5, 200.1] |
+| bun/128/131071 | 856.1 [809.4, 878.4] | 146.9 [59.5, 201.2] | 211.6 [202.6, 215.7] | 37.8 [37.4, 41.7] | 16.6 [16.2, 19.1] | 100.0 [99.0, 100.0] | 212.5 [207.5, 216.0] |
+| bun/128/131072 | 850.2 [802.7, 1010.9] | 118.0 [54.1, 319.0] | 211.3 [210.0, 214.4] | 38.7 [37.4, 39.3] | 17.6 [16.2, 18.2] | 93.0 [93.0, 93.0] | 215.4 [181.0, 216.6] |
+| bun/128/131073 | 856.9 [831.3, 867.4] | 135.0 [66.3, 163.3] | 211.2 [203.8, 214.8] | 37.4 [37.4, 42.7] | 16.2 [16.2, 19.8] | 93.0 [93.0, 93.0] | 215.5 [210.7, 215.8] |
+| bun/128/1782784 | 998.3 [943.6, 1066.1] | 284.0 [146.8, 308.7] | 276.0 [247.6, 301.3] | 99.8 [86.6, 117.2] | 73.0 [62.7, 90.4] | 98.0 [98.0, 99.0] | 170.7 [123.2, 175.8] |
+| bun/128/196608 | 862.7 [813.3, 1029.8] | 217.5 [176.3, 449.6] | 216.9 [202.3, 219.0] | 37.7 [37.4, 46.6] | 16.5 [16.2, 23.9] | 93.0 [93.0, 93.0] | 208.3 [170.2, 215.7] |
+| bun/128/262143 | 867.4 [836.8, 964.3] | 175.9 [138.7, 238.4] | 216.0 [208.5, 219.8] | 41.3 [37.7, 48.9] | 19.2 [16.5, 25.6] | 93.0 [93.0, 94.0] | 210.8 [187.4, 215.7] |
+| bun/128/262144 | 839.6 [808.9, 985.5] | 165.4 [56.9, 352.8] | 220.4 [219.7, 222.7] | 38.2 [37.4, 39.2] | 16.9 [16.2, 18.1] | 93.0 [93.0, 94.0] | 215.9 [181.4, 216.2] |
+| bun/128/262145 | 868.6 [852.4, 971.7] | 155.9 [124.6, 265.3] | 209.8 [198.5, 220.9] | 40.6 [37.4, 48.7] | 18.4 [16.2, 24.8] | 93.0 [93.0, 93.0] | 210.3 [181.7, 211.8] |
+| bun/128/393216 | 866.4 [840.6, 1069.2] | 168.9 [56.8, 470.1] | 226.9 [224.9, 227.9] | 40.7 [39.9, 61.0] | 18.4 [17.8, 34.4] | 93.0 [93.0, 94.0] | 209.4 [151.7, 212.4] |
+| bun/128/524287 | 902.3 [860.3, 1001.4] | 220.4 [202.6, 313.1] | 223.5 [218.8, 227.6] | 48.9 [40.0, 52.1] | 26.2 [18.2, 29.4] | 93.0 [93.0, 94.0] | 200.3 [175.9, 205.9] |
+| bun/128/524288 | 856.8 [843.2, 1051.8] | 194.0 [154.7, 379.7] | 227.7 [221.6, 236.1] | 41.8 [39.4, 51.6] | 19.3 [17.5, 28.0] | 93.0 [93.0, 95.0] | 205.1 [165.8, 213.3] |
+| bun/128/524289 | 861.8 [839.5, 1104.3] | 173.5 [161.0, 478.0] | 222.7 [217.3, 225.1] | 51.0 [40.7, 56.0] | 28.2 [18.5, 29.4] | 93.0 [93.0, 95.0] | 208.4 [139.5, 216.4] |
+| bun/128/65536 | 856.5 [791.3, 869.6] | 144.8 [49.5, 185.4] | 206.2 [195.1, 207.3] | 38.7 [37.4, 41.1] | 17.4 [16.2, 18.8] | 93.0 [93.0, 93.0] | 215.6 [213.2, 216.8] |
+| bun/128/786432 | 820.7 [812.9, 1068.9] | 145.3 [139.9, 434.9] | 224.4 [222.0, 242.1] | 58.5 [48.3, 69.1] | 34.2 [26.5, 43.7] | 96.0 [96.0, 98.0] | 214.7 [143.4, 216.8] |
+| bun/256/1048576 | 872.2 [808.5, 931.5] | 205.8 [166.1, 250.9] | 240.1 [233.3, 252.0] | 65.3 [50.2, 75.8] | 40.8 [28.0, 53.5] | 98.0 [98.0, 98.0] | 198.4 [187.1, 216.2] |
+| bun/256/131071 | 836.2 [798.6, 876.6] | 102.7 [60.1, 182.1] | 210.9 [203.0, 222.8] | 38.7 [37.4, 39.8] | 17.2 [16.2, 17.8] | 99.0 [99.0, 99.0] | 215.9 [208.1, 216.5] |
+| bun/256/131072 | 846.0 [830.7, 938.1] | 167.4 [60.3, 236.0] | 208.6 [195.7, 212.7] | 40.8 [37.4, 42.1] | 18.7 [16.2, 19.9] | 99.0 [99.0, 99.0] | 215.6 [193.1, 216.0] |
+| bun/256/131073 | 861.0 [836.7, 989.6] | 175.2 [111.6, 309.6] | 211.6 [200.3, 215.4] | 38.7 [37.7, 39.6] | 17.2 [16.5, 17.6] | 100.0 [98.0, 100.0] | 214.9 [181.6, 216.3] |
+| bun/256/1782784 | 1016.9 [941.6, 1088.2] | 333.4 [170.0, 385.8] | 257.1 [246.1, 267.7] | 90.3 [87.0, 92.2] | 64.8 [60.6, 65.8] | 98.0 [98.0, 99.0] | 154.0 [142.9, 162.1] |
+| bun/256/196608 | 865.2 [822.5, 980.3] | 149.5 [65.5, 291.7] | 204.2 [197.8, 219.0] | 40.9 [37.4, 42.6] | 18.7 [16.2, 19.0] | 100.0 [99.0, 100.0] | 207.5 [184.6, 216.1] |
+| bun/256/262143 | 858.8 [792.7, 1044.6] | 159.8 [61.1, 432.2] | 221.5 [221.3, 222.4] | 37.4 [37.4, 37.7] | 16.2 [16.2, 16.5] | 100.0 [100.0, 100.0] | 210.9 [170.6, 216.1] |
+| bun/256/262144 | 868.4 [831.1, 905.9] | 146.2 [57.3, 165.9] | 210.5 [206.8, 217.4] | 40.9 [40.4, 42.4] | 18.8 [18.4, 20.3] | 93.0 [93.0, 93.0] | 213.8 [199.8, 216.4] |
+| bun/256/262145 | 848.7 [804.6, 978.6] | 119.1 [58.3, 295.7] | 221.4 [218.4, 222.1] | 39.2 [37.7, 41.3] | 17.7 [16.5, 19.3] | 93.0 [93.0, 93.0] | 213.0 [182.1, 215.9] |
+| bun/256/393216 | 977.3 [896.0, 992.7] | 258.7 [138.9, 331.7] | 219.1 [210.5, 223.6] | 50.9 [41.5, 57.4] | 26.4 [19.1, 32.3] | 93.0 [93.0, 93.0] | 183.4 [180.2, 203.9] |
+| bun/256/524287 | 904.7 [838.1, 926.2] | 177.1 [164.3, 216.9] | 227.3 [221.8, 231.6] | 43.1 [39.1, 61.5] | 20.8 [17.4, 37.9] | 93.0 [93.0, 94.0] | 199.5 [195.6, 213.4] |
+| bun/256/524288 | 835.6 [827.3, 1015.9] | 160.0 [138.7, 379.7] | 226.2 [221.3, 229.8] | 41.0 [39.7, 52.7] | 19.0 [18.0, 28.7] | 93.0 [93.0, 94.0] | 213.2 [164.3, 216.1] |
+| bun/256/524289 | 881.8 [816.9, 901.7] | 189.1 [123.7, 189.9] | 222.7 [213.5, 230.2] | 48.4 [41.8, 60.4] | 25.8 [19.8, 36.2] | 93.0 [93.0, 94.0] | 204.4 [198.4, 216.0] |
+| bun/256/65536 | 868.1 [840.3, 945.7] | 121.2 [95.6, 293.0] | 195.8 [193.6, 205.9] | 40.2 [37.6, 41.9] | 18.4 [16.4, 18.9] | 93.0 [93.0, 94.0] | 212.4 [192.0, 215.9] |
+| bun/256/786432 | 892.3 [831.5, 1044.7] | 188.1 [166.4, 419.3] | 234.1 [227.9, 241.2] | 58.3 [49.7, 75.9] | 34.4 [27.4, 49.4] | 96.0 [95.0, 97.0] | 197.4 [151.8, 213.0] |
+| bun/512/1048576 | 938.3 [842.0, 1048.8] | 274.3 [179.8, 400.5] | 259.1 [232.8, 265.0] | 73.8 [58.8, 88.8] | 50.8 [35.2, 61.9] | 97.0 [97.0, 98.0] | 177.4 [158.7, 207.8] |
+| bun/512/131071 | 853.1 [812.5, 960.4] | 156.7 [52.5, 304.2] | 205.9 [197.5, 211.9] | 40.6 [38.1, 44.4] | 18.5 [16.8, 20.9] | 99.0 [99.0, 99.0] | 214.1 [184.4, 216.2] |
+| bun/512/131072 | 857.1 [830.9, 1023.0] | 137.6 [112.5, 332.1] | 211.9 [201.6, 212.3] | 38.9 [37.4, 41.7] | 17.8 [16.2, 19.4] | 99.0 [98.0, 99.0] | 215.1 [173.7, 215.8] |
+| bun/512/131073 | 857.3 [785.9, 936.2] | 175.5 [47.9, 297.6] | 211.3 [200.5, 212.5] | 38.9 [37.7, 39.3] | 17.0 [16.5, 18.2] | 99.0 [99.0, 100.0] | 212.7 [196.4, 216.5] |
+| bun/512/1782784 | 951.8 [857.9, 1097.6] | 265.5 [142.9, 392.4] | 274.8 [250.7, 314.0] | 91.6 [89.2, 114.7] | 64.9 [63.3, 88.7] | 99.0 [98.0, 99.0] | 148.3 [138.2, 194.1] |
+| bun/512/196608 | 860.6 [820.4, 1043.0] | 192.0 [165.9, 468.8] | 215.0 [201.6, 218.8] | 39.5 [37.4, 41.4] | 18.0 [16.2, 18.9] | 100.0 [99.0, 100.0] | 214.1 [167.8, 216.5] |
+| bun/512/262143 | 869.9 [805.9, 972.6] | 222.0 [53.1, 387.0] | 218.4 [201.1, 223.0] | 38.7 [37.4, 40.2] | 17.4 [16.2, 18.5] | 100.0 [100.0, 100.0] | 209.1 [181.5, 213.9] |
+| bun/512/262144 | 838.9 [818.7, 1028.4] | 180.3 [111.9, 435.5] | 212.4 [205.8, 223.2] | 41.1 [37.7, 44.6] | 19.0 [16.5, 22.3] | 100.0 [100.0, 100.0] | 215.6 [171.6, 216.1] |
+| bun/512/262145 | 821.4 [782.0, 841.6] | 162.4 [59.9, 171.1] | 219.7 [200.1, 221.7] | 37.7 [37.4, 40.6] | 16.5 [16.2, 18.6] | 100.0 [100.0, 100.0] | 216.0 [215.6, 216.5] |
+| bun/512/393216 | 858.8 [821.6, 942.6] | 170.4 [142.0, 256.3] | 225.7 [213.7, 227.0] | 40.2 [39.5, 47.2] | 18.0 [17.5, 24.7] | 99.0 [99.0, 100.0] | 212.9 [189.7, 216.0] |
+| bun/512/524287 | 864.3 [821.5, 994.2] | 190.9 [136.4, 381.7] | 221.8 [218.1, 228.7] | 43.0 [39.5, 49.2] | 20.7 [17.5, 26.4] | 100.0 [100.0, 100.0] | 207.6 [177.0, 215.3] |
+| bun/512/524288 | 866.4 [838.6, 956.5] | 165.3 [151.5, 266.5] | 225.2 [213.6, 232.2] | 50.0 [41.4, 64.8] | 26.5 [19.3, 38.8] | 93.0 [93.0, 94.0] | 206.8 [184.9, 212.6] |
+| bun/512/524289 | 873.3 [829.0, 991.9] | 201.2 [140.8, 306.6] | 225.9 [219.7, 230.5] | 44.3 [40.8, 62.7] | 21.8 [18.5, 37.6] | 93.0 [93.0, 93.0] | 202.3 [178.4, 216.4] |
+| bun/512/65536 | 843.8 [827.2, 939.4] | 148.9 [66.8, 296.5] | 206.3 [196.6, 208.5] | 37.4 [37.4, 39.0] | 16.2 [16.2, 16.9] | 93.0 [93.0, 93.0] | 215.0 [193.3, 215.6] |
+| bun/512/786432 | 871.3 [841.6, 1001.6] | 182.0 [165.7, 336.1] | 232.8 [222.4, 238.3] | 54.5 [45.4, 60.3] | 31.5 [22.8, 35.6] | 96.0 [95.0, 96.0] | 201.8 [166.8, 209.8] |
+| bun/OFF/1048576 | 963.0 [901.8, 1064.9] | 269.6 [255.8, 441.1] | 240.3 [233.6, 258.7] | 67.2 [57.3, 84.5] | 40.6 [34.4, 59.0] | 99.0 [99.0, 100.0] | 178.1 [147.0, 189.2] |
+| bun/OFF/131071 | 841.8 [836.8, 855.9] | 169.4 [130.0, 199.6] | 201.7 [193.9, 211.7] | 39.5 [37.4, 41.9] | 17.5 [16.2, 19.7] | 99.0 [98.0, 100.0] | 215.8 [212.2, 216.0] |
+| bun/OFF/131072 | 851.7 [815.4, 1050.3] | 138.9 [45.9, 449.1] | 203.8 [195.9, 212.3] | 40.9 [38.1, 45.8] | 18.9 [16.8, 20.0] | 100.0 [99.0, 100.0] | 214.1 [170.0, 216.1] |
+| bun/OFF/131073 | 862.4 [766.9, 880.2] | 149.2 [48.6, 275.0] | 210.8 [197.5, 215.0] | 39.7 [37.4, 41.3] | 17.4 [16.2, 19.0] | 100.0 [99.0, 100.0] | 211.6 [205.6, 216.5] |
+| bun/OFF/1782784 | 978.9 [901.2, 1060.0] | 250.1 [147.9, 376.5] | 287.3 [258.6, 320.7] | 89.9 [81.8, 118.4] | 65.2 [59.0, 91.6] | 99.0 [99.0, 100.0] | 165.2 [143.3, 186.1] |
+| bun/OFF/196608 | 865.6 [830.5, 894.5] | 227.9 [156.8, 266.3] | 217.6 [197.1, 219.0] | 37.7 [37.4, 39.7] | 16.5 [16.2, 17.4] | 100.0 [100.0, 100.0] | 208.8 [200.9, 214.8] |
+| bun/OFF/262143 | 841.9 [838.8, 877.0] | 154.7 [145.3, 189.3] | 220.6 [203.6, 221.8] | 37.7 [37.4, 40.9] | 16.5 [16.2, 18.8] | 100.0 [100.0, 100.0] | 215.2 [205.5, 216.2] |
+| bun/OFF/262144 | 840.5 [821.0, 921.4] | 138.6 [60.4, 222.9] | 220.5 [208.3, 221.9] | 37.7 [37.4, 41.3] | 16.5 [16.2, 19.2] | 100.0 [100.0, 100.0] | 214.4 [196.3, 216.2] |
+| bun/OFF/262145 | 855.2 [832.8, 984.0] | 145.5 [104.2, 370.3] | 218.9 [208.8, 221.1] | 40.6 [37.4, 41.0] | 18.6 [16.2, 18.7] | 100.0 [100.0, 100.0] | 213.4 [178.5, 216.3] |
+| bun/OFF/393216 | 895.3 [847.6, 988.2] | 177.6 [138.9, 321.2] | 223.6 [219.3, 224.9] | 41.0 [38.7, 54.9] | 18.9 [17.6, 30.4] | 99.0 [99.0, 99.0] | 198.8 [178.8, 212.6] |
+| bun/OFF/524287 | 902.1 [837.4, 914.4] | 196.7 [177.1, 245.3] | 222.0 [219.8, 229.9] | 43.3 [41.2, 51.8] | 20.9 [19.0, 28.3] | 99.0 [99.0, 100.0] | 198.4 [194.8, 212.0] |
+| bun/OFF/524288 | 860.1 [825.5, 871.2] | 183.6 [159.1, 216.2] | 226.2 [209.9, 231.0] | 42.2 [39.2, 57.2] | 20.0 [17.4, 33.5] | 100.0 [99.0, 100.0] | 208.9 [201.9, 215.9] |
+| bun/OFF/524289 | 861.6 [839.8, 1091.9] | 166.2 [154.6, 471.6] | 229.0 [223.5, 231.3] | 41.0 [39.7, 54.5] | 19.0 [17.5, 27.9] | 99.0 [99.0, 100.0] | 208.6 [151.2, 213.0] |
+| bun/OFF/65536 | 843.8 [806.5, 1031.5] | 175.0 [47.5, 356.1] | 204.6 [194.4, 208.1] | 38.7 [37.4, 41.0] | 17.1 [16.2, 18.6] | 93.0 [93.0, 93.0] | 215.5 [175.1, 216.5] |
+| bun/OFF/786432 | 933.4 [869.7, 1062.8] | 211.5 [187.8, 432.9] | 237.8 [229.3, 239.3] | 61.2 [44.9, 70.4] | 34.5 [22.0, 46.2] | 99.0 [99.0, 100.0] | 194.6 [149.9, 201.0] |
+
+Cell = policy KiB / exact serialized upstream bytes; OFF is unpaced. Grid is 15 unique sizes × four policies × five repetitions = 300 rows. Exact 128/256/512KiB boundaries already occur in the shared base grid; ±1 adds six sizes. No global percentile across size/policy cells is meaningful.
+
+### mixed — per-cell latency and throughput
+
+| Runtime/cell | Victim p50 | Victim p95 | Victim p99 | Heavy wall | Probe-window wall | Heavy MiB/s | Loaded/unloaded probes |
+|---|---|---|---|---|---|---|---:|
+| bun/bytes:8:5:15 | 248.1 [222.2, 381.4] | 404.3 [382.9, 521.5] | 407.1 [386.0, 523.9] | 713.8 [654.5, 790.8] | 713.8 [654.5, 790.8] | 8.8 [7.9, 9.6] | 500/0 |
+| bun/fixed | 224.0 [190.1, 330.0] | 380.6 [340.9, 489.8] | 382.1 [344.5, 490.9] | 691.8 [669.7, 725.2] | 691.8 [669.7, 725.2] | 9.1 [8.7, 9.4] | 500/0 |
+| bun/off | 325.8 [197.1, 377.4] | 485.9 [357.9, 525.4] | 487.5 [360.7, 530.2] | 715.0 [670.0, 762.4] | 715.0 [670.0, 762.4] | 8.8 [8.2, 9.4] | 500/0 |
+
+| Runtime/cell | CPU user+system ms | Lag p95 ms | RSS peak MiB | Heap peak MiB | External peak MiB | FD peak | Window RPS |
+|---|---|---|---|---|---|---|---|
+| bun/bytes:8:5:15 | 1045.1 [1021.0, 1142.0] | 350.4 [348.4, 466.9] | 229.9 [222.8, 238.4] | 59.7 [57.8, 64.2] | 35.6 [31.3, 37.7] | 94.0 [92.0, 94.0] | 147.1 [132.8, 160.4] |
+| bun/fixed | 1013.7 [997.8, 1073.3] | 353.5 [306.5, 451.2] | 233.7 [218.4, 237.0] | 53.9 [52.3, 63.7] | 31.4 [29.6, 37.5] | 92.0 [92.0, 94.0] | 151.8 [144.8, 156.8] |
+| bun/off | 1088.3 [1002.8, 1184.6] | 442.0 [322.1, 478.8] | 229.2 [222.9, 235.7] | 53.7 [49.9, 61.5] | 30.2 [26.1, 35.1] | 93.0 [92.0, 94.0] | 146.9 [137.7, 156.7] |
+
+### Bounded readings and corrected narration
+
+Spacing: 20ms has lower median victim p50 than 15ms in this run, but wide overlapping five-run ranges do not prove an optimum. Provisional 15ms/256KiB is a conservative reference after sustained and same-build pairs, not an optimized setting or final recommendation.
+
+Mixed fixed: victim p50/p95 224.0/380.6ms; weighted bytes:8:5:15 248.1/404.3ms. Heavy wall medians 691.8/713.8ms. Fixed is lower on these medians, but ranges overlap; no universal superiority or causal attribution.
+
+Buffer external-memory effect is concurrency-dependent: c1 is lower than string (about 18 vs 26MiB); c4/c8 higher (about 65 vs 49MiB and 109 vs 78MiB). The earlier uniform +30–40% claim is invalid. Encoding comparison does not isolate a single internal cost.
+
+Upload fixed c8→c16 victim median p50 396.6→591.5ms is approximately +49%, not doubling. Exact upstream body bytes are 1716382 for each standard heavy; client bytes 1716391 include the routing prefix. Tables use per-row verified upstream byte totals; mixed bodies are summed individually, never approximated by their median size.
+
+No leak verdict from FD or memory peaks, no gateway-stage cost attribution from end-to-end timing, no Bun-vs-Node verdict from legacy unmatched builds.
+
+### Acceptance and remaining scope
+
+Section V consolidates Q, R, T and the validated matched-offer evidence in U. Remaining unmeasured criteria: isolated small-c1, repeated-burst protection, settled heap and exact internal cost attribution.
+
+## R. Same-build paired sustained and spacing evidence (final chain artifacts)
+
+All 11 chain artifacts completed and verified. pair-sustained: 10/10 rows verified (5 Bun + 5 Node, randomized interleaved), 0 request errors; pair-spacing: 40/40 verified; bun-sustained: 5/5 verified. Single build for every run: buildId U93p5GZqIRzb5Tg0yKBBy, provenance head e15e5b0b with per-file dirty-source hashes recorded in each artifact (matching HEAD alone is insufficient; these runs carry hashed experimental scheduler/base sources). Raw: /mnt/ssd-250gb/9router-bench-artifacts/pair-sustained.json, pair-spacing.json, bun-sustained.json.
+
+### Pair-sustained (75s window, direct+CONNECT, 7 workers + victim, per-rep values; p50/p95/p99 of per-request TTFT)
+
+| Runtime | Requests (per rep) | RPS | Victim p50/p95/p99 | Parent p50/p95 | Child p50/p95 | Proxy-path p50/p95/p99 | Lag p95 | CPU user+system | RSS peak | FD peak |
+
+|---|---|---:|---|---|---|---|---:|---:|---:|---:|
+
+| Bun | 6198–6457 | 82.5–86.0 | 20.5–25.3 / 56.2–59.0 / 68.5–72.2 | 76.6–80.2 / 125.8–133.2 | 38.4–41.6 / 69.8–75.4 | 56.7–59.9 / 117.5–124.8 / 145.8–157.3 | 28.6–30.0 | 67030–67893 | 460.7–552.8 | 102–104 |
+| Node | 3824–4211 | 50.8–56.1 | 80.5–88.6 / 123.9–141.3 / 142.7–203.4 | 130.6–144.6 / 219.8–236.4 | 99.6–110.2 / 141.1–157.0 | 114.3–124.3 / 203.0–223.2 / 249.3–280.0 | 46.0–53.7 | 74469–76222 | 460.5–484.1 | 113–115 |
+CONNECT proxy window per rep: Bun attempts 4–5, successes=attempts, failures 0, peak 5, tunneled 821.6–856.2 MB; Node attempts 7–12, failures 0, peak 5, tunneled 537.7–584.7 MB. Settle FD trajectory: Bun 100→82 (tunnels 4→0 by 10s); Node 111→91 (tunnels 5→0 by 3s). Units: latency/lag ms, CPU ms=(user+system)/1000, memory MiB=bytes/1048576.
+
+CLOSED-LOOP LIMITATION (explicit): both runtimes ran the identical 75s window and scheduler policy, but this is a closed-loop workload — completed-request counts differ (Bun ≈6.2–6.5k, Node ≈3.8–4.2k), so per-unit-time payload mix and CONNECT volume are NOT matched. RPS here is closed-loop completion rate, not fixed-offer throughput; latency percentiles were measured on different per-runtime sample counts. Treat cross-runtime RPS as conditional on workload feedback, not an offer-rate comparison.
+
+PRIMARY11 RSS LIMITATION: original settle tables record FD/socket/proxy, not settled RSS. Observer resources-1788615360860-3340716.jsonl spans 2026-09-05T13:36:00.860Z–14:06:00.172Z, overlapping late bun-sustained, pair-spacing and early pair-sustained cells; it does not predate the whole pair chain. Its 1249 samples across 33 PIDs range 29.7–530.9 MiB, without a runtime label. This observer is not used for Node settled-RSS attribution. Supplemental matched75s now supplies runtime-attributed 60s RSS/FD snapshots in U; original primary11 omission remains.
+
+OBSERVER EXTERNAL SOCKETS (flagged, purpose unknown): benchmark gateway processes held long-lived ESTABLISHED connections to 104.26.9.108:443, 104.26.8.108:443, and [2606:4700:20::681a]:443 (Cloudflare address range). Benchmark upstreams and proxy are loopback-only; the initiator and purpose of this egress are not identified by passive observation. No attribution claimed.
+
+### Pair-spacing (same build, OFF/10/15/20, 5 reps per runtime per policy)
+
+| Runtime/policy | Victim p50 med [min,max] | Victim p95 med | Heavy wall med [min,max] |
+|---|---|---|---|
+| Bun/OFF | 554.7 [450.2, 584.3] | 612.0 | 981.8 [873.7, 1030.0] |
+| Bun/10 | 545.6 [488.5, 548.7] | 615.2 | 987.6 [968.0, 1078.0] |
+| Bun/15 | 504.9 [451.0, 628.0] | 574.8 | 1026.0 [937.8, 1165.4] |
+| Bun/20 | 508.2 [478.8, 510.9] | 570.0 | 1047.3 [1015.0, 1060.2] |
+| Node/OFF | 1007.1 [977.4, 1067.0] | 1250.1 | 814.2 [775.3, 884.5] |
+| Node/10 | 1041.5 [931.6, 1049.1] | 1261.3 | 823.4 [778.8, 859.8] |
+| Node/15 | 1006.5 [958.0, 1053.3] | 1235.5 | 853.7 [835.0, 897.5] |
+| Node/20 | 994.2 [983.5, 1026.8] | 1230.4 | 817.5 [799.8, 839.9] |
+Cross-runtime note: same-build victim latency medians are roughly 2x lower on Bun; heavy batch wall medians are lower on Node. Values recorded as measured; no runtime recommendation is issued here — verdict and any production action deferred to root review. Same-build measurements are complete; preferred production runtime remains INCONCLUSIVE in V. Matched-offer and settled-RSS measurements are in U.
+
+## S. Remaining gaps after chain completion
+
+1. Primary11 lacks settled RSS; supplemental matched75s resolves runtime-attributed 60s RSS for both runtimes (U), but does not retroactively measure primary11 RSS.
+2. Settled JS heap not instrumented anywhere; RSS is not heap (report line I already flags this).
+3. External 104.26.9.108:443 / 104.26.8.108:443 / [2606:4700:20::681a]:443 ESTABLISHED connections observed on benchmark gateways — initiator/purpose unidentified; must be explained before production-facing claims from this chain.
+4. Closed-loop RPS remains conditional on feedback. U separately measures equal fixed offer and work; it is not a saturation-throughput result and cannot convert R/T RPS into fixed-offer throughput.
+5. Isolated small-c1 latency acceptance (Q1) still not measured.
+6. Repeated-burst protection section (protection mode) not run in this chain.
+7. No commits made; working tree intentionally dirty pending root review; no runtime recommendation issued.
+
+
+## T. Primary11 consolidation
+
+This section supersedes stale pending labels in Q and approximate ranges in R without deleting original measurements. Nine Bun modes plus paired spacing/sustained are measured and verified. Matched-offer validation and supplemental settled RSS are now recorded in U; tables here remain primary11-only. Final acceptance status is issued in section V; no preferred-runtime claim.
+
+Quantiles use harness.mjs pct: sorted index round((n−1)×p/100); each median summarizes five repetition statistics, never pooled cross-runtime samples. Role ranges below are min–max of per-repetition percentiles, not confidence intervals. Proxy is an overlapping path subset, not a fourth disjoint role. Delta = (Bun/Node−1)×100%. CPU is per elapsed run, not normalized per equal work; RSS is peak only.
+
+Verified primary11: bun-spacing=20, bun-tls=20, bun-prepare=40, bun-encoding=30, bun-upload=50, bun-backlog=40, bun-threshold=300, bun-mixed=15, bun-sustained=5, pair-spacing=40, pair-sustained=10
+
+| Metric (median per-repetition statistic) | Bun | Node | Bun vs Node |
+|---|---:|---:|---:|
+| RPS | 83.85 | 54.83 | 52.94% |
+| Victim p95 ms | 57.22 | 127.71 | -55.20% |
+| Victim p50 ms | 23.53 | 83.21 | -71.72% |
+| Lag p95 ms | 29.43 | 46.84 | -37.18% |
+| CPU ms | 67462.66 | 74982.90 | -10.03% |
+| Peak RSS MiB | 473.46 | 467.16 | 1.35% |
+
+| Artifact/runtime/role | Count range per rep | p50 range ms | p95 range ms | p99 range ms |
+|---|---:|---:|---:|---:|
+| bun-sustained/bun/victim | 898.00–968.00 | 23.43–30.69 | 59.18–68.41 | 72.33–84.14 |
+| bun-sustained/bun/parent | 2347.00–2676.00 | 79.10–89.80 | 131.80–151.84 | 156.03–190.69 |
+| bun-sustained/bun/child | 2346.00–2675.00 | 39.35–47.91 | 74.62–84.56 | 93.01–108.03 |
+| bun-sustained/bun/proxy | 2346.00–2675.00 | 59.90–67.01 | 121.96–142.17 | 153.92–179.45 |
+| pair-sustained/bun/victim | 955.00–983.00 | 20.54–25.31 | 56.18–58.71 | 68.12–72.14 |
+| pair-sustained/bun/parent | 2622.00–2737.00 | 76.66–80.28 | 125.69–133.16 | 150.54–162.52 |
+| pair-sustained/bun/child | 2621.00–2737.00 | 38.45–41.65 | 69.58–75.36 | 85.66–92.81 |
+| pair-sustained/bun/proxy | 2621.00–2736.00 | 56.72–59.90 | 117.41–124.82 | 145.76–157.35 |
+| pair-sustained/node/victim | 569.00–603.00 | 80.47–88.62 | 123.52–141.32 | 142.67–170.69 |
+| pair-sustained/node/parent | 1628.00–1804.00 | 130.58–144.74 | 219.68–236.39 | 259.43–282.82 |
+| pair-sustained/node/child | 1627.00–1804.00 | 99.66–110.24 | 141.11–157.03 | 154.05–239.36 |
+| pair-sustained/node/proxy | 1627.00–1804.00 | 114.39–124.31 | 202.99–223.18 | 249.33–279.99 |
+
+| Artifact/runtime/rep | CONNECT attempts/success/fail | Window bytes | FD peak | FD at 0/3/10/30/60s | Active tunnels at 0/3/10/30/60s |
+|---|---|---:|---:|---|---|
+| bun-sustained/bun/0 | 3/3/0 | 740328253 | 103 | 100/100/82/82/82 | 4/4/0/0/0 |
+| bun-sustained/bun/1 | 5/5/0 | 769975719 | 102 | 100/100/82/82/82 | 4/4/0/0/0 |
+| bun-sustained/bun/2 | 4/4/0 | 835637565 | 101 | 100/100/82/82/82 | 4/4/0/0/0 |
+| bun-sustained/bun/3 | 3/3/0 | 828756834 | 102 | 100/100/82/82/82 | 4/4/0/0/0 |
+| bun-sustained/bun/4 | 4/4/0 | 824064538 | 103 | 100/100/82/82/82 | 4/4/0/0/0 |
+| pair-sustained/bun/0 | 4/4/0 | 831336084 | 103 | 100/100/82/82/82 | 4/4/0/0/0 |
+| pair-sustained/node/0 | 12/12/0 | 575221805 | 114 | 110/100/91/91/91 | 5/0/0/0/0 |
+| pair-sustained/node/1 | 7/7/0 | 583161591 | 113 | 111/100/91/91/91 | 5/0/0/0/0 |
+| pair-sustained/bun/1 | 5/5/0 | 847578592 | 103 | 100/100/82/82/82 | 4/4/0/0/0 |
+| pair-sustained/bun/2 | 5/5/0 | 856243957 | 104 | 100/100/82/82/82 | 4/4/0/0/0 |
+| pair-sustained/node/2 | 10/10/0 | 537720782 | 114 | 111/100/91/91/91 | 5/0/0/0/0 |
+| pair-sustained/bun/3 | 4/4/0 | 836086842 | 102 | 100/100/82/82/82 | 4/4/0/0/0 |
+| pair-sustained/node/3 | 11/11/0 | 568774256 | 114 | 111/100/91/91/91 | 5/0/0/0/0 |
+| pair-sustained/node/4 | 10/10/0 | 584650592 | 115 | 111/100/91/91/91 | 5/0/0/0/0 |
+| pair-sustained/bun/4 | 4/4/0 | 821582833 | 103 | 100/100/82/82/82 | 4/4/0/0/0 |
+
+| Spacing | Bun/Node victim p95 median ms | Delta | Bun/Node heavy wall median ms | Delta |
+|---|---|---:|---|---:|
+| 10 | 615.23/1261.35 | -51.22% | 987.57/823.35 | 19.95% |
+| 15 | 574.78/1235.52 | -53.48% | 1026.02/853.69 | 20.19% |
+| 20 | 570.04/1230.43 | -53.67% | 1047.34/817.49 | 28.12% |
+| OFF | 612.02/1250.13 | -51.04% | 981.81/814.23 | 20.58% |
+
+Closed-loop comparison: identical 75s duration and workload-generation rules, but unequal completion counts and payload volumes. Recomputed median RPS 83.85 vs 54.83 (+52.94%); victim p95 57.22 vs 127.71ms (−55.20%). These are conditional completion-rate/latency results, not fixed-offer or matched-count throughput claims. Same-build spacing trades lower Bun victim latency against longer Bun heavy batch wall.
+
+CONNECT counters are window deltas; warm-or-window positive successful tunnels and bytes also asserted. Retained warm tunnels explain active counts exceeding new window connects. Node tunnels reach zero at the 3s sample, while total FDs reach 91 only at 10s; Bun tunnels reach zero and total FDs reach 82 at 10s. Flat 10/30/60s FD samples support expiry/settle in this tested benchmark only, not universal leak freedom. Settled RSS and settled heap cannot be inferred from FD counts or memLast measured at window end.
+
+BuildId/buildSig/controlled BaseExecutor hash/controlled scheduler hash/Bun binary hash agree across primary11. Whole provenance objects differ (including report dirty hashes and sourceSig); do not claim byte-identical metadata. Existing full-gateway/component distinctions, external-socket unknowns, small-c1 and repeated-protection gaps remain.
+
+Decision boundary: provisional 15ms/256KiB; KEEP prepare yield, string body, fixed pacing. No proven global optimum or production-default change. CONNECT and FD settle are measured within the tested scope; memory/leak acceptance remains bounded. Preferred production runtime remains INCONCLUSIVE (V).
+
+### Runnable raw-table verification
+
+Run from repository root; reads artifacts only, no gateway/load/build. Generated rows must equal the tables above.
+
+```sh
+node <<'NODE'
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const root='/mnt/ssd-250gb/9router-bench-artifacts/';
+const read=n=>JSON.parse(fs.readFileSync(root+n+'.json'));
+const q=(a,p)=>{a=[...a].sort((a,b)=>a-b);return a[Math.round((a.length-1)*p/100)];};
+const fmt=n=>n.toFixed(2),med=a=>q(a,50),range=a=>fmt(Math.min(...a))+'–'+fmt(Math.max(...a));
+const names=['spacing','tls','prepare','encoding','upload','backlog','threshold','mixed','sustained'].map(n=>'bun-'+n).concat(['pair-spacing','pair-sustained']);
+const all=names.map(read);for(const d of all){assert.equal(d.status,'measured');assert(d.rows.every(r=>r.verified&&!r.errors&&!r.error));}
+for(const key of ['buildId','buildSig','controlledBaseSha256','controlledSchedulerSha256','bunExecutableSha256']) assert.equal(new Set(all.map(d=>d.provenance[key])).size,1,key);
+console.log('Verified primary11: '+all.map((d,i)=>names[i]+'='+d.rows.length).join(', '));
+const pair=read('pair-sustained');
+console.log('\n| Metric (median per-repetition statistic) | Bun | Node | Bun vs Node |\n|---|---:|---:|---:|');
+const metrics={RPS:r=>r.samples.length*1000/r.wallMs,'Victim p95 ms':r=>q(r.samples.filter(s=>s.role==='victim').map(s=>s.firstByteMs),95),'Victim p50 ms':r=>q(r.victimAllMs,50),'Lag p95 ms':r=>q(r.telemetry.lagMs,95),'CPU ms':r=>(r.telemetry.cpu.user+r.telemetry.cpu.system)/1000,'Peak RSS MiB':r=>r.telemetry.memPeak.rss/1048576};
+for(const [label,fn] of Object.entries(metrics)){const b=med(pair.rows.filter(r=>r.runtime==='bun').map(fn)),n=med(pair.rows.filter(r=>r.runtime==='node').map(fn));console.log('| '+label+' | '+fmt(b)+' | '+fmt(n)+' | '+fmt((b/n-1)*100)+'% |');}
+console.log('\n| Artifact/runtime/role | Count range per rep | p50 range ms | p95 range ms | p99 range ms |\n|---|---:|---:|---:|---:|');
+for(const name of ['bun-sustained','pair-sustained'])for(const runtime of ['bun','node']){const rows=read(name).rows.filter(r=>r.runtime===runtime);if(!rows.length)continue;for(const role of ['victim','parent','child','proxy']){const groups=rows.map(r=>r.samples.filter(s=>role==='proxy'?s.proxy:s.role===role));console.log('| '+name+'/'+runtime+'/'+role+' | '+range(groups.map(g=>g.length))+' | '+[50,95,99].map(p=>range(groups.map(g=>q(g.map(s=>s.firstByteMs),p)))).join(' | ')+' |');}}
+console.log('\n| Artifact/runtime/rep | CONNECT attempts/success/fail | Window bytes | FD peak | FD at 0/3/10/30/60s | Active tunnels at 0/3/10/30/60s |\n|---|---|---:|---:|---|---|');
+for(const name of ['bun-sustained','pair-sustained'])for(const r of read(name).rows){assert.deepEqual(r.settle.map(s=>s.seconds),[0,3,10,30,60]);assert(r.proxyWindow.warmOrWindow.successes>0&&r.proxyWindow.warmOrWindow.bytes>0&&!r.proxyWindow.warmOrWindow.failures);console.log('| '+name+'/'+r.runtime+'/'+r.rep+' | '+[r.proxyWindow.attempts,r.proxyWindow.successes,r.proxyWindow.failures].join('/')+' | '+r.proxyWindow.bytes+' | '+r.telemetry.fdPeak+' | '+r.settle.map(s=>s.fd.total).join('/')+' | '+r.settle.map(s=>s.proxy.tunnelsActive).join('/')+' |');}
+console.log('\n| Spacing | Bun/Node victim p95 median ms | Delta | Bun/Node heavy wall median ms | Delta |\n|---|---|---:|---|---:|');
+const spacing=read('pair-spacing');for(const cell of [...new Set(spacing.rows.map(r=>r.cell))].sort()){const stats=runtime=>{const rows=spacing.rows.filter(r=>r.cell===cell&&r.runtime===runtime);return [med(rows.map(r=>q(r.victimAllMs,95))),med(rows.map(r=>r.heavyBatchWallMs))];};const b=stats('bun'),n=stats('node');console.log('| '+cell+' | '+fmt(b[0])+'/'+fmt(n[0])+' | '+fmt((b[0]/n[0]-1)*100)+'% | '+fmt(b[1])+'/'+fmt(n[1])+' | '+fmt((b[1]/n[1]-1)*100)+'% |');}
+NODE
+```
+
+## U. Matched-offer validation — completed, independently checked
+
+Raw: /mnt/ssd-250gb/9router-bench-artifacts/matched75s/runs/matched75s.json. Runnable verifier: node /mnt/ssd-250gb/9router-bench-artifacts/verify-matched75s.mjs; output /tmp/m75-verify.out. Ten rows verified=true, five per runtime; exactly 2250 offers and successful finite-latency samples per row, zero sample errors and zero telemetry drops. Offered digest identical across all rows; ht/vt upstream identity hash multisets equal across runtimes. Fixed offer 30 requests/s over 75s. Repetition order BN/NB/BN/NB/BN (3 versus 2), near-balanced, not perfectly balanced.
+
+Quantiles use round((n−1)×p/100), median of five per-repetition statistics, ranges are min–max, not confidence intervals. TTFT here pools roles within each matched repetition, not victim-only; do not equate it with R/T victim latency. Drain below is last completion minus final scheduled offer, not time after the 75s deadline. Negative scheduling delay reflects recorded dispatch preceding scheduled time; preserve it rather than clipping. Percentage ratios near zero/negative scheduling delay are intentionally omitted.
+
+| Metric (5 reps, median [min–max]) | Bun | Node | Bun vs Node |
+|---|---|---|---:|
+| Wall ms | 75000.4 [75000.2–75000.7] | 75007.9 [75001.2–75051.2] | -0.01% |
+| Drain ms (last end − last offer) | 17.5 [15.4–19] | 34.2 [27.4–72.7] | -48.99% |
+| Sched delay p50 ms | -0.4 [-0.4–-0.4] | -0.4 [-0.4–-0.4] | — |
+| Sched delay p95 ms | 0.5 [0.4–0.5] | 0.5 [0.4–0.5] | — |
+| Sched delay max ms | 2 [1.5–10.4] | 2.6 [1.5–5.9] | — |
+| TTFT p50 ms (matched 2250) | 20.6 [19.5–21.6] | 30.5 [29.9–32.8] | -32.55% |
+| TTFT p95 ms | 75.8 [74.4–76.3] | 98.7 [96.4–101.8] | -23.16% |
+| TTFT p99 ms | 98.1 [90.8–101.5] | 125.8 [119–135.5] | -22.06% |
+| Total ms p50 | 23 [22.7–24.3] | 34.9 [34.5–39] | -33.98% |
+| Total ms p95 | 78.4 [76.3–80.2] | 109.9 [104.9–113.1] | -28.67% |
+| CPU user+system ms | 30560 [30149.3–30863.8] | 44791 [43920.9–45577.2] | -31.77% |
+| Lag p95 ms | 6.9 [6.4–6.9] | 14.9 [14.4–15.9] | -53.88% |
+| Peak RSS MiB | 360.4 [343.2–387.2] | 417.4 [408.9–421.7] | -13.66% |
+| Settled RSS MiB (settle 60s) | 211.1 [208.7–211.6] | 219.9 [207.3–229] | -4% |
+| Settled FD (settle 60s) | 84 [84–84] | 93 [93–93] | -9.68% |
+| Peak outstanding | 6 [4–7] | 8 [7–8] | -25% |
+
+| Runtime | per-rep settledRSS MiB | per-rep settledFD |
+|---|---|---|
+| bun | 211.5, 211.6, 209.7, 208.7, 211.1 | 84, 84, 84, 84, 84 |
+| node | 229, 213.9, 207.3, 219.9, 224.3 | 93, 93, 93, 93, 93 |
+
+
+Both runtimes completed identical offered work: this tests latency and CPU at 30 requests/s, not maximum throughput. Closed-loop R/T completion-rate gain remains separately labeled. Matched p50/p95 TTFT reductions 32.55%/23.16%, CPU reduction 31.77%, lag p95 reduction 53.88% support Bun for this workload. Settled RSS ranges overlap; no reliable memory superiority or leak-free verdict. Runtime-specific FDs are not directly comparable as leaked-descriptor counts. Observed loopback/CONNECT cleanup is scoped to these runs; residual external TCP socket purpose remains unknown.
+
+Artifact marker/source hashes are provenance, not cryptographic verification that every executing compiled bundle matches those sources. No exact internal gateway attribution follows from end-to-end deltas.
+
+## V. Final answers and literal acceptance questions
+
+### Seven operational answers
+
+1. Runtime: Bun improves measured victim latency; matched-offer pooled TTFT/CPU/lag also improve, but Node heavy-batch throughput wins. No universal winner or production switch.
+2. Pacing: KEEP fixed pacing as a conservative reference; mixed five-repetition medians favor fixed over weighted, with overlapping ranges.
+3. Parameters: KEEP provisional 15ms/256KiB. Neither spacing nor threshold optimum established.
+4. Preparation and body: KEEP beforePrepare ON and string body. Preparation trades lower victim latency for longer heavy wall; Buffer lacks consistent production benefit.
+5. Remaining contention boundary: end-to-end full-gateway burst interference remains; legacy component transport probes do not reproduce the full path. Current evidence does not split ingress parsing, serialization, event-loop scheduling, upload or TLS costs. Four-way TLS measurements are not exact internal attribution.
+6. Retention lifetime: primary11 Bun tunnels remain at the 3s sample and reach zero by 10s; Node tunnels reach zero by 3s. Total FDs settle by 10s and remain flat at 30/60s. These are sampled bounds, not exact expiry instants. U independently records all five runtime-attributed RSS/FD snapshots at 60s; RSS is not heap, and 60s observation does not bound long-term retention. Residual external TCP purpose remains unknown.
+7. Acceptance boundary: preserve legacy caveats, closed-loop throughput separately from equal-offer latency, and marker/source provenance separately from compiled-bundle cryptographic verification. Settled heap, exact internal attribution, external-socket purpose and broader production suitability remain unmet; do not force COMPLETE.
+
+### Authoritative 13-question status table
+
+CONFIRMED means the stated scoped answer is measured; a negative answer does not confirm a benefit.
+
+| # | Question | Status | Evidence / answer |
+|---:|---|---|---|
+| 1 | Bun improves full-gateway victim latency | CONFIRMED | Yes, scoped to same-build tested bursts: Bun victim p50 medians 44.9–49.8% lower than Node; conditional exposure retained. Matched pooled-role TTFT is separate evidence, not victim-only. |
+| 2 | Bun improves heavy-batch throughput | CONFIRMED | No in the same-build spacing pairs: Bun heavy walls 19.95–28.12% longer than Node (T); equal bytes imply lower heavy-batch throughput. CONFIRMED describes this negative result, not a benefit. |
+| 3 | Bun improves sustained full-gateway throughput | PROMISING | Closed-loop completion RPS +52.94% in T, but offered work differs. U completes identical 2250 offers at 30/s on both runtimes: validates latency/CPU, not higher saturation throughput. |
+| 4 | Scheduler pacing is needed under Bun | PROMISING | Five-repetition victim/mixed medians support KEEP fixed pacing; overlapping ranges and heavy-wall tradeoffs do not establish necessity for every workload. |
+| 5 | Optimal Bun spacing established | INCONCLUSIVE | No proven optimum: OFF/10/15/20 ranges overlap; KEEP provisional 15ms. |
+| 6 | Optimal Bun upload threshold established | INCONCLUSIVE | No proven optimum in size-matched grid; KEEP provisional 256KiB. |
+| 7 | beforePrepare beneficial under Bun | PROMISING | ON improves c8/c16 victim p50 ranges, with longer c16 heavy wall; KEEP beforePrepare. |
+| 8 | Buffer/Uint8Array production benefit | INCONCLUSIVE | No consistent encoding-inclusive Buffer advantage; c4/c8 external memory higher. KEEP string; no production benefit established. |
+| 9 | TLS contribution isolated | INCONCLUSIVE | Independent four-way heavy/victim HTTP/HTTPS measured in Q; overlap does not identify TLS share or exact internal cause. |
+| 10 | Full-gateway backlog behavior validated | CONFIRMED | Q validates measured burst sizes and windows with exact heavy wall/bytes and conditional probe exposure; does not prove continuous protection or all workloads. |
+| 11 | Proxy/CONNECT behavior validated | CONFIRMED | Verified tested loopback direct+CONNECT paths and tunnel cleanup; arbitrary proxy compatibility and external TCP purpose not established. |
+| 12 | Bun FD/resource lifecycle validated | PROMISING | Primary11 FD/tunnel settle plus U runtime-attributed RSS/FD at 60s support bounded observed lifecycle; heap retention and universal leak freedom unproven. |
+| 13 | Bun should become preferred production runtime | INCONCLUSIVE | Not established for production. Local victim/CPU/lag evidence favors Bun, but Node heavy-batch wall wins; fixture scope, compatibility, external sockets and attribution limitations remain. |
