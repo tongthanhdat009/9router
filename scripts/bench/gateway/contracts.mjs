@@ -16,6 +16,14 @@ export function verifyRequests(stats, messages) {
   assert.deepEqual(stats.identities, expected, 'all-request byte/hash multiset');
   return {verified: true, requests: stats.requests, bytes: stats.bytesReceived, identities: stats.identities};
 }
+export function verifyTelemetry(telemetry, messages, env={}) {
+  assert.equal(telemetry.dropped,0,'telemetry overflow');
+  assert(!telemetry.fdError,'FD sampling failed');
+  assert(telemetry.lagMs.length>0,'empty lag samples');
+  const threshold=Number(env.TRAFFIC_PACING_THRESHOLD ?? 262144);
+  const expected=env.TRAFFIC_PACER==='off'?[]:messages.map(m=>identity(m).bytes).filter(bytes=>bytes>=threshold).sort((a,b)=>a-b);
+  assert.deepEqual(telemetry.admissions.map(a=>a.actualBytes).sort((a,b)=>a-b),expected,'heavy admission byte multiset');
+}
 export function requireClean(rows) {
   assert(rows.length > 0, 'no rows');
   assert(rows.every(r => !r.error && !r.errors && r.verified === true), 'failed or unverified rows');

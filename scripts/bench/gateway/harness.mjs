@@ -270,6 +270,27 @@ export function fdInventory(pid) {
   } catch (e) { return {error: String(e.message)}; }
 }
 
+// Real sanitized parent prefixes only: never pad or repeat missing history.
+export function historyFixtures() {
+  const ids=(process.env.BENCH_HISTORY_IDS || 'e8cf0d0b8f,4bb8445a74,4788ba8b9a').split(',');
+  return ids.map((id,index)=>{
+    if(!/^[a-z0-9]+$/i.test(id)) throw Error('invalid history id');
+    const all=loadSessionMessages(path.join(os.homedir(),'.mux/sessions',id,'chat.jsonl'));
+    let bytes=0,end=0;
+    while(end<all.length && bytes<1200000) bytes+=Buffer.byteLength(JSON.stringify(all[end++]));
+    while(end<all.length && all[end]?.role==='tool') end++;
+    const messages=all.slice(0,end);
+    if(messages.length<8) throw Error('insufficient history '+id);
+    const checkpoints=[.25,.5,.75,1].map(fraction=>{
+      let end=Math.floor(messages.length*fraction);
+      // Keep assistant tool calls and their results in the same prefix.
+      while(end<messages.length && messages[end]?.role==='tool') end++;
+      return messages.slice(0,end);
+    });
+    return {label:'project-'+(index+1)+'-'+id,checkpoints};
+  });
+}
+
 let heavyCache = null;
 export function heavyFixture() {
   if (!heavyCache) {

@@ -10,10 +10,11 @@ const child=spawn(process.execPath,['--import',new URL('./telemetry.mjs',import.
 const control=action=>new Promise((resolve,reject)=>{http.get({host:'127.0.0.1',port,path:'/'+action,headers:{authorization:'test'}},res=>{let text='';res.on('data',d=>text+=d);res.on('end',()=>resolve({code:res.statusCode,body:JSON.parse(text)}));}).on('error',reject);});
 try {
   for(let i=0;;i++){try{await control('start');break;}catch(e){if(i===50)throw e;await sleep(10);}}
-  await sleep(60);const first=await control('stop');
+  await sleep(1100);const first=await control('stop');
   assert.equal(first.code,200);assert(first.body.admissions.length>0);assert(first.body.lagMs.length>0);assert.equal(first.body.dropped,0);
   assert.equal((await control('stop')).code,409);
   await sleep(40);await control('start');await sleep(30);const second=await control('stop');
+  assert(first.body.fdSamples.length>=2); assert.equal(first.body.fdPeak,Math.max(...first.body.fdSamples.map(s=>s.total))); assert(first.body.fdSamples[1].offsetMs>first.body.fdSamples[0].offsetMs);
   assert(second.body.start>first.body.start);assert(second.body.admissions.every(e=>e.offsetMs<second.body.elapsedMs));
   console.log('telemetry window checks passed');
 } finally {const exited=once(child,'exit');child.kill('SIGTERM');await exited;}
