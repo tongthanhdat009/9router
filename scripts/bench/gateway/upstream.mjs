@@ -7,7 +7,7 @@ import fs from "node:fs";
 import { createHash } from "node:crypto";
 
 const tls = process.env.UPSTREAM_TLS === "1";
-const chunks = Number(process.env.UPSTREAM_CHUNKS || 8);
+const contentChunkCount = Number(process.env.UPSTREAM_CHUNKS || 8);
 const id = process.env.UPSTREAM_ID || "up";
 let stats = { id: id, requests: 0, bytesReceived: 0, aborted: 0, arrivalMs: [], last: null };
 
@@ -51,7 +51,7 @@ function handler(req, res) {
     res.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-store", "x-received-bytes": String(bytes) });
     let i = 0;
     const send = () => {
-      if (i < chunks) {
+      if (i < contentChunkCount) {
         res.write(chunk({ content: "x".repeat(64) }, null));
         i++; setImmediate(send);
       } else {
