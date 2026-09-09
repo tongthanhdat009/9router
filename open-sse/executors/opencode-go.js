@@ -1,5 +1,6 @@
 import { DefaultExecutor } from "./default.js";
 import { resolveSessionId, generateOpencodeSessionId, normalizeOpencodeSessionId } from "../utils/sessionManager.js";
+import { sanitizeConsoleResponsesToolSchemas } from "../utils/jsonSchema.js";
 
 // Provider-scoped OpenCode Go session injection: preserve the supplied
 // x-opencode-session header or mint one ses_ id per logical request (stable
@@ -7,6 +8,12 @@ import { resolveSessionId, generateOpencodeSessionId, normalizeOpencodeSessionId
 export class OpenCodeGoExecutor extends DefaultExecutor {
   constructor() {
     super("opencode-go");
+  }
+
+  transformRequest(model, body) {
+    // Only Responses models reach Console's RE2 schema validator.
+    if (Array.isArray(body?.input)) sanitizeConsoleResponsesToolSchemas(body);
+    return super.transformRequest(model, body);
   }
 
   deriveRequestContext(body, credentials) {

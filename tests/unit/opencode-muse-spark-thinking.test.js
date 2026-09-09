@@ -4,6 +4,7 @@ import { PROVIDER_MODELS, getModelTargetFormat } from "../../open-sse/config/pro
 import { getThinkingLevels } from "../../open-sse/providers/thinkingLevels.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { OpenCodeExecutor } from "../../open-sse/executors/opencode.js";
+import { OpenCodeGoExecutor } from "../../open-sse/executors/opencode-go.js";
 import "../translator/registerAll.js";
 import { translateRequest } from "../../open-sse/translator/index.js";
 
@@ -131,5 +132,30 @@ describe("OpenCode Free Muse Spark thinking", () => {
       expect(out.max_output_tokens).toBe(2048);
       expect(out.max_tokens).toBeUndefined();
     }
+  });
+
+  it.each([
+    [OpenCodeExecutor, "muse-spark-1.3-contributor-free"],
+    [OpenCodeGoExecutor, "muse-spark-1.3-contributor"],
+  ])("removes RE2-incompatible JSON Schema patterns before Console validation (%s)", (Executor, model) => {
+    const body = {
+      input,
+      tools: [{
+        type: "function",
+        name: "find",
+        parameters: {
+          type: "object",
+          properties: {
+            bad: { type: "string", pattern: "^(?!__.*__$)[a-z]{1,200}$" },
+            good: { type: "string", pattern: "^[a-z]+$" },
+          },
+        },
+      }],
+    };
+
+    const out = new Executor().transformRequest(model, body, true, {});
+
+    expect(out.tools[0].parameters.properties.bad.pattern).toBeUndefined();
+    expect(out.tools[0].parameters.properties.good.pattern).toBe("^[a-z]+$");
   });
 });
