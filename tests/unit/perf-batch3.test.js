@@ -58,4 +58,9 @@ describe("Batch 3 performance guards", () => {
       cleanJSONSchemaForAntigravity({ type: "object", properties: { n: { type: "object", properties: {} } } })
     ).toEqual({ type: "object", properties: { n: { type: "object", properties: {} } } });
   });
+  it("array without items gets string placeholder (nested too)", () => {
+    expect(cleanJSONSchemaForAntigravity({ type: "array" })).toEqual({ type: "array", items: { type: "string" } });
+    const nested = { type: "object", properties: { query: { type: "object", properties: { where: { type: "array", items: { type: "array" } } } } } };
+    expect(cleanJSONSchemaForAntigravity(nested).properties.query.properties.where.items.items).toEqual({ type: "string" });
+  });
 });
