@@ -11,6 +11,15 @@ export async function GET() {
     const modelAliases = await getModelAliases();
     const disabled = await getDisabledModels();
 
+    // Stored custom-model caps must win over the catalog entry for the same
+    // alias/model — seenFull below drops the duplicate custom row, so the
+    // catalog branch has to merge them here (tri-state ?? keeps unknown as-is).
+    const customCapsByFull = new Map(
+      (await getCustomModels())
+        .filter((m) => m?.id && m.caps)
+        .map((m) => [`${m.providerAlias}/${m.id}`, m.caps])
+    );
+
     const models = AI_MODELS
       .filter((m) => {
         const alias = getProviderAlias(m.provider) || m.provider;
@@ -22,15 +31,16 @@ export async function GET() {
         const providerAlias = getProviderAlias(m.provider) || m.provider;
         const routedModel = `${providerAlias}/${m.model}`;
         const c = getCapabilitiesForModel(m.provider, m.model);
+        const stored = customCapsByFull.get(routedModel) || customCapsByFull.get(fullModel);
         return {
           ...m,
           fullModel,
           routedModel,
           alias: modelAliases[fullModel] || m.model,
           caps: {
-            vision: c.vision,
-            search: c.search,
-            reasoning: c.reasoning,
+            vision: stored?.vision ?? c.vision,
+            search: stored?.search ?? c.search,
+            reasoning: stored?.reasoning ?? c.reasoning,
             contextWindow: c.contextWindow,
             maxOutput: c.maxOutput,
           },
