@@ -248,6 +248,8 @@ export function cleanJSONSchemaForAntigravity(schema) {
       obj.type = nonNullTypes.length > 0 ? nonNullTypes[0] : "string";
     }
     if (obj.properties && !obj.type) obj.type = "object";
+    if (obj.items && !obj.type) obj.type = "array";
+    if (obj.type === "array" && obj.items == null) obj.items = { type: "string" };
     for (const key of Object.keys(obj)) {
       if (UNSUPPORTED_SCHEMA_CONSTRAINTS.includes(key) || key.startsWith("x-")) delete obj[key];
     }
