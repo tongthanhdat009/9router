@@ -37,8 +37,10 @@ export async function getCustomModels() {
 
 const ALLOWED_CUSTOM_TYPES = new Set(["llm", "imageToText"]);
 
-// Atomic check-then-insert inside transaction to prevent duplicate races
-export async function addCustomModel({ providerAlias, id, type = "llm", name }) {
+// Atomic upsert inside transaction to prevent duplicate races. Re-adding an
+// existing model merges name/caps over the stored JSON — omitted caps keys are
+// preserved so a partial update never silently discards stored capabilities.
+export async function addCustomModel({ providerAlias, id, type = "llm", name, caps }) {
   if (!ALLOWED_CUSTOM_TYPES.has(type)) {
     throw new Error(`Invalid custom model type: ${type}. Allowed: llm, imageToText`);
   }
@@ -46,9 +48,18 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name }) 
   const db = await getAdapter();
   let added = false;
   db.transaction(() => {
-    const row = db.get(`SELECT 1 FROM kv WHERE scope = 'customModels' AND key = ?`, [k]);
-    if (row) return;
-    const value = stringifyJson({ providerAlias, id, type, name: name || id });
+    const row = db.get(`SELECT value FROM kv WHERE scope = 'customModels' AND key = ?`, [k]);
+    if (row) {
+      const prev = parseJson(row.value) || {};
+      const next = {
+        ...prev,
+        ...(name ? { name } : {}),
+        ...(caps ? { caps: { ...prev.caps, ...caps } } : {}),
+      };
+      db.run(`UPDATE kv SET value = ? WHERE scope = 'customModels' AND key = ?`, [stringifyJson(next), k]);
+      return;
+    }
+    const value = stringifyJson({ providerAlias, id, type, name: name || id, ...(caps ? { caps } : {}) });
     db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
     added = true;
   });

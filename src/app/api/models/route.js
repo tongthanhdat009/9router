@@ -3,7 +3,7 @@ import { getModelAliases, setModelAlias, getCustomModels } from "@/models";
 import { getDisabledModels } from "@/lib/disabledModelsDb";
 import { AI_MODELS } from "@/shared/constants/config";
 import { getProviderAlias } from "@/shared/constants/providers";
-import { getCapabilitiesForModel } from "open-sse/providers/capabilities.js";
+import { getCapabilitiesForModel, findExplicitModelCaps } from "open-sse/providers/capabilities.js";
 
 // GET /api/models - Get models with aliases
 export async function GET() {
@@ -46,6 +46,7 @@ export async function GET() {
     for (const m of customModels) {
       const fullModel = `${m.providerAlias}/${m.id}`;
       const c = getCapabilitiesForModel(m.providerAlias, m.id);
+      const raw = findExplicitModelCaps(m.providerAlias, m.id);
       models.push({
         provider: m.providerAlias,
         model: m.id,
@@ -54,12 +55,14 @@ export async function GET() {
         routedModel: fullModel,
         alias: modelAliases[fullModel] || m.id,
         caps: {
-          vision: c.vision,
-          search: c.search,
-          reasoning: c.reasoning,
+          // Tri-state: stored boolean wins, else explicit registry entry,
+          // else undefined — the DEFAULT floor's false must NOT leak in here
+          // (unknown != unsupported for custom models).
+          vision: m.caps?.vision ?? raw?.vision,
+          search: m.caps?.search ?? raw?.search,
+          reasoning: m.caps?.reasoning ?? raw?.reasoning,
           contextWindow: c.contextWindow,
           maxOutput: c.maxOutput,
-          ...(m.caps || {}),
         },
       });
     }

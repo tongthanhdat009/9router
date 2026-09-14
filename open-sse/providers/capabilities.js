@@ -409,7 +409,7 @@ export function getCapabilitiesForModel(provider, model) {
   // 2. Canonical exact
   if (MODEL_CAPABILITIES[baseModel]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[baseModel] };
   // ponytail: future OpenCode Free Muse contributor variants use the same Responses reasoning surface as 1.2.
-  if (provider === "opencode" && /^muse-spark-[\w.-]+-contributor-free$/.test(baseModel)) {
+  if (provider === "opencode" && MUSE_CONTRIBUTOR_RE.test(baseModel)) {
     return { ...DEFAULT_CAPABILITIES, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 };
   }
   if (MODEL_CAPABILITIES[model]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[model] };
@@ -423,4 +423,65 @@ export function getCapabilitiesForModel(provider, model) {
 
   // 4. Floor
   return refine(null, provider, model);
+}
+// ponytail: findExplicitModelCaps re-walks the same lookup chain as
+// getCapabilitiesForModel minus the DEFAULT floor and catalog/name refine.
+// Ceiling: chain changes must be mirrored in both resolvers. Upgrade path:
+// extract a shared raw-match helper both consume.
+const MUSE_CONTRIBUTOR_RE = /^muse-spark-[\w.-]+-contributor-free$/;
+
+/**
+ * Raw registry lookup — shallow copy of the first matching entry, or null.
+ * NO DEFAULT floor, NO catalog/vision-name refinement. Used to distinguish
+ * "registry is silent" (null) from "registry says unsupported" (explicit false),
+ * e.g. for user-added custom models where unknown must stay unknown.
+ * @returns {object|null}
+ */
+export function findExplicitModelCaps(provider, model) {
+  if (!model) return null;
+  const baseModel = model.includes("/") ? model.split("/").pop() : model;
+  if (provider) {
+    const providerCaps = PROVIDER_CAPABILITIES[provider];
+    if (providerCaps?.[model]) return { ...providerCaps[model] };
+    if (providerCaps?.[baseModel]) return { ...providerCaps[baseModel] };
+  }
+  if (MODEL_CAPABILITIES[baseModel]) return { ...MODEL_CAPABILITIES[baseModel] };
+  if (provider === "opencode" && MUSE_CONTRIBUTOR_RE.test(baseModel)) {
+    return { reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 };
+  }
+  if (MODEL_CAPABILITIES[model]) return { ...MODEL_CAPABILITIES[model] };
+  for (const { pattern, caps } of PATTERN_CAPABILITIES) {
+    if (matchPattern(pattern, baseModel) || matchPattern(pattern, model)) return { ...caps };
+  }
+  return null;
+}
+
+const CUSTOM_OVERRIDE_FLAGS = ["vision", "search", "reasoning"];
+const CUSTOM_OVERRIDE_MODALITIES = ["pdf", "audioInput", "videoInput"];
+
+/**
+ * Build the capabilityOverride that lets a stored custom-model row pin flags
+ * tri-state (true/false/undefined) over the catalog floor. An explicit
+ * undefined value in {...getCapabilitiesForModel(), ...override} NEUTRALIZES
+ * the floor key — that is the point: unknown != unsupported, so a custom model
+ * with no stored vision flag must not have images stripped.
+ * @param {object|null} row - customModels row ({ providerAlias, id, type, name, caps? })
+ * @param {object|null} raw - findExplicitModelCaps(provider, model) result
+ * @returns {object|null} override, or null when there is no row
+ */
+export function buildCustomCapabilityOverride(row, raw) {
+  if (!row) return null;
+  const override = {};
+  for (const k of CUSTOM_OVERRIDE_FLAGS) {
+    override[k] = row.caps && typeof row.caps[k] === "boolean" ? row.caps[k] : raw?.[k];
+  }
+  for (const k of CUSTOM_OVERRIDE_MODALITIES) {
+    override[k] = raw?.[k];
+  }
+  // Legacy rows typed by dashboard service kind: imageToText implies vision
+  // unless explicitly pinned otherwise.
+  if (override.vision === undefined && row.type === "imageToText") {
+    if (capabilitiesFromServiceKind("imageToText")?.vision) override.vision = true;
+  }
+  return override;
 }

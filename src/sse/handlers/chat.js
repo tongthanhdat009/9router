@@ -11,6 +11,8 @@ import { handleAntigravityQuotaError } from "../services/antigravityQuota.js";
 import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
+import { buildCustomCapabilityOverride, findExplicitModelCaps } from "open-sse/providers/capabilities.js";
+import { getCustomModels } from "@/models";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
 import { appendPxpipeEvent } from "@/lib/pxpipe/events.js";
@@ -267,6 +269,21 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
 /**
  * Handle single model chat request
  */
+
+// Stored custom-model row for provider/model: exact providerAlias+id match
+// first, else a globally-unique id; an ambiguous id resolves to no override.
+async function findCustomModelRow(provider, model) {
+  try {
+    const rows = await getCustomModels();
+    const exact = rows.find((m) => m.providerAlias === provider && m.id === model);
+    if (exact) return exact;
+    const idMatches = rows.filter((m) => m.id === model);
+    return idMatches.length === 1 ? idMatches[0] : null;
+  } catch {
+    return null; // DB unavailable -> catalog floor behavior
+  }
+}
+
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, affinitySessionId = null, affinityMeta = null, diagnostics = null, finalizeAffinityRequest = null) {
   const modelInfo = await getModelInfo(modelStr);
 
@@ -369,6 +386,14 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
 
   const { provider, model } = modelInfo;
 
+  // Custom models: stored tri-state capability pins must reach chatCore's
+  // modality stripping — unknown != unsupported, so an unconfigured vision
+  // flag must NOT inherit the catalog floor's false.
+  const customRow = await findCustomModelRow(provider, model);
+  const capabilityOverride = customRow
+    ? buildCustomCapabilityOverride(customRow, findExplicitModelCaps(provider, model))
+    : null;
+
   // Routing shown in the unified "▶" line (client model → provider/model)
 
   // Extract userAgent from request
@@ -450,6 +475,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     const result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
+      capabilityOverride,
       credentials: refreshedCredentials,
       log,
       clientRawRequest,
