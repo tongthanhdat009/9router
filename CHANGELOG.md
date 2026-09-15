@@ -1,6 +1,12 @@
 # Unreleased
 ## Unreleased
 
+- feat(combo): round-robin combos rotate members per session — rotation cursor keyed on
+  combo + client session id, and round-robin strategy overrides the route-affinity pin so
+  every request of a session advances its own member sequence; fallback strategy keeps
+  pinning. `resetComboRotation` clears per-session cursors. Bumped default
+  `AFFINITY_MAX_LOGICAL_REQUESTS` 20 → 30.
+
 - feat(zcode): Z.ai Coding Plan OAuth provider with ticketed off-peak inference, usage lookup, and Coding Plan API Key connection field.
 - feat(zcode): auto-provisions coding-plan keys from OAuth customer info, caches single-flight per connection, fails closed with entitlement status, and backs off off-peak free-tier ticket limits.
 
