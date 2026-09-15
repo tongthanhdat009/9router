@@ -194,9 +194,12 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
       ? routeAffinity.route
       : null;
     if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
-    const escapedRoute = preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+    // Round-robin is the explicit rotation intent: per-session cursor wins over
+    // affinity pinning — each session advances its own member sequence per request.
+    const rrSessionRotation = comboStrategy === "round-robin";
+    const escapedRoute = !rrSessionRotation && preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
     if (escapedRoute) logAffinity("affinity.throughput.escape_consumed", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, route: escapedRoute });
-    const effectivePreferredRoute = escapedRoute ? null : preferredRoute;
+    const effectivePreferredRoute = rrSessionRotation ? null : (escapedRoute ? null : preferredRoute);
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
     diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
@@ -241,6 +244,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
       comboStickyLimit,
       preferredRoute: effectivePreferredRoute,
       deprioritizedRoute: escapedRoute,
+      rotationScope: affinitySessionId,
     }));
   }
 
@@ -333,9 +337,11 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         ? routeAffinity.route
         : null;
       if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
-      const escapedRoute = preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+      // Mirrors outer site: round-robin rotates per session instead of pinning.
+      const rrSessionRotation = comboStrategy === "round-robin";
+      const escapedRoute = !rrSessionRotation && preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
       if (escapedRoute) logAffinity("affinity.throughput.escape_consumed", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, route: escapedRoute });
-      const effectivePreferredRoute = escapedRoute ? null : preferredRoute;
+      const effectivePreferredRoute = rrSessionRotation ? null : (escapedRoute ? null : preferredRoute);
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
       diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
@@ -377,6 +383,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         comboStickyLimit,
         preferredRoute: effectivePreferredRoute,
         deprioritizedRoute: escapedRoute,
+        rotationScope: affinitySessionId,
       });
     }
     log.warn("CHAT", "Invalid model format", { model: modelStr });

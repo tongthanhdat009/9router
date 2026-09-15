@@ -49,6 +49,27 @@ describe("combo round-robin routing", () => {
     expect(getRotatedModels(models, "code-xhigh", "round-robin", 2)[0]).toBe("provider/model-a");
   });
 
+  it("rotates each session independently when a rotation scope is given", () => {
+    const models = ["provider/model-a", "provider/model-b", "provider/model-c"];
+
+    // Two sessions start at the same member and advance their own cursors.
+    expect(getRotatedModels(models, "combo-vip", "round-robin", 1, "session-1")[0]).toBe("provider/model-a");
+    expect(getRotatedModels(models, "combo-vip", "round-robin", 1, "session-2")[0]).toBe("provider/model-a");
+    expect(getRotatedModels(models, "combo-vip", "round-robin", 1, "session-1")[0]).toBe("provider/model-b");
+    expect(getRotatedModels(models, "combo-vip", "round-robin", 1, "session-1")[0]).toBe("provider/model-c");
+    expect(getRotatedModels(models, "combo-vip", "round-robin", 1, "session-2")[0]).toBe("provider/model-b");
+    expect(getRotatedModels(models, "combo-vip", "round-robin", 1, "session-1")[0]).toBe("provider/model-a");
+  });
+
+  it("resetComboRotation clears per-session cursors for the combo", () => {
+    const models = ["provider/model-a", "provider/model-b"];
+
+    expect(getRotatedModels(models, "combo-free", "round-robin", 1, "session-9")[0]).toBe("provider/model-a");
+    expect(getRotatedModels(models, "combo-free", "round-robin", 1, "session-9")[0]).toBe("provider/model-b");
+    resetComboRotation("combo-free");
+    expect(getRotatedModels(models, "combo-free", "round-robin", 1, "session-9")[0]).toBe("provider/model-a");
+  });
+
   it("does not rotate fallback combos", () => {
     const models = ["provider/model-a", "provider/model-b"];
 

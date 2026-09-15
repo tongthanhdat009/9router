@@ -205,12 +205,14 @@ function rotateModelsFromIndex(models, currentIndex) {
  * @param {number|string} [stickyLimit=1] - Requests per combo model before switching
  * @returns {string[]} Rotated models array
  */
-export function getRotatedModels(models, comboName, strategy, stickyLimit = 1) {
+export function getRotatedModels(models, comboName, strategy, stickyLimit = 1, rotationScope = null) {
   if (!models || models.length <= 1 || strategy !== "round-robin") {
     return models;
   }
 
-  const rotationKey = comboName || "__default__";
+  // Per-session cursor when a scope is given: each session rotates sequentially
+  // through members on its own. Null scope keeps the legacy shared cursor.
+  const rotationKey = `${comboName || "__default__"} ${rotationScope || ""}`;
   const normalizedStickyLimit = normalizeStickyLimit(stickyLimit);
   const existingState = comboRotationState.get(rotationKey);
   const state = typeof existingState === "number"
@@ -241,7 +243,13 @@ export function getRotatedModels(models, comboName, strategy, stickyLimit = 1) {
  * @param {string} [comboName] - Combo name to reset; omit to clear all
  */
 export function resetComboRotation(comboName) {
-  if (comboName) comboRotationState.delete(comboName);
+  if (comboName) {
+    // Clear shared cursor + all per-session cursors for this combo (NUL-suffixed keys).
+    comboRotationState.delete(comboName);
+    for (const k of comboRotationState.keys()) {
+      if (k === comboName || k.startsWith(`${comboName} `)) comboRotationState.delete(k);
+    }
+  }
   else comboRotationState.clear();
 }
 
@@ -285,11 +293,11 @@ function isCodexSseTransientError(modelStr, errorText) {
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, deprioritizedRoute = null, onSelection = null }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, deprioritizedRoute = null, onSelection = null, rotationScope = null }) {
   // Preferred affinity deliberately bypasses rotation; cursor remains unchanged.
   let rotatedModels = preferredRoute && models.includes(preferredRoute)
     ? [preferredRoute, ...models.filter((model) => model !== preferredRoute)]
-    : getRotatedModels(models, comboName, comboStrategy, comboStickyLimit);
+    : getRotatedModels(models, comboName, comboStrategy, comboStickyLimit, rotationScope);
   // Diagnostics-only hook: whether the initial ordering consumed rotation state.
   onSelection?.({ rotationUsed: !(preferredRoute && models.includes(preferredRoute)) });
 
