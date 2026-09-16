@@ -36,7 +36,6 @@ describe("OpenCode Go model catalog", () => {
       "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
       "hy4-preview", "hy3",
       "grok-4.6", "gpt-5.6-luna",
-      "muse-spark-1.2-contributor", "muse-spark-1.3", "muse-spark-1.3-contributor",
     ]);
   });
 });
