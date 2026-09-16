@@ -11,6 +11,7 @@ import { getModelUpstreamId } from "../config/providerModels.js";
 import { getThinkingLevels } from "../providers/thinkingLevels.js";
 import { dbg } from "../utils/debugLog.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
+import { stripCodexUnsupportedPatterns } from "../utils/codexToolSchema.js";
 import { DEFAULT_RETRY_CONFIG, HTTP_STATUS, resolveRetryEntry } from "../config/runtimeConfig.js";
 import { executeCodexWs, WsConnectError, WsStreamError, wsUrl } from "./codexWsTransport.js";
 import { monitorCodexTransport } from "../../src/lib/codexTransportMonitor.js";
@@ -91,6 +92,8 @@ function stripStoredItemReferences(body) {
 function normalizeCodexTools(body) {
   if (!Array.isArray(body.tools)) return;
   const validNames = new Set();
+  // Codex schema validator has no Unicode property escapes (#3922).
+  const patternStats = { removed: 0 };
   body.tools = body.tools.filter((tool) => {
     if (!tool || typeof tool !== "object" || Array.isArray(tool)) return false;
     const type = typeof tool.type === "string" ? tool.type : "";
@@ -99,6 +102,9 @@ function normalizeCodexTools(body) {
         for (const st of tool.tools) {
           const n = typeof st?.name === "string" ? st.name.trim().slice(0, 128) : "";
           if (n) validNames.add(n);
+          if (st?.parameters && typeof st.parameters === "object") {
+            st.parameters = stripCodexUnsupportedPatterns(st.parameters, patternStats);
+          }
         }
       }
       return true;
@@ -120,10 +126,13 @@ function normalizeCodexTools(body) {
     tool.type = "function";
     tool.name = name.slice(0, 128);
     if (description) tool.description = description;
-    tool.parameters = parameters;
+    tool.parameters = stripCodexUnsupportedPatterns(parameters, patternStats);
     validNames.add(name);
     return true;
   });
+  if (patternStats.removed > 0) {
+    dbg("CODEX", `stripped ${patternStats.removed} unsupported tool schema pattern(s)`);
+  }
   // Drop tool_choice if it references an unknown function name
   if (body.tool_choice && typeof body.tool_choice === "object" && !Array.isArray(body.tool_choice)) {
     if (body.tool_choice.type === "function") {
