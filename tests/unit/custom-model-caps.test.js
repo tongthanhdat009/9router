@@ -188,3 +188,45 @@ describe("buildCustomCapabilityOverride tri-state matrix", () => {
     expect(buildCustomCapabilityOverride({ type: "imageToText", caps: { vision: false } }, null).vision).toBe(false);
   });
 });
+
+describe("sanitizeFormats (POST /api/models/custom)", () => {
+  it("keeps known wire formats and dedupes", () => {
+    expect(routeMod.sanitizeFormats(["openai", "bogus", "openai", "claude"])).toEqual(["openai", "claude"]);
+  });
+
+  it("empty or non-array means no pin", () => {
+    expect(routeMod.sanitizeFormats([])).toBeNull();
+    expect(routeMod.sanitizeFormats("openai")).toBeNull();
+    expect(routeMod.sanitizeFormats(undefined)).toBeNull();
+  });
+
+  it("all-unknown input means no pin", () => {
+    expect(routeMod.sanitizeFormats(["bogus", "nope"])).toBeNull();
+  });
+});
+
+describe("custom-model formats storage + resolution", () => {
+  it("addCustomModel stores formats on the row", async () => {
+    await aliasRepo.addCustomModel({ providerAlias: "ocg", id: "fmt-probe-x", type: "llm", formats: ["openai"] });
+    const rows = await aliasRepo.getCustomModels();
+    const row = rows.find((m) => m.id === "fmt-probe-x");
+    expect(row.formats).toEqual(["openai"]);
+  });
+
+  it("re-add without formats preserves stored formats", async () => {
+    await aliasRepo.addCustomModel({ providerAlias: "ocg", id: "fmt-probe-x", type: "llm", name: "renamed" });
+    const rows = await aliasRepo.getCustomModels();
+    const row = rows.find((m) => m.id === "fmt-probe-x");
+    expect(row.name).toBe("renamed");
+    expect(row.formats).toEqual(["openai"]);
+  });
+
+  it("custom formats win over the registry in format resolution", async () => {
+    const { getModelSupportedFormats } = await import("../../open-sse/config/providerModels.js");
+    // Registry rows are keyed by provider alias, not the short id.
+    expect(getModelSupportedFormats("opencode-go", "fmt-probe-x", ["openai"])).toEqual(["openai"]);
+    expect(getModelSupportedFormats("opencode-go", "deepseek-v4-flash", ["claude"])).toEqual(["claude"]);
+    expect(getModelSupportedFormats("opencode-go", "deepseek-v4-flash")).toEqual(["openai", "claude", "openai-responses"]);
+    expect(getModelSupportedFormats("opencode-go", "no-such-model-xyz")).toBeNull();
+  });
+});
