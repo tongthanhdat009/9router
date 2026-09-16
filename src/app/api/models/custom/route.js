@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getCustomModels, addCustomModel, deleteCustomModel } from "@/models";
 import { CAPACITY_META } from "@/shared/constants/models";
 import { PROVIDERS } from "open-sse/providers/index.js";
+import REGISTRY from "open-sse/providers/registry/index.js";
 
 export const dynamic = "force-dynamic";
 
@@ -34,14 +35,14 @@ export async function GET() {
     // declared transports; single-transport providers resolve to one entry (UI hides
     // the picker — requests always translate to that provider's only format).
     const formatsByProvider = {};
+    const aliasKeysOf = new Map(REGISTRY.map((r) => [r.id, [r.alias, r.uiAlias, ...(r.aliases || [])].filter(Boolean)]));
     for (const [id, cfg] of Object.entries(PROVIDERS)) {
       const formats = Array.isArray(cfg?.transports)
         ? [...new Set(cfg.transports.map((t) => t.format))]
         : [cfg?.format].filter(Boolean);
-      if (formats.length) {
-        formatsByProvider[id] = formats;
-        if (cfg?.alias && cfg.alias !== id) formatsByProvider[cfg.alias] = formats;
-      }
+      if (!formats.length) continue;
+      // Key by provider id plus every alias the UI may address it with (ocg, ag, ...).
+      for (const key of [id, ...(aliasKeysOf.get(id) || [])]) formatsByProvider[key] = formats;
     }
     return NextResponse.json({ models, formatsByProvider });
   } catch (error) {
