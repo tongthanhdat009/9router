@@ -67,7 +67,6 @@ export default {
     { id: "glm-5.3-flash", name: "GLM-5.3-Flash" },
     { id: "kimi-k3-1", name: "Kimi-K3" },
     { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" },
-    { id: "deepseek-v4-flash", name: "DeepSeek-V4-Flash" },
     { id: "deepseek-v4.1-flash", name: "DeepSeek-V4.1-Flash" },
     { id: "deepseek-v3-2-volc", name: "DeepSeek-V3.2" },
   ],

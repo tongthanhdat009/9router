@@ -60,6 +60,8 @@ export default {
     { id: "gpt-image-2.5", name: "GPT Image 2.5", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "gpt-image-2.5-flare", name: "GPT Image 2.5 Flare", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "gpt-image-2.5-sunburst", name: "GPT Image 2.5 Sunburst", params: ["n","size","quality","response_format"], kind: "image" },
+    { id: "gpt-image-2", name: "GPT Image 2", params: ["n","size","quality","response_format"], kind: "image" },
+    { id: "gpt-image-1.5", name: "GPT Image 1.5", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "gpt-image-1", name: "GPT Image 1", params: ["n","size","quality","response_format"], kind: "image" },
     { id: "dall-e-3", name: "DALL-E 3", params: ["size","quality","style","response_format"], kind: "image" },
     { id: "dall-e-2", name: "DALL-E 2", params: ["n","size","response_format"], kind: "image" },
