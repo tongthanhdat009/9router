@@ -527,12 +527,12 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const handleAddCustomModel = async (modelId, type = "llm", providerAliasOverride = providerStorageAlias, caps) => {
+  const handleAddCustomModel = async (modelId, type = "llm", providerAliasOverride = providerStorageAlias, caps, formats) => {
     try {
       const res = await fetch("/api/models/custom", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerAlias: providerAliasOverride, id: modelId, type, ...(caps ? { caps } : {}) }),
+        body: JSON.stringify({ providerAlias: providerAliasOverride, id: modelId, type, ...(caps ? { caps } : {}), ...(Array.isArray(formats) && formats.length ? { formats } : {}) }),
       });
       if (res.ok) {
         await fetchCustomModels();
@@ -1781,8 +1781,8 @@ export default function ProviderDetailPage() {
           isOpen={showAddCustomModel}
           providerAlias={providerStorageAlias}
           providerDisplayAlias={providerDisplayAlias}
-          onSave={async (modelId, caps) => {
-            await handleAddCustomModel(modelId, "llm", providerStorageAlias, caps);
+          onSave={async (modelId, caps, formats) => {
+            await handleAddCustomModel(modelId, "llm", providerStorageAlias, caps, formats);
             setShowAddCustomModel(false);
           }}
           onClose={() => setShowAddCustomModel(false)}

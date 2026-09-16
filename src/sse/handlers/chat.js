@@ -483,6 +483,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       capabilityOverride,
+      customSupportedFormats: customRow?.formats || null,
       credentials: refreshedCredentials,
       log,
       clientRawRequest,

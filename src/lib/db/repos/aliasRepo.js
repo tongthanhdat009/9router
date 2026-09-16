@@ -40,7 +40,7 @@ const ALLOWED_CUSTOM_TYPES = new Set(["llm", "imageToText"]);
 // Atomic upsert inside transaction to prevent duplicate races. Re-adding an
 // existing model merges name/caps over the stored JSON — omitted caps keys are
 // preserved so a partial update never silently discards stored capabilities.
-export async function addCustomModel({ providerAlias, id, type = "llm", name, caps }) {
+export async function addCustomModel({ providerAlias, id, type = "llm", name, caps, formats }) {
   if (!ALLOWED_CUSTOM_TYPES.has(type)) {
     throw new Error(`Invalid custom model type: ${type}. Allowed: llm, imageToText`);
   }
@@ -55,11 +55,12 @@ export async function addCustomModel({ providerAlias, id, type = "llm", name, ca
         ...prev,
         ...(name ? { name } : {}),
         ...(caps ? { caps: { ...prev.caps, ...caps } } : {}),
+        ...(Array.isArray(formats) && formats.length ? { formats } : {}),
       };
       db.run(`UPDATE kv SET value = ? WHERE scope = 'customModels' AND key = ?`, [stringifyJson(next), k]);
       return;
     }
-    const value = stringifyJson({ providerAlias, id, type, name: name || id, ...(caps ? { caps } : {}) });
+    const value = stringifyJson({ providerAlias, id, type, name: name || id, ...(caps ? { caps } : {}), ...(Array.isArray(formats) && formats.length ? { formats } : {}) });
     db.run(`INSERT INTO kv(scope, key, value) VALUES('customModels', ?, ?)`, [k, value]);
     added = true;
   });

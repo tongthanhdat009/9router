@@ -64,7 +64,10 @@ export function getModelTargetFormat(aliasOrId, modelId) {
 
 // Declared upstream formats for a model (registry `supportedFormats`). Drives the
 // per-model guard on the sourceFormat-matched transport; null when undeclared.
-export function getModelSupportedFormats(aliasOrId, modelId) {
+export function getModelSupportedFormats(aliasOrId, modelId, customFormats = null) {
+  // Custom-model rows carry their own `formats`; they win over the registry so a
+  // user can pin the wire format for a model the catalog does not know.
+  if (Array.isArray(customFormats) && customFormats.length) return [...customFormats];
   const models = PROVIDER_MODELS[aliasOrId];
   if (!models) return null;
   return modelSupportedFormats(findModel(models, modelId, aliasOrId));

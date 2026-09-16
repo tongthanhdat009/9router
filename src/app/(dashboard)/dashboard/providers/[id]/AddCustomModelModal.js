@@ -10,14 +10,33 @@ const defaultCaps = () => Object.fromEntries(Object.keys(CAPACITY_META).map((key
 export default function AddCustomModelModal({ isOpen, providerAlias, providerDisplayAlias, onSave, onClose }) {
   const [modelId, setModelId] = useState("");
   const [caps, setCaps] = useState(defaultCaps);
+  const [formats, setFormats] = useState([]);
+  const [availableFormats, setAvailableFormats] = useState([]);
   const [testStatus, setTestStatus] = useState(null); // null | "testing" | "ok" | "error"
   const [testError, setTestError] = useState("");
   const [saving, setSaving] = useState(false);
 
   // Reset state when modal opens
   useEffect(() => {
-    if (isOpen) { setModelId(""); setCaps(defaultCaps()); setTestStatus(null); setTestError(""); }
+    if (isOpen) { setModelId(""); setCaps(defaultCaps()); setFormats([]); setTestStatus(null); setTestError(""); }
   }, [isOpen]);
+
+  // Selectable wire formats come from the provider's declared transports, so the
+  // picker only offers endpoints this provider actually serves.
+  useEffect(() => {
+    if (!isOpen) return;
+    let cancelled = false;
+    fetch("/api/models/custom", { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (cancelled || !d) return;
+        const list = d.formatsByProvider?.[providerAlias] || [];
+        setAvailableFormats(list);
+        setFormats(list.length > 1 ? [...list] : []);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [isOpen, providerAlias]);
 
   // Strip provider's own alias prefix (e.g. "cc/model" -> "model" for cc provider)
   const stripAlias = (id) => {
@@ -50,7 +69,7 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
     if (!cleanId || saving) return;
     setSaving(true);
     try {
-      await onSave(cleanId, caps);
+      await onSave(cleanId, caps, availableFormats.length > 1 ? formats : []);
     } finally {
       setSaving(false);
     }
@@ -105,6 +124,30 @@ export default function AddCustomModelModal({ isOpen, providerAlias, providerDis
             ))}
           </div>
         </div>
+
+        {availableFormats.length > 1 && (
+          <div>
+            <label className="text-sm font-medium mb-1.5 block">Upstream formats</label>
+            <div className="flex flex-wrap gap-2">
+              {availableFormats.map((f) => {
+                const on = formats.includes(f);
+                return (
+                  <button
+                    key={f}
+                    type="button"
+                    onClick={() => setFormats((prev) => (on ? prev.filter((x) => x !== f) : [...prev, f]))}
+                    className={`px-2.5 py-1 text-xs rounded-full border transition-colors ${on ? "border-primary bg-primary text-background" : "border-border text-text-muted hover:border-primary"}`}
+                  >
+                    {f}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-xs text-text-muted mt-1">
+              Endpoints this model accepts. Unchecked = requests are translated to the first checked format. Leave all unchecked for automatic routing.
+            </p>
+          </div>
+        )}
 
         {/* Test result */}
         {testStatus === "ok" && (

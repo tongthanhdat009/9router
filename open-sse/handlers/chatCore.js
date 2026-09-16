@@ -58,7 +58,7 @@ export function stripContinuityFields(body) {
   return body;
 }
 
-export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, codexUpstreamWebsocket, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, affinity, affinityDiagnostics, finalizeAffinityRequest, onRouteAffinityStreamComplete, requestId, capabilityOverride }) {
+export async function handleChatCore({ body, modelInfo, credentials, log, onCredentialsRefreshed, onRequestSuccess, onDisconnect, clientRawRequest, connectionId, userAgent, apiKey, ccFilterNaming, rtkEnabled, headroomEnabled, headroomUrl, headroomCompressUserMessages, headroomTimeoutMs, cavemanEnabled, cavemanLevel, ponytailEnabled, ponytailLevel, codexUpstreamWebsocket, pxpipeEnabled, pxpipeMinChars, pxpipeTimeoutMs, pxpipeTransform, onPxpipeEvent, sourceFormatOverride, providerThinking, affinity, affinityDiagnostics, finalizeAffinityRequest, onRouteAffinityStreamComplete, requestId, capabilityOverride, customSupportedFormats }) {
   const { provider, model } = modelInfo;
   const requestStartTime = Date.now();
   // Stable per-session color so all lines of one CLI conversation share a tag
@@ -84,7 +84,7 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
   // sourceFormat — opencode-go models differ in endpoint support (kimi/glm only do
   // /chat/completions), so without this guard a claude-format request would wrongly
   // route kimi to /messages.
-  const modelSupportedFormats = getModelSupportedFormats(alias, model);
+  const modelSupportedFormats = getModelSupportedFormats(alias, model, customSupportedFormats);
   const runtimeTransport = resolveTransport(provider, sourceFormat);
   // Per-model guard: when a model declares supportedFormats, only use the
   // sourceFormat-matched transport if that format is declared (opencode-go models

@@ -1,8 +1,19 @@
 import { NextResponse } from "next/server";
 import { getCustomModels, addCustomModel, deleteCustomModel } from "@/models";
 import { CAPACITY_META } from "@/shared/constants/models";
+import { PROVIDERS } from "open-sse/providers/index.js";
 
 export const dynamic = "force-dynamic";
+
+const KNOWN_WIRE_FORMATS = new Set(["openai", "openai-responses", "claude", "gemini", "gemini-cli", "vertex"]);
+
+// Whitelist upstream wire formats; unknown strings are dropped. Empty → null
+// (no pin, catalog/registry resolution applies as before).
+export function sanitizeFormats(formats) {
+  if (!Array.isArray(formats)) return null;
+  const clean = [...new Set(formats.filter((f) => KNOWN_WIRE_FORMATS.has(f)))];
+  return clean.length ? clean : null;
+}
 
 // Whitelist capability flags to booleans; anything else (junk/empty) means
 // "no stored caps" so tri-state unknown stays unknown instead of becoming false.
@@ -19,7 +30,20 @@ export function sanitizeCaps(caps) {
 export async function GET() {
   try {
     const models = await getCustomModels();
-    return NextResponse.json({ models });
+    // Per-provider selectable wire formats: multi-transport providers expose their
+    // declared transports; single-transport providers resolve to one entry (UI hides
+    // the picker — requests always translate to that provider's only format).
+    const formatsByProvider = {};
+    for (const [id, cfg] of Object.entries(PROVIDERS)) {
+      const formats = Array.isArray(cfg?.transports)
+        ? [...new Set(cfg.transports.map((t) => t.format))]
+        : [cfg?.format].filter(Boolean);
+      if (formats.length) {
+        formatsByProvider[id] = formats;
+        if (cfg?.alias && cfg.alias !== id) formatsByProvider[cfg.alias] = formats;
+      }
+    }
+    return NextResponse.json({ models, formatsByProvider });
   } catch (error) {
     console.log("Error fetching custom models:", error);
     return NextResponse.json({ error: "Failed to fetch custom models" }, { status: 500 });
@@ -31,7 +55,7 @@ const ALLOWED_CUSTOM_TYPES = new Set(["llm", "imageToText"]);
 
 export async function POST(request) {
   try {
-    const { providerAlias, id, type, name, caps } = await request.json();
+    const { providerAlias, id, type, name, caps, formats } = await request.json();
     if (!providerAlias || !id) {
       return NextResponse.json({ error: "providerAlias and id required" }, { status: 400 });
     }
@@ -40,7 +64,8 @@ export async function POST(request) {
       return NextResponse.json({ error: `Invalid type: ${resolvedType}. Allowed: llm, imageToText` }, { status: 400 });
     }
     const cleanCaps = sanitizeCaps(caps);
-    const added = await addCustomModel({ providerAlias, id, type: resolvedType, name, ...(cleanCaps ? { caps: cleanCaps } : {}) });
+    const cleanFormats = sanitizeFormats(formats);
+    const added = await addCustomModel({ providerAlias, id, type: resolvedType, name, ...(cleanCaps ? { caps: cleanCaps } : {}), ...(cleanFormats ? { formats: cleanFormats } : {}) });
     return NextResponse.json({ success: true, added });
   } catch (error) {
     console.log("Error adding custom model:", error);
