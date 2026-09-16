@@ -382,7 +382,11 @@ export function openaiToOpenAIResponsesRequest(model, body, stream, credentials)
           type: RESPONSES_ITEM.FUNCTION_CALL,
           call_id: clampCallId(tc.id),
           name: tc.function?.name || "_unknown",
-          arguments: tc.function?.arguments || "{}"
+          arguments: typeof tc.function?.arguments === "string"
+            ? tc.function.arguments
+            : tc.function?.arguments == null
+              ? "{}"
+              : JSON.stringify(tc.function.arguments)
         });
       }
     }

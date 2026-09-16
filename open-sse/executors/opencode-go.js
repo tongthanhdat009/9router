@@ -1,6 +1,18 @@
+import crypto from "node:crypto";
 import { DefaultExecutor } from "./default.js";
-import { resolveSessionId, generateOpencodeSessionId, normalizeOpencodeSessionId } from "../utils/sessionManager.js";
+import { resolveSessionId, generateOpencodeSessionId } from "../utils/sessionManager.js";
+import { detectClientTool } from "../utils/clientDetector.js";
 import { sanitizeConsoleResponsesToolSchemas } from "../utils/jsonSchema.js";
+
+// Conversation-stable session: same (sessionId, clientTool) pair always hashes
+// to the same ses_ id, so upstream sees one session per conversation.
+function stableOpencodeSessionId(sessionId, clientTool) {
+  const digest = crypto.createHash("sha256")
+    .update(`opencode-go\0${clientTool || "generic"}\0${sessionId}`)
+    .digest("hex")
+    .slice(0, 32);
+  return `ses_${digest}`;
+}
 
 // Provider-scoped OpenCode Go session injection: preserve the supplied
 // x-opencode-session header or mint one ses_ id per logical request (stable
@@ -17,14 +29,16 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
   }
 
   deriveRequestContext(body, credentials) {
-    return {
-      sessionId: normalizeOpencodeSessionId(resolveSessionId({
-        headers: credentials?.rawHeaders,
-        body,
-        connectionId: credentials?.connectionId,
-        scope: "opencode-go",
-      })),
-    };
+    const rawHeaders = credentials?.rawHeaders || {};
+    const sessionId = resolveSessionId({
+      headers: rawHeaders,
+      body,
+      connectionId: credentials?.connectionId,
+      scope: "opencode-go",
+    });
+    if (!sessionId) return { sessionId: null };
+    const clientTool = detectClientTool(rawHeaders, body);
+    return { sessionId: stableOpencodeSessionId(sessionId, clientTool) };
   }
 
   buildHeaders(credentials, stream = true, url, model, ctx = {}) {

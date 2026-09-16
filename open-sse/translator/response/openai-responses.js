@@ -446,6 +446,8 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     state.created = Math.floor(Date.now() / 1000);
     state.toolCallIndex = 0;
     state.currentToolCallId = null;
+    state.respToolChatIndex = new Map();
+    state.respToolArgsEmitted = new Set();
   }
 
   // Text content delta
@@ -464,16 +466,24 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     return null;
   }
 
-  // Function call started (standard function_call or custom_tool_call)
+  // Function call started (standard function_call or custom_tool_call).
+  // Allocate the downstream index at declaration time: parallel calls can all be
+  // announced before any argument delta/done event arrives.
   if (eventType === "response.output_item.added" && (data.item?.type === RESPONSES_ITEM.FUNCTION_CALL || data.item?.type === "custom_tool_call")) {
     const item = data.item;
     state.currentToolCallId = item.call_id || fallbackToolCallId();
+    const key = item.id || item.call_id || data.item_id || state.currentToolCallId;
+    let idx = key ? state.respToolChatIndex.get(key) : undefined;
+    if (idx === undefined) {
+      idx = state.toolCallIndex++;
+      if (key) state.respToolChatIndex.set(key, idx);
+    }
 
     return buildChunk(
       { id: state.chatId, created: state.created, model: state.model || MODEL_FALLBACK },
       {
         tool_calls: [{
-          index: state.toolCallIndex,
+          index: idx,
           id: state.currentToolCallId,
           type: OPENAI_BLOCK.FUNCTION,
           function: { name: item.name || "", arguments: "" }
@@ -482,20 +492,37 @@ export function openaiResponsesToOpenAIResponse(chunk, state) {
     );
   }
 
-  // Function call arguments delta (standard or custom_tool_call variant)
+  // Function call arguments delta (standard or custom_tool_call variant).
   if (eventType === "response.function_call_arguments.delta" || eventType === "response.custom_tool_call_input.delta") {
     const argsDelta = data.delta || "";
     if (!argsDelta) return null;
+    const known = data.item_id ? state.respToolChatIndex.get(data.item_id) : undefined;
+    const sole = state.respToolChatIndex.size === 1 ? state.respToolChatIndex.values().next().value : undefined;
+    const idx = known ?? sole;
+    if (idx === undefined) return null;
+    state.respToolArgsEmitted.add(idx);
 
     return buildChunk(
       { id: state.chatId, created: state.created, model: state.model || MODEL_FALLBACK },
-      { tool_calls: [{ index: state.toolCallIndex, function: { arguments: argsDelta } }] }
+      { tool_calls: [{ index: idx, function: { arguments: argsDelta } }] }
     );
   }
 
-  // Function call done (standard or custom_tool_call variant)
+  // Completion never advances the index. If the upstream sent no deltas, emit
+  // its complete arguments exactly once.
   if (eventType === "response.output_item.done" && (data.item?.type === RESPONSES_ITEM.FUNCTION_CALL || data.item?.type === "custom_tool_call")) {
-    state.toolCallIndex++;
+    const key = data.item?.id || data.item?.call_id || data.item_id;
+    const known = key ? state.respToolChatIndex.get(key) : undefined;
+    const sole = state.respToolChatIndex.size === 1 ? state.respToolChatIndex.values().next().value : undefined;
+    const idx = known ?? sole;
+    const fullArgs = data.item?.arguments;
+    if (idx !== undefined && typeof fullArgs === "string" && fullArgs && !state.respToolArgsEmitted.has(idx)) {
+      state.respToolArgsEmitted.add(idx);
+      return buildChunk(
+        { id: state.chatId, created: state.created, model: state.model || MODEL_FALLBACK },
+        { tool_calls: [{ index: idx, function: { arguments: fullArgs } }] }
+      );
+    }
     return null;
   }
 
