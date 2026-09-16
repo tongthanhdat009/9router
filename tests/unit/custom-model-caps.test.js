@@ -102,11 +102,21 @@ describe("findExplicitModelCaps", () => {
     });
   });
 
-  it("returns the muse contributor entry with NO floor keys", () => {
+  it("returns the muse contributor entry with vision+reasoning and no floor keys", () => {
     const raw = findExplicitModelCaps("opencode", "muse-spark-1.3-contributor-free");
     expect(raw.reasoning).toBe(true);
-    expect("vision" in raw).toBe(false);
+    expect(raw.vision).toBe(true);
     expect("tools" in raw).toBe(false);
+  });
+
+  it("declares vision+reasoning for every cataloged muse-spark id on all muse providers", () => {
+    for (const provider of ["opencode", "ocg", "muse"]) {
+      for (const id of ["muse-spark-1.2", "muse-spark-1.2-contributor", "muse-spark-1.3", "muse-spark-1.3-contributor", "muse-spark-1.2-contributor-free", "muse-spark-1.3-contributor-free"]) {
+        const caps = getCapabilitiesForModel(provider, id);
+        expect(caps.vision, provider + "/" + id + " vision").toBe(true);
+        expect(caps.reasoning, provider + "/" + id + " reasoning").toBe(true);
+      }
+    }
   });
 
   it("strips vendor prefixes for the exact-id lookup", () => {

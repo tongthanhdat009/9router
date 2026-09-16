@@ -127,8 +127,14 @@ export const MODEL_CAPABILITIES = {
   "kimi-k2.7-code":    { vision: true, videoInput: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 65536 },
   "kimi-k2.7-code-highspeed": { vision: true, videoInput: true, reasoning: true, thinkingFormat: "kimi", thinkingCanDisable: false, contextWindow: 262144, maxOutput: 65536 },
   // OpenCode Free Muse Spark — OpenAI Responses reasoning supports up to xhigh.
-  "muse-spark-1.2-contributor-free": { reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
-  "muse-spark-1.3-contributor-free": { reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  // vision:true — multimodal input per explicit request (cf. qoder is_vl rows).
+  "muse-spark-1.2-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  "muse-spark-1.3-contributor-free": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  // Muse Spark via opencode-go / muse OAuth — same 1M window as the -free rows.
+  "muse-spark-1.2-contributor": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  "muse-spark-1.2":             { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  "muse-spark-1.3-contributor": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  "muse-spark-1.3":             { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
   "claude-fable-5-1": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
 };
 
@@ -450,7 +456,7 @@ export function getCapabilitiesForModel(provider, model) {
   if (MODEL_CAPABILITIES[baseModel]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[baseModel] };
   // ponytail: future OpenCode Free Muse contributor variants use the same Responses reasoning surface as 1.2.
   if (provider === "opencode" && MUSE_CONTRIBUTOR_RE.test(baseModel)) {
-    return { ...DEFAULT_CAPABILITIES, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 };
+    return { ...DEFAULT_CAPABILITIES, vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 };
   }
   if (MODEL_CAPABILITIES[model]) return { ...DEFAULT_CAPABILITIES, ...MODEL_CAPABILITIES[model] };
 
@@ -487,7 +493,7 @@ export function findExplicitModelCaps(provider, model) {
   }
   if (MODEL_CAPABILITIES[baseModel]) return { ...MODEL_CAPABILITIES[baseModel] };
   if (provider === "opencode" && MUSE_CONTRIBUTOR_RE.test(baseModel)) {
-    return { reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 };
+    return { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 };
   }
   if (MODEL_CAPABILITIES[model]) return { ...MODEL_CAPABILITIES[model] };
   for (const { pattern, caps } of PATTERN_CAPABILITIES) {
