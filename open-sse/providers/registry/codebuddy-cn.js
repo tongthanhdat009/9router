@@ -54,10 +54,11 @@ export default {
     { id: "kimi-k2.7", name: "Kimi-K2.7-Code" },
     { id: "kimi-k2.6", name: "Kimi-K2.6" },
     { id: "kimi-k2.5", name: "Kimi-K2.5" },
-    // "-x" suffix = paid tier of the same model (free id rides the promo quota:
-    // hy3 free until 2026-08-31, hy4-preview until 2026-09-10). Server model table
-    // seen in client logs 2026-08-30; glm-5.0 / glm-4.7 removed (API 11102 dead).
-    { id: "hy3-preview", name: "Hy3 Preview" },
+    // "-x" suffix = paid tier of the same model (free id rides the promo quota).
+    // Server table seen in client logs 2026-08-30; glm-5.0 / glm-4.7 removed
+    // (API 11102 dead). deepseek-v4-flash removed 2026-09: replaced server-side
+    // by deepseek-v4.1-flash (same low/high/xhigh efforts; endpoint still
+    // answers 200 but the published list is the contract).
     { id: "hy3", name: "Hy3" },
     { id: "hy3-x", name: "Hy3 (Paid)" },
     { id: "hy4-preview", name: "Hy4-Preview" },
@@ -67,6 +68,7 @@ export default {
     { id: "kimi-k3-1", name: "Kimi-K3" },
     { id: "deepseek-v4-pro", name: "DeepSeek-V4-Pro" },
     { id: "deepseek-v4-flash", name: "DeepSeek-V4-Flash" },
+    { id: "deepseek-v4.1-flash", name: "DeepSeek-V4.1-Flash" },
     { id: "deepseek-v3-2-volc", name: "DeepSeek-V3.2" },
   ],
   oauth: {
