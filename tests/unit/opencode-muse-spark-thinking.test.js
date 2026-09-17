@@ -134,6 +134,26 @@ describe("OpenCode Free Muse Spark thinking", () => {
     }
   });
 
+  it("strips unsupported reasoning controls from OpenCode Go Muse requests", () => {
+    const body = {
+      input,
+      reasoning: { effort: "high", summary: "auto" },
+      reasoning_effort: "high",
+      max_output_tokens: 2048,
+    };
+
+    const out = new OpenCodeGoExecutor().transformRequest(
+      "muse-spark-1.3-contributor",
+      body,
+      true,
+      {},
+    );
+
+    expect(out.reasoning).toBeUndefined();
+    expect(out.reasoning_effort).toBeUndefined();
+    expect(out.max_output_tokens).toBe(2048);
+  });
+
   it.each([
     [OpenCodeExecutor, "muse-spark-1.3-contributor-free"],
     [OpenCodeGoExecutor, "muse-spark-1.3-contributor"],
