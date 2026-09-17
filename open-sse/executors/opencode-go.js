@@ -23,9 +23,8 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
   }
 
   transformRequest(model, body) {
-    // OpenCode Go Muse reasons automatically but rejects client-controlled effort.
-    if (String(model).startsWith("muse-spark-")) {
-      delete body.reasoning;
+    // OpenCode Go Responses wire rejects Chat Completions reasoning_effort.
+    if (Array.isArray(body?.input) || String(model).startsWith("muse-spark-")) {
       delete body.reasoning_effort;
     }
     // Only Responses models reach Console's RE2 schema validator.

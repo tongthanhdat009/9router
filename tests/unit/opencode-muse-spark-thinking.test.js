@@ -5,6 +5,8 @@ import { getThinkingLevels } from "../../open-sse/providers/thinkingLevels.js";
 import { FORMATS } from "../../open-sse/translator/formats.js";
 import { OpenCodeExecutor } from "../../open-sse/executors/opencode.js";
 import { OpenCodeGoExecutor } from "../../open-sse/executors/opencode-go.js";
+import { MuseExecutor } from "../../open-sse/executors/muse.js";
+import { applyThinking } from "../../open-sse/translator/concerns/thinkingUnified.js";
 import "../translator/registerAll.js";
 import { translateRequest } from "../../open-sse/translator/index.js";
 
@@ -134,7 +136,27 @@ describe("OpenCode Free Muse Spark thinking", () => {
     }
   });
 
-  it("strips unsupported reasoning controls from OpenCode Go Muse requests", () => {
+  it("applies Responses-format reasoning object and omits reasoning_effort for openai-responses wire", () => {
+    const body = {
+      input,
+      reasoning_effort: "high",
+    };
+
+    const out = applyThinking(
+      FORMATS.OPENAI_RESPONSES,
+      "muse-spark-1.3-contributor",
+      body,
+      "muse",
+    );
+
+    expect(out.reasoning).toEqual({ effort: "high", summary: "auto" });
+    expect(out.reasoning_effort).toBeUndefined();
+  });
+
+  it.each([
+    [OpenCodeGoExecutor, "muse-spark-1.3-contributor"],
+    [MuseExecutor, "muse-spark-1.3-contributor"],
+  ])("preserves reasoning and strips reasoning_effort in executor transformRequest (%s)", (Executor, model) => {
     const body = {
       input,
       reasoning: { effort: "high", summary: "auto" },
@@ -142,14 +164,14 @@ describe("OpenCode Free Muse Spark thinking", () => {
       max_output_tokens: 2048,
     };
 
-    const out = new OpenCodeGoExecutor().transformRequest(
-      "muse-spark-1.3-contributor",
+    const out = new Executor().transformRequest(
+      model,
       body,
       true,
       {},
     );
 
-    expect(out.reasoning).toBeUndefined();
+    expect(out.reasoning).toEqual({ effort: "high", summary: "auto" });
     expect(out.reasoning_effort).toBeUndefined();
     expect(out.max_output_tokens).toBe(2048);
   });

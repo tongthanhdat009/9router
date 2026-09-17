@@ -10,8 +10,8 @@ import { LEVEL_TO_BUDGET, budgetToLevel, effortToBudget, effortToThinkingLevel }
 // Map a target wire-format to its native thinking format (when capability has none).
 const FORMAT_TO_NATIVE = {
   openai: "openai",
-  "openai-responses": "openai",
-  "openai-response": "openai",
+  "openai-responses": "openai-responses",
+  "openai-response": "openai-responses",
   codex: "openai",
   claude: "claude-budget",
   gemini: "gemini-budget",
@@ -108,10 +108,13 @@ export const captureThinking = extractThinking;
 const NATIVE_ONLY_FORMATS = new Set(["gemini-level", "gemini-budget", "claude-budget", "claude-adaptive", "kiro"]);
 
 function resolveFormat(targetFormat, model, provider) {
+  if (targetFormat === "openai-responses" || targetFormat === "openai-response") {
+    return "openai-responses";
+  }
   const providerFmt = provider ? PROVIDERS[provider]?.thinkingFormat : null;
   if (providerFmt) return providerFmt;
   const caps = getCapabilitiesForModel(provider, model);
-  const isOpenAIWire = targetFormat === "openai" || targetFormat === "openai-responses";
+  const isOpenAIWire = targetFormat === "openai";
   if (caps.thinkingFormat && !(isOpenAIWire && NATIVE_ONLY_FORMATS.has(caps.thinkingFormat))) {
     return caps.thinkingFormat;
   }
@@ -237,6 +240,19 @@ function applyFormat(fmt, body, cfg, caps, supportedLevels) {
       if (none && canDisable) { body.reasoning_effort = "none"; break; }
       const level = toLevel(eff);
       if (level) body.reasoning_effort = normalizeOpenAILevel(level, supportedLevels);
+      break;
+    }
+    case "openai-responses": {
+      delete body.reasoning_effort;
+      if (none && canDisable) {
+        delete body.reasoning;
+        break;
+      }
+      const level = toLevel(eff);
+      if (level) {
+        const effort = normalizeOpenAILevel(level, supportedLevels);
+        body.reasoning = { effort, summary: "auto" };
+      }
       break;
     }
     case "claude-adaptive": {

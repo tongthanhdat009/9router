@@ -38,6 +38,14 @@ export class MuseExecutor extends BaseExecutor {
     return `${resolveApiBase(credentials)}/responses`;
   }
 
+  transformRequest(model, body, stream, credentials) {
+    // Meta Muse /v1/responses rejects Chat Completions reasoning_effort.
+    if (body && typeof body === "object") {
+      delete body.reasoning_effort;
+    }
+    return super.transformRequest(model, body, stream, credentials);
+  }
+
   buildHeaders(credentials, stream = true, _url = null, _model = null, ctx = {}) {
     // Bearer apiKey ONLY. accessToken / refreshToken / x-api-key never sent here.
     // Explicit direct key wins; stored login apiKey otherwise.
