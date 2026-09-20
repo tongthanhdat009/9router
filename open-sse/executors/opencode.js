@@ -87,11 +87,12 @@ function cloakOpencodeTools(body, isResponses) {
 }
 
 function cloakOpencodeMessagesTools(body) {
-  const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
-  if (!hasTools) {
-    body.tools = OPENCODE_DECOY_MESSAGES_TOOLS.map((tool) => ({ ...tool, input_schema: { ...tool.input_schema } }));
-    if (!body.tool_choice) body.tool_choice = { type: "auto" };
+  if (!Array.isArray(body.tools)) body.tools = [];
+  const names = new Set(body.tools.map((tool) => tool?.name));
+  for (const tool of OPENCODE_DECOY_MESSAGES_TOOLS) {
+    if (!names.has(tool.name)) body.tools.push({ ...tool, input_schema: { ...tool.input_schema } });
   }
+  if (!body.tool_choice) body.tool_choice = { type: "auto" };
 }
 
 function hasValidOpencodeVersion(ua) {
