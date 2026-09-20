@@ -10,7 +10,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({
 const { BaseExecutor } = await import("../../open-sse/executors/base.js");
 const { CodexExecutor } = await import("../../open-sse/executors/codex.js");
 const { GrokCliExecutor, _resetGrokCliTurnStore } = await import("../../open-sse/executors/grok-cli.js");
-const { OpenCodeExecutor } = await import("../../open-sse/executors/opencode.js");
+const { OpenCodeExecutor, OPENCODE_SESSION_RE } = await import("../../open-sse/executors/opencode.js");
 const { OpenCodeGoExecutor } = await import("../../open-sse/executors/opencode-go.js");
 const { DefaultExecutor } = await import("../../open-sse/executors/default.js");
 
@@ -21,30 +21,33 @@ describe("shared OpenCode session formatting", () => {
     for (const [input, expected] of [[null, null], [undefined, null], ["", null], [false, null], [0, null], ["ses_", null], ["---", null], ["abc-def", "ses_abcdef"], ["ses_abc-def", "ses_abcdef"], ["ses_ses_a-b", "ses_ses_ab"]]) {
       expect(normalizeOpencodeSessionId(input)).toBe(expected);
     }
-    expect(generateOpencodeSessionId()).toMatch(/^ses_[a-f0-9]{32}$/);
+    expect(generateOpencodeSessionId()).toMatch(/^ses_[a-f0-9]{32}$/); // legacy utility used by opencode-go
   });
 
-  it.each([OpenCodeExecutor, OpenCodeGoExecutor])("keeps raw header precedence and concurrent request contexts for %s", async (Executor) => {
-    const ex = new Executor();
+  it("canonicalizes free sessions and isolates concurrent request contexts", async () => {
+    const ex = new OpenCodeExecutor();
     const body = (id) => ({ model: "m", session_id: id, messages: [{ role: "user", content: "hi" }] });
     const a = ex.deriveRequestContext(body("thread-a"), creds);
     const b = ex.deriveRequestContext(body("thread-b"), creds);
+    expect(a.sessionId).toMatch(OPENCODE_SESSION_RE);
+    expect(b.sessionId).toMatch(OPENCODE_SESSION_RE);
     expect(a.sessionId).not.toBe(b.sessionId);
     expect(ex.deriveRequestContext(body("thread-a"), creds)).toEqual(a);
-    expect(ex.buildHeaders({ ...creds, rawHeaders: { "X-OpenCode-Session": "raw-header-verbatim" } }, true, null, "m", a)["x-opencode-session"]).toBe("raw-header-verbatim");
-    expect(ex.buildHeaders(creds, true, null, "m")["x-opencode-session"]).toMatch(/^ses_[a-f0-9]{32}$/);
+    expect(ex.buildHeaders({ ...creds, rawHeaders: { "X-OpenCode-Session": "raw-header-verbatim" } }, true, null, "m", a)["x-opencode-session"]).toMatch(OPENCODE_SESSION_RE);
+    expect(ex.buildHeaders(creds, true, null, "m")["x-opencode-session"]).toMatch(OPENCODE_SESSION_RE);
     fetchMock.mockResolvedValue(res(200));
     await Promise.all(["thread-a", "thread-b"].map((id) => ex.execute({ model: "m", body: body(id), stream: true, credentials: creds })));
     expect(capturedHeaders().map((h) => h["x-opencode-session"]).sort()).toEqual([a.sessionId, b.sessionId].sort());
   });
 
-  it("retains provider scope and inherited Go configuration", () => {
+  it("preserves Go legacy sessions and provider scope", () => {
     const free = new OpenCodeExecutor();
     const go = new OpenCodeGoExecutor();
     const explicit = { session_id: "same-thread" };
-    expect(free.deriveRequestContext(explicit, creds).sessionId).toBe(go.deriveRequestContext(explicit, creds).sessionId);
-    const body = { messages: [{ role: "assistant", content: "Conversation context. ".repeat(100) }] };
-    expect(free.deriveRequestContext(body, creds).sessionId).not.toBe(go.deriveRequestContext(body, creds).sessionId);
+    expect(free.deriveRequestContext(explicit, creds).sessionId).toMatch(OPENCODE_SESSION_RE);
+    expect(go.deriveRequestContext(explicit, creds).sessionId).toMatch(/^ses_[a-f0-9]{32}$/);
+    expect(free.deriveRequestContext(explicit, creds).sessionId).not.toBe(go.deriveRequestContext(explicit, creds).sessionId);
+    expect(go.buildHeaders({ ...creds, rawHeaders: { "X-OpenCode-Session": "raw-header-verbatim" } }, true, null, "m")["x-opencode-session"]).toBe("raw-header-verbatim");
     const defaults = new DefaultExecutor("opencode-go");
     expect(go.config).toBe(defaults.config);
     expect(go.buildUrl("m")).toBe(defaults.buildUrl("m"));
@@ -194,7 +197,7 @@ describe("opencode — request-scoped session", () => {
     });
     const h = capturedHeaders();
     expect(h[0]["x-opencode-session"]).toBe(h[1]["x-opencode-session"]);
-    expect(h[0]["x-opencode-session"]).toMatch(/^ses_[0-9a-f]+$/);
+    expect(h[0]["x-opencode-session"]).toMatch(OPENCODE_SESSION_RE);
   });
 });
 
