@@ -66,6 +66,53 @@ describe("OpenCode Free Muse Spark thinking", () => {
     expect(out.max_tokens).toBeUndefined();
   });
 
+  it("routes Union Alpha through Messages with declared capabilities", () => {
+    const executor = new OpenCodeExecutor();
+    expect(getCapabilitiesForModel(PROVIDER, "union-alpha")).toMatchObject({
+      vision: true, contextWindow: 262144, maxOutput: 131072,
+    });
+    expect(getModelTargetFormat("oc", "union-alpha")).toBe(FORMATS.CLAUDE);
+    const url = executor.buildUrl("union-alpha");
+    expect(url).toBe("https://opencode.ai/zen/v1/messages");
+    expect(executor.buildHeaders({}, true, url)).toMatchObject({ "anthropic-version": "2023-06-01" });
+  });
+
+  it("forces the upstream stream and preserves caller tools while adding decoys", () => {
+    const executor = new OpenCodeExecutor();
+    const chat = executor.transformRequest("big-pickle", {
+      stream: false,
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ type: "function", function: { name: "Bash", description: "caller" } }],
+    });
+    expect(chat.stream).toBe(true);
+    expect(chat.tools.map((tool) => tool.function.name)).toEqual(["Bash", "bash", "read"]);
+
+    const responses = executor.transformRequest("muse-spark-1.3-contributor-free", {
+      stream: false,
+      input: structuredClone(input),
+      tools: [{ type: "function", name: "weather", parameters: { type: "object", properties: {} } }],
+      tool_choice: "required",
+    });
+    expect(responses.stream).toBe(true);
+    expect(responses.tool_choice).toBe("auto");
+    expect(responses.tools.map((tool) => tool.name)).toEqual(["weather", "bash", "read"]);
+  });
+
+  it("sanitizes prior Responses reasoning without losing function turns", () => {
+    const body = {
+      input: [
+        ...structuredClone(input),
+        { type: "reasoning", encrypted_content: "not-valid-here" },
+        { type: "function_call", call_id: "call_1", name: "shell", arguments: { command: "echo hi" } },
+        { type: "function_call_output", call_id: "call_1", output: { ok: true } },
+      ],
+    };
+    const out = new OpenCodeExecutor().transformRequest("muse-spark-1.3-contributor-free", body, true, {});
+    expect(out.input.map((item) => item.type)).toEqual(["message", "function_call", "function_call_output"]);
+    expect(out.input[1].arguments).toBe('{"command":"echo hi"}');
+    expect(out.input[2].output).toBe('{"ok":true}');
+  });
+
   it("leaves the other free models on Chat Completions", () => {
     const executor = new OpenCodeExecutor();
     const body = { messages: [{ role: "user", content: "hi" }], max_tokens: 1024 };

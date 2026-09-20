@@ -135,6 +135,8 @@ export const MODEL_CAPABILITIES = {
   "muse-spark-1.2":             { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
   "muse-spark-1.3-contributor": { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
   "muse-spark-1.3":             { vision: true, reasoning: true, thinkingFormat: "openai", contextWindow: 1048576, maxOutput: 131072 },
+  // OpenCode Free Union Alpha — multimodal (text+vision), 262K context, 131K max output.
+  "union-alpha": { vision: true, contextWindow: 262144, maxOutput: 131072 },
   "claude-fable-5-1": { vision: true, reasoning: true, search: true, thinkingFormat: "claude-adaptive", thinkingCanDisable: false, contextWindow: 1000000, maxOutput: 128000 },
 };
 

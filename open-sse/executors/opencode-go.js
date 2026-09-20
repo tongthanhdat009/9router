@@ -4,6 +4,9 @@ import { resolveSessionId, generateOpencodeSessionId } from "../utils/sessionMan
 import { detectClientTool } from "../utils/clientDetector.js";
 import { sanitizeConsoleResponsesToolSchemas } from "../utils/jsonSchema.js";
 
+
+const MAX_TOOL_NAME_LEN = 128;
+
 // Conversation-stable session: same (sessionId, clientTool) pair always hashes
 // to the same ses_ id, so upstream sees one session per conversation.
 function stableOpencodeSessionId(sessionId, clientTool) {
@@ -12,6 +15,49 @@ function stableOpencodeSessionId(sessionId, clientTool) {
     .digest("hex")
     .slice(0, 32);
   return `ses_${digest}`;
+}
+
+// Last line of defense for native Responses clients (sourceFormat === targetFormat
+// skips translation): coerce items in place so malformed tool payloads 400 here
+// with a clear shape instead of upstream as InputValidationError.
+// Port of eafac37d: strip prior-turn reasoning items — Muse Spark contributor
+// models route to an upstream Console backend where encrypted_content cannot be
+// validated across rotated accounts or sessions, causing 400
+// "reasoning encrypted_content was not issued to this caller".
+function clampResponsesCallId(value) {
+  const id = typeof value === "string" ? value.trim() : "";
+  return id ? id.slice(0, 256) : "call_unknown";
+}
+
+function coerceResponsesArguments(value) {
+  return typeof value === "string" ? value : JSON.stringify(value ?? {});
+}
+
+function coerceResponsesOutput(value) {
+  return typeof value === "string" ? value : JSON.stringify(value ?? null);
+}
+
+function sanitizeResponsesItems(body) {
+  if (!Array.isArray(body.input)) return;
+  body.input = body.input.filter((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return true;
+    if (item.type === "reasoning") return false;
+    delete item.encrypted_content;
+    delete item.reasoning_encrypted_content;
+    if (item.type === "function_call") {
+      if (!item.name || typeof item.name !== "string" || item.name.trim() === "") return false;
+      item.name = item.name.trim().slice(0, MAX_TOOL_NAME_LEN);
+      item.call_id = clampResponsesCallId(item.call_id);
+      item.arguments = coerceResponsesArguments(item.arguments);
+      return true;
+    }
+    if (item.type === "function_call_output") {
+      item.call_id = clampResponsesCallId(item.call_id);
+      item.output = coerceResponsesOutput(item.output);
+      return true;
+    }
+    return true;
+  });
 }
 
 // Provider-scoped OpenCode Go session injection: preserve the supplied
@@ -28,7 +74,10 @@ export class OpenCodeGoExecutor extends DefaultExecutor {
       delete body.reasoning_effort;
     }
     // Only Responses models reach Console's RE2 schema validator.
-    if (Array.isArray(body?.input)) sanitizeConsoleResponsesToolSchemas(body);
+    if (Array.isArray(body?.input)) {
+      sanitizeConsoleResponsesToolSchemas(body);
+      sanitizeResponsesItems(body);
+    }
     return super.transformRequest(model, body);
   }
 
