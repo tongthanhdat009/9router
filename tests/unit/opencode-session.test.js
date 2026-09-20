@@ -93,6 +93,16 @@ describe("OpenCode canonical session/request identity", () => {
     expect(second).toBe(first);
   });
 
+  it("preserves Union Alpha caller tools and appends Messages decoys", () => {
+    const executor = getExecutor("opencode");
+    const body = executor.transformRequest("union-alpha", {
+      messages: [{ role: "user", content: "hi" }],
+      tools: [{ name: "caller_tool", description: "caller", input_schema: { type: "object", properties: {} } }],
+    });
+    expect(body.tools.map((tool) => tool.name)).toEqual(["caller_tool", "bash", "read"]);
+    expect(body.tools.slice(1).every((tool) => tool.input_schema?.type === "object")).toBe(true);
+  });
+
   it("forces upstream streaming via transport.forceStream", () => {
     expect(PROVIDERS.opencode?.forceStream).toBe(true);
   });
