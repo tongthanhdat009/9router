@@ -55,6 +55,12 @@ const OPENCODE_DECOY_RESPONSES_TOOLS = [
   },
 ];
 
+const OPENCODE_DECOY_MESSAGES_TOOLS = OPENCODE_DECOY_RESPONSES_TOOLS.map(({ name, description, parameters }) => ({
+  name,
+  description,
+  input_schema: parameters,
+}));
+
 function cloakOpencodeTools(body, isResponses) {
   if (!body || typeof body !== "object") return;
   if (isResponses) {
@@ -77,6 +83,14 @@ function cloakOpencodeTools(body, isResponses) {
         }
       }
     }
+  }
+}
+
+function cloakOpencodeMessagesTools(body) {
+  const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
+  if (!hasTools) {
+    body.tools = OPENCODE_DECOY_MESSAGES_TOOLS.map((tool) => ({ ...tool, input_schema: { ...tool.input_schema } }));
+    if (!body.tool_choice) body.tool_choice = { type: "auto" };
   }
 }
 
@@ -503,7 +517,8 @@ export class OpenCodeExecutor extends BaseExecutor {
       sanitizeResponsesItems(body);
       cloakOpencodeTools(body, true);
     } else if (body && typeof body === "object") {
-      cloakOpencodeTools(body, false);
+      if (isMessagesModel(model || body.model)) cloakOpencodeMessagesTools(body);
+      else cloakOpencodeTools(body, false);
     }
     return injectReasoningContent({ provider: this.provider, model, body });
   }

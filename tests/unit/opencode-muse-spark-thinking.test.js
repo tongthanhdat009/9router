@@ -77,6 +77,35 @@ describe("OpenCode Free Muse Spark thinking", () => {
     expect(executor.buildHeaders({}, true, url)).toMatchObject({ "anthropic-version": "2023-06-01" });
   });
 
+  it("uses Anthropic-native decoys for tool-less Union Alpha Messages requests", () => {
+    const executor = new OpenCodeExecutor();
+    const body = {
+      messages: [{ role: "user", content: "hi" }],
+    };
+
+    const out = executor.transformRequest("union-alpha", body, true, {});
+
+    expect(out.tools).toEqual([
+      expect.objectContaining({ name: "bash", input_schema: { type: "object", properties: {} } }),
+      expect.objectContaining({ name: "read", input_schema: { type: "object", properties: {} } }),
+    ]);
+    expect(out.tools.every((tool) => !tool.type && !tool.function)).toBe(true);
+    expect(out.tool_choice).toEqual({ type: "auto" });
+  });
+
+  it("preserves caller-supplied Union Alpha Messages tools", () => {
+    const executor = new OpenCodeExecutor();
+    const tools = [{ name: "weather", description: "caller", input_schema: { type: "object", properties: {} } }];
+    const out = executor.transformRequest("union-alpha", {
+      messages: [{ role: "user", content: "hi" }],
+      tools,
+      tool_choice: { type: "any" },
+    }, true, {});
+
+    expect(out.tools).toBe(tools);
+    expect(out.tool_choice).toEqual({ type: "any" });
+  });
+
   it("forces the upstream stream and preserves caller tools while adding decoys", () => {
     const executor = new OpenCodeExecutor();
     const chat = executor.transformRequest("big-pickle", {
