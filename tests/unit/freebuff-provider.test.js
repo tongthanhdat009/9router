@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 
 import { hasSpecializedExecutor, getExecutor } from "../../open-sse/executors/index.js";
 import REGISTRY from "../../open-sse/providers/registry/index.js";
@@ -41,5 +43,15 @@ describe("FreeBuff provider", () => {
   it("uses the generic bearer-auth executor", () => {
     expect(hasSpecializedExecutor("freebuff")).toBe(false);
     expect(getExecutor("freebuff").buildHeaders({ apiKey: "token" }).Authorization).toBe("Bearer token");
+  });
+
+  it("offers OAuth + API-key dual mode from registry constants only", () => {
+    expect(freebuff.hasOAuth).toBe(true);
+    expect(freebuff.authModes).toEqual(["oauth", "apikey"]);
+    expect(APIKEY_PROVIDERS.freebuff.hasOAuth).toBe(true);
+    expect(APIKEY_PROVIDERS.freebuff.authModes).toEqual(["oauth", "apikey"]);
+    const page = readFileSync(resolve("../src/app/(dashboard)/dashboard/providers/[id]/page.js"), "utf8");
+    expect(page).toContain('authModes.includes("oauth")');
+    expect(page).toContain('authModes.includes("apikey")');
   });
 });

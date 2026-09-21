@@ -238,6 +238,7 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
         "grok-cli",
         "muse",
         "zcode",
+        "freebuff",
       ];
       if (deviceCodeProviders.includes(provider)) {
         setIsDeviceCode(true);
@@ -282,6 +283,13 @@ export default function OAuthModal({ isOpen, provider, providerInfo, onSuccess, 
           ? { _kimiDeviceId: data._kimiDeviceId }
           : provider === "zcode"
           ? { _zcodePollToken: data._zcodePollToken }
+          : provider === "freebuff"
+          ? {
+              _freebuffFingerprintId: data._freebuffFingerprintId,
+              _freebuffFingerprintHash: data._freebuffFingerprintHash,
+              _freebuffExpiresAt: data._freebuffExpiresAt,
+              _freebuffAuthBase: data._freebuffAuthBase,
+            }
           : null;
         startPolling(
           data.device_code,

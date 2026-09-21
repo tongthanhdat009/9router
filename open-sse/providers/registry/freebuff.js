@@ -13,6 +13,8 @@ export default {
     },
   },
   category: "apikey",
+  hasOAuth: true,
+  authModes: ["oauth", "apikey"],
   transport: {
     baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
   },

@@ -25,6 +25,7 @@ import codebuddyIntl from "./codebuddy-intl.js";
 import kimchi from "./kimchi.js";
 import muse from "./muse.js";
 import zcode from "./zcode.js";
+import freebuff from "./freebuff.js";
 import trae from "./trae.js";
 import windsurf from "./windsurf.js";
 import zed from "./zed.js";
@@ -52,6 +53,7 @@ const PROVIDERS = {
   kimchi,
   muse,
   zcode,
+  freebuff,
   trae,
   windsurf,
   zed,
