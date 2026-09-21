@@ -34,11 +34,17 @@ const freebuff = {
     const data = await json(response);
     let loginUrl;
     try { loginUrl = new URL(data.loginUrl); } catch { throw new Error("FreeBuff device code response is invalid"); }
-    if (!response.ok || !/^https?:$/.test(loginUrl.protocol) || typeof data.fingerprintHash !== "string" || !data.fingerprintHash || typeof data.expiresAt !== "string" || !data.expiresAt) {
+    // Live wire (observed 2026-09-21): expiresAt is an epoch-ms NUMBER despite the CLI's
+    // `expiresAt: string` TS type; the value is echoed back opaque, so accept both forms.
+    const expiresAtOk = typeof data.expiresAt === "string" ? !!data.expiresAt : typeof data.expiresAt === "number" && Number.isFinite(data.expiresAt);
+    if (!response.ok || !/^https?:$/.test(loginUrl.protocol) || typeof data.fingerprintHash !== "string" || !data.fingerprintHash || !expiresAtOk) {
       throw new Error("FreeBuff device code response is invalid");
     }
-    const expiry = Date.parse(data.expiresAt);
-    const expiresIn = Number.isFinite(expiry) ? Math.max(1, Math.ceil((expiry - Date.now()) / 1000)) : 3600;
+    const expiry = typeof data.expiresAt === "number" ? data.expiresAt : Date.parse(data.expiresAt);
+    const fallbackMs = Number(data.expiresInMs);
+    const expiresIn = Number.isFinite(expiry) && expiry > 0
+      ? Math.max(1, Math.ceil((expiry - Date.now()) / 1000))
+      : Number.isFinite(fallbackMs) && fallbackMs > 0 ? Math.ceil(fallbackMs / 1000) : 3600;
     return {
       device_code: fingerprintId,
       user_code: data.fingerprintHash.slice(0, 8).toUpperCase(),

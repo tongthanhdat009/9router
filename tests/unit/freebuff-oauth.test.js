@@ -56,6 +56,13 @@ describe("freebuff oauth adapter", () => {
     expect(data._freebuffAuthBase).toBe("https://www.codebuff.com");
   });
 
+  it("accepts epoch-ms expiresAt and falls back to expiresInMs", async () => {
+    global.fetch = vi.fn(async () => okJson({ ...CODE_OK(), expiresAt: 1789981703883, expiresInMs: 3600000 }));
+    const data = await freebuff.requestDeviceCode({});
+    expect(data.expires_in).toBeGreaterThan(0);
+    expect(data._freebuffExpiresAt).toBe(1789981703883);
+  });
+
   it("honors NEXT_PUBLIC_CODEBUFF_APP_URL and maps unparseable expiry to 3600", async () => {
     process.env.NEXT_PUBLIC_CODEBUFF_APP_URL = "https://stage.codebuff.example/";
     global.fetch = vi.fn(async (url) => {
@@ -71,8 +78,10 @@ describe("freebuff oauth adapter", () => {
     const bads = [
       { ...CODE_OK(), loginUrl: "javascript:alert(1)" },
       { ...CODE_OK(), fingerprintHash: "" },
-      { ...CODE_OK(), expiresAt: 42 },
       {},
+      // String-typed expiresAt stays valid (echoed opaque); only missing/NaN forms are invalid.
+      { ...CODE_OK(), expiresAt: "" },
+      { ...CODE_OK(), expiresAt: Number.NaN },
     ];
     for (const bad of bads) {
       global.fetch = vi.fn(async () => okJson(bad));
