@@ -40,8 +40,9 @@ describe("FreeBuff provider", () => {
     expect(PROVIDER_MODELS.freebuff.map((model) => model.id)).toEqual(modelIds);
   });
 
-  it("uses the generic bearer-auth executor", () => {
-    expect(hasSpecializedExecutor("freebuff")).toBe(false);
+  it("routes through the FreebuffExecutor", () => {
+    expect(hasSpecializedExecutor("freebuff")).toBe(true);
+    expect(getExecutor("freebuff").constructor.name).toBe("FreebuffExecutor");
     expect(getExecutor("freebuff").buildHeaders({ apiKey: "token" }).Authorization).toBe("Bearer token");
   });
 
