@@ -1030,5 +1030,9 @@
       "preserveCacheControl": true
     },
     "format": "openai"
+  },
+  "freebuff": {
+    "baseUrl": "https://www.codebuff.com/api/v1/chat/completions",
+    "format": "openai"
   }
 }

@@ -1,0 +1,45 @@
+import { describe, expect, it } from "vitest";
+
+import { hasSpecializedExecutor, getExecutor } from "../../open-sse/executors/index.js";
+import REGISTRY from "../../open-sse/providers/registry/index.js";
+import { PROVIDERS, PROVIDER_MODELS } from "../../open-sse/providers/index.js";
+import { APIKEY_PROVIDERS } from "../../src/shared/constants/providers.js";
+
+describe("FreeBuff provider", () => {
+  const freebuff = REGISTRY.find((entry) => entry.id === "freebuff");
+  const modelIds = [
+    "z-ai/glm-5.3-flash",
+    "deepseek/deepseek-v4.1-flash",
+    "openai/gpt-5.6-luna",
+    "mimo/mimo-v2.5",
+    "upstage/solar-pro4",
+    "google/gemini-3.8-flash",
+  ];
+
+  it("derives the canonical OpenAI transport and API-key setup entry", () => {
+    expect(freebuff).toMatchObject({
+      id: "freebuff",
+      alias: "freebuff",
+      category: "apikey",
+      display: {
+        website: "https://freebuff.com",
+        notice: { apiKeyUrl: "https://freebuff.com" },
+      },
+      transport: { baseUrl: "https://www.codebuff.com/api/v1/chat/completions" },
+    });
+    expect(PROVIDERS.freebuff).toMatchObject({
+      baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
+      format: "openai",
+    });
+    expect(APIKEY_PROVIDERS.freebuff).toBeDefined();
+  });
+
+  it("declares only the regular-picker chat models", () => {
+    expect(PROVIDER_MODELS.freebuff.map((model) => model.id)).toEqual(modelIds);
+  });
+
+  it("uses the generic bearer-auth executor", () => {
+    expect(hasSpecializedExecutor("freebuff")).toBe(false);
+    expect(getExecutor("freebuff").buildHeaders({ apiKey: "token" }).Authorization).toBe("Bearer token");
+  });
+});
