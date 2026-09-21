@@ -330,8 +330,9 @@ describe("FreeBuff free-session mode", () => {
     expect(chatInstances[0]).toBe("inst-gate-1");
     gateMode = true;
     const gated = await runExecutor(executor);
-    // Identical response surfaced: status + body preserved, never swallowed into a retry.
+    // Identical response surfaced: status + body + headers preserved, never swallowed into a retry.
     expect(gated.response.status).toBe(410);
+    expect(gated.response.headers.get("content-type")).toBe("application/json");
     expect(await gated.response.json()).toEqual({ error: "session_expired", message: "session expired" });
     expect(admissions).toBe(1); // no same-turn retry
     // S1 is gone: next turn admits S2 exactly once and stays on it.
@@ -396,6 +397,83 @@ describe("FreeBuff free-session mode", () => {
       expect(admissions, name).toBe(1);
       expect(chatInstances, name).toEqual(["inst-nk"]);
     }
+  });
+
+  it("purges the seat on a terminal gate rejection with nested error.code", async () => {
+    const executor = new FreebuffExecutor();
+    let admissions = 0;
+    let gateMode = false;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-nested-" + admissions, BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") return sessionResponse({ status: "active", expiresAt: iso(BASE + 2 * 60 * 60 * 1000) });
+      if (url === AGENT_RUNS) return startOk();
+      if (url === CHAT_URL) {
+        if (gateMode) {
+          return {
+            ok: false,
+            status: 409,
+            statusText: "Conflict",
+            headers: new Headers({ "Content-Type": "application/json" }),
+            text: () => Promise.resolve(JSON.stringify({ error: { code: "session_superseded", message: "taken over" } })),
+          };
+        }
+        return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    const first = await runExecutor(executor);
+    await first.response.text();
+    gateMode = true;
+    const gated = await runExecutor(executor);
+    expect(gated.response.status).toBe(409);
+    expect(admissions).toBe(1);
+    gateMode = false;
+    const second = await runExecutor(executor);
+    await second.response.text();
+    expect(admissions).toBe(2);
+    expect(second.response.status).toBe(200);
+  });
+
+  it("paid-mode non-ok chat responses pass through without seat handling", async () => {
+    const executor = new FreebuffExecutor();
+    const paid = creds({ costMode: "normal" });
+    const calls = [];
+    // Mock the chat transport directly (super.execute), not the raw fetch:
+    // START answers through the proxyAwareFetch mock below (like every other
+    // test in this file); the spy only replaces the chat leg.
+    const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async (args) => {
+      calls.push("chat");
+      return {
+        response: {
+          ok: false,
+          status: 502,
+          statusText: "Bad Gateway",
+          headers: new Headers({ "Content-Type": "application/json" }),
+          text: () => Promise.resolve(JSON.stringify({ error: "session_expired" })),
+        },
+      };
+    });
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
+      calls.push(String(url));
+      if (url === AGENT_RUNS) return startOk();
+      throw new Error("unexpected raw fetch " + url);
+    });
+    const result = await executor.execute({
+      model: MODEL,
+      body: { model: MODEL, messages: [{ role: "user", content: "hi" }] },
+      stream: false,
+      credentials: paid,
+      log: console,
+      proxyOptions: null,
+    });
+    superExecute.mockRestore();
+    expect(result.response.status).toBe(502);
+    expect(await result.response.json()).toEqual({ error: "session_expired" });
+    expect(calls).toContain("chat");
+    expect(calls.filter((u) => u === ADMISSION_URL)).toEqual([]); // session null: no admission ever
   });
 
   it("purges the seat on chat 409 session_superseded", async () => {

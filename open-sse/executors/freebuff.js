@@ -148,7 +148,9 @@ async function heartbeatFreeSession(entry, credentials, log, key) {
     if (!response.ok) {
       // Upstream gone-signal: GET /session 404 -> callFreebuffSession synthesizes {status:'none'}
       // (freebuff-session-api.ts) = terminal. Other non-OK (408/429/5xx/auth) are transient: keep.
-      if (response.status === 404) purgeFreeSession(key, log, `seat gone HTTP ${response.status}`);
+      // Identity guard (same idiom as the grace-expiry check below): a stale in-flight
+      // heartbeat resolving after a re-admission must not purge the NEW healthy seat.
+      if (response.status === 404 && freeSessions.get(key) === entry) purgeFreeSession(key, log, `seat gone HTTP ${response.status}`);
       return;
     }
     const text = await response.text();
