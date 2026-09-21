@@ -57,7 +57,7 @@ describe("freebuff executor lifecycle", () => {
     expect(calls[0][1].headers.Authorization).toBe("Bearer login-token");
     expect(calls.length).toBe(2); // START + FINISH only; chat went through the super spy
     const finishBody = JSON.parse(calls[1][0] === AGENT_RUNS ? calls[1][1].body : "{}");
-    expect(finishBody).toMatchObject({ action: "FINISH", status: "success", runId: "run-7", totalSteps: 1, directCredits: 0, totalCredits: 0, errorMessage: null });
+    expect(finishBody).toMatchObject({ action: "FINISH", status: "completed", runId: "run-7", totalSteps: 1, directCredits: 0, totalCredits: 0, errorMessage: null });
     expect(finishBody.steps).toEqual([]);
   });
 

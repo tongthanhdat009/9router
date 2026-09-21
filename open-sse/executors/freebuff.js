@@ -99,7 +99,7 @@ export class FreebuffExecutor extends DefaultExecutor {
       const finishBody = {
         action: "FINISH",
         runId,
-        status: failure ? "error" : "success",
+        status: failure ? "failed" : "completed",
         totalSteps: 1,
         directCredits: 0,
         totalCredits: 0,
