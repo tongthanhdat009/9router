@@ -90,7 +90,6 @@ export class MuseExecutor extends BaseExecutor {
   // unrecoverable sentinel (never throws, never null) so refreshWithRetry
   // short-circuits after exactly one mint flight.
   async refreshCredentials(credentials, log, proxyOptions = null, status = null) {
-    void proxyOptions;
     if (status !== null && status !== undefined && status !== 401) return null;
     if (!credentials?.accessToken) {
       return { error: "invalid_muse_key", message: MUSE_INVALID_KEY_MESSAGE };
@@ -100,6 +99,7 @@ export class MuseExecutor extends BaseExecutor {
         const minted = await mintMuseKey(credentials.accessToken, {
           ...(MUSE_CONFIG || {}),
           mintBase: MUSE_MINT_BASE,
+          proxyOptions,
         });
         if (credentials) credentials.apiKey = minted.apiKey;
         return {

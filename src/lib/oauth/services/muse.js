@@ -9,7 +9,10 @@ function mintBase(config) {
 
 export async function mintMuseKey(accessToken, config) {
   if (!accessToken) throw new Error("Missing access token for Muse key mint");
-  const response = await fetch(`${mintBase(config)}/muse-code/key`, {
+  const request = config?.proxyOptions
+    ? (await import("open-sse/utils/proxyFetch.js")).proxyAwareFetch
+    : fetch;
+  const response = await request(`${mintBase(config)}/muse-code/key`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${accessToken}`,

@@ -47,22 +47,35 @@ function mapSnapshot(snapshot) {
 const SEED_RETRY_MS = 24 * 60 * 60 * 1000;
 
 export async function getMuseUsage(accessToken, proxyOptions = null, options = {}) {
-  void proxyOptions;
   const psd = options?.providerSpecificData || {};
   const stored = mapSnapshot(psd?.museUsage);
   // Seed on first load when login/401 predates capture; refresh on force.
   // The route persists usage.museSnapshot (handlers have no DB seam).
-  if ((options?.force === true || !stored) && accessToken) {
+  const forced = options?.force === true;
+  if ((forced || !stored) && accessToken) {
     const tombstone = Number(psd?.museUsageSeededAt);
     const tombFresh =
       Number.isFinite(tombstone) && Date.now() - tombstone < SEED_RETRY_MS;
-    if (options?.force === true || !tombFresh) {
+    if (forced || !tombFresh) {
       try {
-        const minted = await mintMuseKey(accessToken, {});
+        const minted = await mintMuseKey(accessToken, { proxyOptions });
         const fresh = mapSnapshot(minted?.museUsage);
         if (fresh) return { quotas: fresh, museSnapshot: minted.museUsage };
-      } catch { /* fall through to stored snapshot */ }
-      if (!stored) return { quotas: {}, museSeedAttempted: true };
+        // 200 mint with no subs_usage: surface empty on force, tombstone otherwise.
+        if (!stored) return { quotas: {}, museSeedAttempted: true };
+        if (forced) return { quotas: {}, message: "Muse did not return quota data for this account." };
+      } catch (err) {
+        // Forced read must never masquerade stale data as fresh.
+        if (forced) {
+          return {
+            quotas: {},
+            message: err?.status === 401 || err?.status === 403
+              ? "Muse login expired. Log in again to refresh quota."
+              : "Could not reach Muse to refresh quota.",
+          };
+        }
+        if (!stored) return { quotas: {}, museSeedAttempted: true };
+      }
     }
   }
   return { quotas: stored || {} };

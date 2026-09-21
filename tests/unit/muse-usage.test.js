@@ -103,12 +103,32 @@ describe("muse usage", () => {
     expect(second).toEqual({ quotas: {} });
   });
 
-  it("falls back to stored snapshot when force mint rejects", async () => {
+  it("does not present a stored snapshot as fresh when a forced mint fails", async () => {
     global.fetch = vi.fn().mockRejectedValue(new Error("mint failed"));
     const usage = await getMuseUsage("at-1", null, {
       force: true,
       providerSpecificData: { museUsage: { window: { used_percent: 25, window_duration_mins: 300, resets_at: SECONDS } } },
     });
-    expect(usage.quotas["5h"]).toMatchObject({ used: 25, remaining: 75 });
+    expect(usage).toEqual({ quotas: {}, message: "Could not reach Muse to refresh quota." });
+  });
+
+  it("does not present a stored snapshot as fresh when a forced mint omits quota", async () => {
+    global.fetch = vi.fn().mockResolvedValue(mintResponse({ api_key: "mk-empty" }));
+    const usage = await getMuseUsage("at-1", null, {
+      force: true,
+      providerSpecificData: { museUsage: { window: { used_percent: 25, window_duration_mins: 300, resets_at: SECONDS } } },
+    });
+    expect(usage).toEqual({ quotas: {}, message: "Muse did not return quota data for this account." });
+  });
+
+  it("maps forced mint 401 to the re-login message", async () => {
+    const err = new Error("Muse key mint failed: expired");
+    err.status = 401;
+    global.fetch = vi.fn().mockRejectedValue(err);
+    const usage = await getMuseUsage("at-1", null, {
+      force: true,
+      providerSpecificData: { museUsage: { window: { used_percent: 25, window_duration_mins: 300, resets_at: SECONDS } } },
+    });
+    expect(usage).toEqual({ quotas: {}, message: "Muse login expired. Log in again to refresh quota." });
   });
 });
