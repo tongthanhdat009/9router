@@ -4,18 +4,21 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: vi.fn() 
 
 const { chatCoreExecuteMock } = vi.hoisted(() => ({ chatCoreExecuteMock: vi.fn() }));
 
-const { FreebuffExecutor } = await import("../../open-sse/executors/freebuff.js");
+const { FreebuffExecutor, _resetSessionsForTests } = await import("../../open-sse/executors/freebuff.js");
 const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
 
 const AGENT_RUNS = "https://www.codebuff.com/api/v1/agent-runs";
 const CHAT_URL = "https://www.codebuff.com/api/v1/chat/completions";
+const ADMISSION_URL = "https://www.codebuff.com/api/v1/freebuff/session/admission";
 const ok = (payload) => new Response(JSON.stringify(payload), { status: 200 });
+const admissionOk = () => ({ ok: true, status: 200, statusText: "OK", text: () => Promise.resolve(JSON.stringify({ status: "active", instanceId: "inst-legacy", expiresAt: new Date(Date.now() + 60 * 60 * 1000).toISOString(), remainingMs: 60 * 60 * 1000 })) });
 
 function baseCreds(overrides = {}) {
   return {
     connectionId: "conn-1",
     accessToken: "login-token",
-    providerSpecificData: { userId: "u-1", fingerprintId: "fp-1", ...overrides },
+    // Default to explicit paid mode: legacy tests pin the paid path byte-for-byte.
+    providerSpecificData: { userId: "u-1", fingerprintId: "fp-1", costMode: "normal", ...overrides },
   };
 }
 
@@ -31,8 +34,10 @@ async function run(executor, { signal, preparedRequest, creds = baseCreds(), pro
 describe("freebuff executor lifecycle", () => {
   beforeEach(() => {
     vi.mocked(proxyAwareFetch).mockReset();
+    _resetSessionsForTests();
   });
   afterEach(() => {
+    _resetSessionsForTests();
     vi.restoreAllMocks();
   });
 
@@ -305,9 +310,9 @@ describe("freebuff executor lifecycle", () => {
     expect(chatOptions.signal.aborted).toBe(true);
   });
 
-  it("cost_mode free only when stored session explicitly says free; stale preparedRequest is ignored", async () => {
+  it("free mode: admits a session, carries instance id, and ignores stale preparedRequest", async () => {
     const executor = new FreebuffExecutor();
-    vi.mocked(proxyAwareFetch).mockImplementation(async () => startOk());
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url) => (url === ADMISSION_URL ? admissionOk() : startOk()));
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async (args) => {
       expect(args.preparedRequest).toBeNull();
       const body = executor.transformRequest(args.model, args.body, args.stream, args.credentials);
@@ -315,7 +320,38 @@ describe("freebuff executor lifecycle", () => {
     });
     const result = await run(executor, { preparedRequest: { transformedBody: {}, ctx: {}, bodyStr: "stale" }, creds: baseCreds({ costMode: "free" }) });
     expect(result.transformedBody.codebuff_metadata.cost_mode).toBe("free");
+    expect(result.transformedBody.codebuff_metadata.freebuff_instance_id).toBe("inst-legacy");
     superExecute.mockRestore();
+  });
+});
+
+describe("freebuff executor modes", () => {
+  beforeEach(() => {
+    _resetSessionsForTests();
+  });
+  afterEach(() => {
+    _resetSessionsForTests();
+  });
+
+  it("paid mode: no admission fetch, agentId 9router, cost_mode normal, system untouched", async () => {
+    const executor = new FreebuffExecutor();
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
+      calls.push(String(url));
+      return startOk(); // START and FINISH only
+    });
+    const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async (args) => {
+      const body = executor.transformRequest(args.model, args.body, args.stream, args.credentials);
+      return { response: new Response(null, { status: 200 }), transformedBody: body };
+    });
+    const systemText = "You are Claude Code, Anthropic's official CLI for Claude.";
+    const result = await executor.execute({ model: "z-ai/glm-5.3-flash", body: { model: "z-ai/glm-5.3-flash", messages: [{ role: "system", content: systemText }, { role: "user", content: "hi" }] }, stream: false, credentials: baseCreds(), log: console, preparedRequest: null, proxyOptions: null });
+    superExecute.mockRestore();
+    expect(calls.filter((u) => u === ADMISSION_URL)).toEqual([]);
+    expect(calls[0]).toBe(AGENT_RUNS); // START is the first and only lifecycle POST
+    expect(result.transformedBody.codebuff_metadata.cost_mode).toBe("normal");
+    expect(result.transformedBody.codebuff_metadata.freebuff_instance_id).toBeUndefined();
+    expect(result.transformedBody.messages[0].content).toBe(systemText); // never rewritten
   });
 });
 

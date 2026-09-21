@@ -40,6 +40,22 @@ describe("FreeBuff provider", () => {
     expect(PROVIDER_MODELS.freebuff.map((model) => model.id)).toEqual(modelIds);
   });
 
+  it("carries the verified per-model freeRoot through normalizeModel untouched", () => {
+    const expected = {
+      "z-ai/glm-5.3-flash": "base3-free-glm-5-3-flash",
+      "deepseek/deepseek-v4.1-flash": "base2-free-deepseek-v4-1-flash",
+      "openai/gpt-5.6-luna": "base3-free-luna",
+      "mimo/mimo-v2.5": "base3-free-mimo",
+      "upstage/solar-pro4": "base3-free-solar-pro4",
+      "google/gemini-3.8-flash": "base3-free-gemini-3-8-flash",
+    };
+    for (const model of PROVIDER_MODELS.freebuff) {
+      expect(model.freeRoot).toBe(expected[model.id]);
+    }
+    expect(freebuff.display.notice.text).toContain("Free mode (daily Freebucks)");
+    expect(freebuff.display.notice.text).toContain("unsupported models use paid credits");
+  });
+
   it("routes through the FreebuffExecutor", () => {
     expect(hasSpecializedExecutor("freebuff")).toBe(true);
     expect(getExecutor("freebuff").constructor.name).toBe("FreebuffExecutor");
