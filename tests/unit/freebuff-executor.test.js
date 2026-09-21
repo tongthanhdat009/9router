@@ -41,7 +41,7 @@ describe("freebuff executor lifecycle", () => {
     const calls = [];
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
       calls.push([String(url), options]);
-      if (url === AGENT_RUNS && JSON.parse(options.body).status === "START") return startOk();
+      if (url === AGENT_RUNS && JSON.parse(options.body).action === "START") return startOk();
       throw new Error("unexpected fetch " + url);
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async (args) => {
@@ -53,11 +53,11 @@ describe("freebuff executor lifecycle", () => {
     superExecute.mockRestore();
     expect(calls[0][0]).toBe(AGENT_RUNS);
     const startBody = JSON.parse(calls[0][1].body);
-    expect(startBody).toMatchObject({ status: "START", agentId: "9router", userId: "u-1" });
+    expect(startBody).toMatchObject({ action: "START", agentId: "9router", userId: "u-1" });
     expect(calls[0][1].headers.Authorization).toBe("Bearer login-token");
     expect(calls.length).toBe(2); // START + FINISH only; chat went through the super spy
     const finishBody = JSON.parse(calls[1][0] === AGENT_RUNS ? calls[1][1].body : "{}");
-    expect(finishBody).toMatchObject({ status: "FINISH", runId: "run-7", totalSteps: 1, directCredits: 0, totalCredits: 0, errorMessage: null });
+    expect(finishBody).toMatchObject({ action: "FINISH", status: "success", runId: "run-7", totalSteps: 1, directCredits: 0, totalCredits: 0, errorMessage: null });
     expect(finishBody.steps).toEqual([]);
   });
 
@@ -129,14 +129,14 @@ describe("freebuff executor lifecycle", () => {
     const calls = [];
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
       calls.push({ url: String(url), body: JSON.parse(options.body) });
-      if (JSON.parse(options.body).status === "START") return startOk();
+      if (JSON.parse(options.body).action === "START") return startOk();
       throw new Error("finish transport boom");
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockRejectedValue(new Error("upstream 500"));
     await expect(run(executor)).rejects.toThrow("upstream 500");
     superExecute.mockRestore();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const finish = calls.find((call) => call.body.status === "FINISH");
+    const finish = calls.find((call) => call.body.action === "FINISH");
     expect(finish.body.runId).toBe("run-7");
     expect(finish.body.errorMessage).toContain("upstream 500");
     expect(finish.body.directCredits).toBe(0);
@@ -146,7 +146,7 @@ describe("freebuff executor lifecycle", () => {
     const calls = [];
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
       calls.push({ url: String(url), body: JSON.parse(options.body) });
-      if (JSON.parse(options.body).status === "START") return startOk();
+      if (JSON.parse(options.body).action === "START") return startOk();
       return ok({}); // FINISH endpoint accepted
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockResolvedValue({
@@ -159,7 +159,7 @@ describe("freebuff executor lifecycle", () => {
     superExecute.mockRestore();
     expect(result.response.status).toBe(400);
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const finish = calls.find((call) => call.body.status === "FINISH");
+    const finish = calls.find((call) => call.body.action === "FINISH");
     expect(finish.body.runId).toBe("run-7");
     expect(finish.body.errorMessage).toContain("HTTP 400");
   });
@@ -167,7 +167,7 @@ describe("freebuff executor lifecycle", () => {
   it("FINISH rejection stays silent even when unhandled", async () => {
     const executor = new FreebuffExecutor();
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
-      if (JSON.parse(options.body).status === "START") return startOk();
+      if (JSON.parse(options.body).action === "START") return startOk();
       return Promise.reject(new Error("finish exploded"));
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockResolvedValue({ response: ok({}) });
@@ -182,7 +182,7 @@ describe("freebuff executor lifecycle", () => {
     const proxyOptions = { socksProxyUrl: "socks5://127.0.0.1:1080" };
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options, po) => {
       seen.push([String(url), options.signal, po]);
-      if (JSON.parse(options.body).status === "START") return startOk();
+      if (JSON.parse(options.body).action === "START") return startOk();
       return ok({});
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async (args) => {
@@ -231,7 +231,7 @@ describe("freebuff executor lifecycle", () => {
     const controller = new AbortController();
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
       calls.push([String(url), options]);
-      if (JSON.parse(options.body).status === "START") return startOk();
+      if (JSON.parse(options.body).action === "START") return startOk();
       return ok({ choices: [{ message: { role: "assistant", content: "hey" } }] });
     });
     await run(executor, { signal: controller.signal });

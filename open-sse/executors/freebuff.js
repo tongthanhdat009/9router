@@ -64,7 +64,7 @@ export class FreebuffExecutor extends DefaultExecutor {
   async execute({ model, body, stream, credentials, signal, log, proxyOptions = null, requestId = null, preparedRequest = null }) {
     const headers = this.buildHeaders(credentials, false);
     const userId = credentials?.providerSpecificData?.userId;
-    const startBody = { status: "START", agentId: "9router", ...(userId ? { userId } : {}) };
+    const startBody = { action: "START", agentId: "9router", ...(userId ? { userId } : {}) };
     const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
     const start = await lifecycleFetch(AUTH_BASE + "/api/v1/agent-runs", {
       method: "POST",
@@ -97,8 +97,9 @@ export class FreebuffExecutor extends DefaultExecutor {
       throw error;
     } finally {
       const finishBody = {
-        status: "FINISH",
+        action: "FINISH",
         runId,
+        status: failure ? "error" : "success",
         totalSteps: 1,
         directCredits: 0,
         totalCredits: 0,
