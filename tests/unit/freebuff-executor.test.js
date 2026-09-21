@@ -323,6 +323,69 @@ describe("freebuff executor lifecycle", () => {
     expect(result.transformedBody.codebuff_metadata.freebuff_instance_id).toBe("inst-legacy");
     superExecute.mockRestore();
   });
+  it("free-mode streaming: SSE EOF closes FINISH completed exactly once", async () => {
+    const executor = new FreebuffExecutor();
+    const finishCalls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      if (url === ADMISSION_URL) return admissionOk();
+      if (JSON.parse(options.body).action === "START") return startOk();
+      finishCalls.push({ url: String(url), body: JSON.parse(options.body) });
+      return ok({ acknowledged: true });
+    });
+    const encoder = new TextEncoder();
+    const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockResolvedValue({
+      response: new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"hi"}}]}\n\n'));
+          controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+          controller.close();
+        },
+      }), { status: 200, headers: { "content-type": "text/event-stream" } }),
+      url: CHAT_URL,
+      headers: {},
+      transformedBody: {},
+    });
+    const result = await run(executor, { creds: baseCreds({ costMode: "free" }) });
+    const text = await result.response.text();
+    expect(text).toContain("[DONE]");
+    await result.response.body?.cancel?.().catch(() => {}); // post-EOF cancel must not refire
+    superExecute.mockRestore();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(finishCalls.length).toBe(1);
+    expect(finishCalls[0].body).toMatchObject({ action: "FINISH", status: "completed", runId: "run-7" });
+  });
+
+  it("free-mode streaming cancel: FINISH cancelled on an independent signal", async () => {
+    const executor = new FreebuffExecutor();
+    const finishCalls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      if (url === ADMISSION_URL) return admissionOk();
+      if (JSON.parse(options.body).action === "START") return startOk();
+      finishCalls.push({ url: String(url), body: JSON.parse(options.body), signal: options.signal });
+      return ok({ acknowledged: true });
+    });
+    const encoder = new TextEncoder();
+    const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockResolvedValue({
+      response: new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("data: partial\n\n")); // stays open; client goes away mid-stream
+        },
+      }), { status: 200, headers: { "content-type": "text/event-stream" } }),
+      url: CHAT_URL,
+      headers: {},
+      transformedBody: {},
+    });
+    const controller = new AbortController();
+    const result = await run(executor, { signal: controller.signal, creds: baseCreds({ costMode: "free" }) });
+    controller.abort(); // client disconnect
+    await result.response.body.cancel("client gone");
+    superExecute.mockRestore();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(finishCalls.length).toBe(1);
+    expect(finishCalls[0].body).toMatchObject({ action: "FINISH", status: "cancelled", runId: "run-7" });
+    expect(finishCalls[0].signal).not.toBe(controller.signal);
+    expect(finishCalls[0].signal?.aborted ?? false).toBe(false);
+  });
 });
 
 describe("freebuff executor modes", () => {

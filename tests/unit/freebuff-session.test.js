@@ -92,7 +92,7 @@ describe("FreeBuff free-session mode", () => {
     const result = await runExecutor(executor, { messages: [{ role: "system", content: systemText }, { role: "user", content: "hi" }] });
     await result.response.text(); // drain so the terminal FINISH settles
     const start = calls.find((c) => c.url === AGENT_RUNS && JSON.parse(c.options.body).action === "START");
-    expect(JSON.parse(start.options.body)).toMatchObject({ action: "START", agentId: "base3-free-glm-5-3-flash" });
+    expect(JSON.parse(start.options.body)).toMatchObject({ action: "START", agentId: "base3-free-glm-5-3-flash", ancestorRunIds: [] });
     const chatCall = calls.find((c) => c.url === CHAT_URL);
     const chatBody = JSON.parse(chatCall.options.body);
     expect(chatBody.codebuff_metadata.freebuff_instance_id).toBe("inst-1");
@@ -224,6 +224,12 @@ describe("FreeBuff free-session mode", () => {
     expect(del.url).toBe(SESSION_URL);
     expect(del.headers["x-freebuff-instance-id"]).toBe("inst-glm");
     expect(del.headers["x-freebuff-compact-session"]).toBe("1");
+    // Call order: first admission, then DELETE release, then re-admission.
+    const admissionIdx = [];
+    seen.forEach((c, i) => { if (c.url === ADMISSION_URL) admissionIdx.push(i); });
+    expect(admissionIdx).toHaveLength(2);
+    expect(seen.indexOf(del)).toBeGreaterThan(admissionIdx[0]);
+    expect(seen.indexOf(del)).toBeLessThan(admissionIdx[1]);
   });
 
   it("single-flight: two concurrent executes share one admission", async () => {
