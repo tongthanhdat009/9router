@@ -141,6 +141,28 @@ describe("freebuff executor lifecycle", () => {
     expect(finish.body.errorMessage).toContain("upstream 500");
     expect(finish.body.directCredits).toBe(0);
   });
+  it("FINISH carries the error outcome when chat returns a non-OK response", async () => {
+    const executor = new FreebuffExecutor();
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      calls.push({ url: String(url), body: JSON.parse(options.body) });
+      if (JSON.parse(options.body).status === "START") return startOk();
+      return ok({}); // FINISH endpoint accepted
+    });
+    const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockResolvedValue({
+      response: new Response(JSON.stringify({ message: "No runId found in request body" }), { status: 400, headers: { "content-type": "application/json" } }),
+      url: CHAT_URL,
+      headers: {},
+      transformedBody: {},
+    });
+    const result = await run(executor);
+    superExecute.mockRestore();
+    expect(result.response.status).toBe(400);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const finish = calls.find((call) => call.body.status === "FINISH");
+    expect(finish.body.runId).toBe("run-7");
+    expect(finish.body.errorMessage).toContain("HTTP 400");
+  });
 
   it("FINISH rejection stays silent even when unhandled", async () => {
     const executor = new FreebuffExecutor();

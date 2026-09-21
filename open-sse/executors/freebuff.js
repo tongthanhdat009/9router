@@ -89,7 +89,9 @@ export class FreebuffExecutor extends DefaultExecutor {
     let failure = null;
     try {
       // START mints the reserved run id, so an earlier generic preparation cannot be reused.
-      return await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest: null });
+      const result = await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest: null });
+      if (!result.response.ok) failure = new Error("Chat request failed with HTTP " + result.response.status);
+      return result;
     } catch (error) {
       failure = error;
       throw error;
