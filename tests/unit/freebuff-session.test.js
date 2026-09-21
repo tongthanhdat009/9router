@@ -27,7 +27,15 @@ function admissionOk(instanceId, expiresAtMs) {
     status: 200,
     statusText: "OK",
     headers: new Headers(),
-    text: () => Promise.resolve(JSON.stringify({ status: "active", instanceId, expiresAt: iso(expiresAtMs), remainingMs: expiresAtMs - BASE })),
+    text: () => Promise.resolve(JSON.stringify({
+      status: "active",
+      instanceId,
+      expiresAt: iso(expiresAtMs),
+      remainingMs: expiresAtMs - BASE,
+      admittedAt: iso(BASE),
+      accessTier: "limited",
+      freebucks: { daily: { limit: 25, spent: 5, remaining: 20 } },
+    })),
   };
 }
 
@@ -158,10 +166,21 @@ describe("FreeBuff free-session mode", () => {
     const entry = await ensureFreeSession(creds(), MODEL, console);
     expect(entry.instanceId).toBe("inst-hb");
     expect(entry.expiresAt).toBe(BASE + 30 * 60 * 1000);
+    // Admission metadata is preserved on the seat entry (goal: never discard it).
+    expect(entry.accessTier).toBe("limited");
+    expect(entry.freebucks.daily.remaining).toBe(20);
+    expect(entry.remainingMs).toBe(30 * 60 * 1000);
+    expect(entry.admittedAt).toBe(iso(BASE));
     await vi.advanceTimersByTimeAsync(33_000); // heartbeat period is 30s +/- 2s
     expect(entry.expiresAt).toBe(BASE + 2 * 60 * 60 * 1000);
+    // Compact heartbeat omits freebucks/accessTier/remainingMs/admittedAt: carry forward, never blank.
+    expect(entry.freebucks.daily.remaining).toBe(20);
+    expect(entry.accessTier).toBe("limited");
+    expect(entry.remainingMs).toBe(30 * 60 * 1000);
+    expect(entry.admittedAt).toBe(iso(BASE));
     const again = await ensureFreeSession(creds(), MODEL, console);
     expect(again).toBe(entry);
+    expect(again.freebucks.daily.remaining).toBe(20);
     expect(admissions).toBe(1);
   });
 
@@ -205,6 +224,216 @@ describe("FreeBuff free-session mode", () => {
     expect(next).not.toBe(entry);
     expect(next.instanceId).toBe("inst-s2");
     expect(admissions).toBe(2);
+  });
+
+  it("purges the seat when the heartbeat reports the seat gone and the next request re-admits exactly once", async () => {
+    const executor = new FreebuffExecutor();
+    let admissions = 0;
+    const chatInstances = [];
+    let heartbeats = 0;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-gone-" + admissions, BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") {
+        heartbeats += 1;
+        if (heartbeats === 1) return { ok: false, status: 404, statusText: "Not Found", headers: new Headers(), text: () => Promise.resolve("") };
+        return sessionResponse({ status: "active", expiresAt: iso(BASE + 2 * 60 * 60 * 1000) });
+      }
+      if (url === AGENT_RUNS) return startOk();
+      if (url === CHAT_URL) {
+        const body = JSON.parse(options.body);
+        chatInstances.push(body.codebuff_metadata.freebuff_instance_id);
+        return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    const first = await runExecutor(executor);
+    await first.response.text();
+    expect(chatInstances[0]).toBe("inst-gone-1");
+    await vi.advanceTimersByTimeAsync(33_000); // heartbeat fires -> 404 -> purge
+    const second = await runExecutor(executor);
+    await second.response.text();
+    expect(admissions).toBe(2);
+    expect(chatInstances[1]).toBe("inst-gone-2");
+    expect(chatInstances[1]).not.toBe(chatInstances[0]);
+    const third = await runExecutor(executor);
+    await third.response.text();
+    expect(admissions).toBe(2); // S2 reused, no admit storm
+    expect(chatInstances[2]).toBe("inst-gone-2");
+  });
+
+  it("keeps the seat when the heartbeat fails transiently (429/5xx)", async () => {
+    const executor = new FreebuffExecutor();
+    let admissions = 0;
+    const chatInstances = [];
+    let heartbeats = 0;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-keep", BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") {
+        heartbeats += 1;
+        if (heartbeats === 1) return { ok: false, status: 429, statusText: "Too Many Requests", headers: new Headers(), text: () => Promise.resolve("") };
+        return sessionResponse({ status: "active", expiresAt: iso(BASE + 2 * 60 * 60 * 1000) });
+      }
+      if (url === AGENT_RUNS) return startOk();
+      if (url === CHAT_URL) {
+        const body = JSON.parse(options.body);
+        chatInstances.push(body.codebuff_metadata.freebuff_instance_id);
+        return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    const first = await runExecutor(executor);
+    await first.response.text();
+    await vi.advanceTimersByTimeAsync(33_000); // heartbeat fires -> 429 -> keep
+    const second = await runExecutor(executor);
+    await second.response.text();
+    expect(admissions).toBe(1);
+    expect(second.response.status).toBe(200);
+    expect(chatInstances).toEqual(["inst-keep", "inst-keep"]); // same S1 reused
+  });
+
+  it("purges the seat and surfaces the error when chat returns a terminal gate rejection", async () => {
+    const executor = new FreebuffExecutor();
+    let admissions = 0;
+    const chatInstances = [];
+    let gateMode = false;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-gate-" + admissions, BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") return sessionResponse({ status: "active", expiresAt: iso(BASE + 2 * 60 * 60 * 1000) });
+      if (url === AGENT_RUNS) return startOk();
+      if (url === CHAT_URL) {
+        if (gateMode) {
+          return {
+            ok: false,
+            status: 410,
+            statusText: "Gone",
+            headers: new Headers({ "Content-Type": "application/json" }),
+            text: () => Promise.resolve(JSON.stringify({ error: "session_expired", message: "session expired" })),
+          };
+        }
+        const body = JSON.parse(options.body);
+        chatInstances.push(body.codebuff_metadata.freebuff_instance_id);
+        return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    const first = await runExecutor(executor);
+    await first.response.text();
+    expect(chatInstances[0]).toBe("inst-gate-1");
+    gateMode = true;
+    const gated = await runExecutor(executor);
+    // Identical response surfaced: status + body preserved, never swallowed into a retry.
+    expect(gated.response.status).toBe(410);
+    expect(await gated.response.json()).toEqual({ error: "session_expired", message: "session expired" });
+    expect(admissions).toBe(1); // no same-turn retry
+    // S1 is gone: next turn admits S2 exactly once and stays on it.
+    gateMode = false;
+    const second = await runExecutor(executor);
+    await second.response.text();
+    expect(admissions).toBe(2);
+    expect(chatInstances[1]).toBe("inst-gate-2");
+    const third = await runExecutor(executor);
+    await third.response.text();
+    expect(admissions).toBe(2);
+    expect(chatInstances[2]).toBe("inst-gate-2");
+  });
+
+  it("keeps the seat on non-session chat errors (incl. code/status half-matches)", async () => {
+    const cases = [
+      ["session_limit_reached 409 (row fine)", 409, { error: "session_limit_reached" }],
+      ["waiting_room_queued 429 (transient)", 429, { error: "waiting_room_queued" }],
+      ["model_unavailable 410 (request-terminal)", 410, { error: "model_unavailable" }],
+      ["plain 500 boom", 500, { error: "boom" }],
+      ["session_expired code + 500 status (must BOTH match)", 500, { error: "session_expired" }],
+      ["nested OpenAI-style code with wrong status", 500, { error: { code: "session_expired", message: "x" } }],
+    ];
+    for (const [name, status, payload] of cases) {
+      _resetSessionsForTests();
+      vi.mocked(proxyAwareFetch).mockReset();
+      let admissions = 0;
+      let chatFails = true;
+      const chatInstances = [];
+      vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+        if (url === ADMISSION_URL) {
+          admissions += 1;
+          return admissionOk("inst-nk", BASE + 60 * 60 * 1000);
+        }
+        if (url === SESSION_URL && options.method === "GET") return sessionResponse({ status: "active", expiresAt: iso(BASE + 2 * 60 * 60 * 1000) });
+        if (url === AGENT_RUNS) return startOk();
+        if (url === CHAT_URL) {
+          if (chatFails) {
+            return {
+              ok: false,
+              status,
+              statusText: "Err",
+              headers: new Headers({ "Content-Type": "application/json" }),
+              text: () => Promise.resolve(JSON.stringify(payload)),
+            };
+          }
+          const body = JSON.parse(options.body);
+          chatInstances.push(body.codebuff_metadata.freebuff_instance_id);
+          return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+        }
+        throw new Error("unexpected fetch " + url + " " + options.method);
+      });
+      const executor = new FreebuffExecutor();
+      // Turn 1: chat gates -> error surfaced, but the seat must SURVIVE every case.
+      const first = await runExecutor(executor);
+      expect(first.response.status, name).toBe(status);
+      // Turn 2: chat 200 -> S1 reused with ZERO further admissions.
+      chatFails = false;
+      const second = await runExecutor(executor);
+      await second.response.text();
+      expect(second.response.status, name).toBe(200);
+      expect(admissions, name).toBe(1);
+      expect(chatInstances, name).toEqual(["inst-nk"]);
+    }
+  });
+
+  it("purges the seat on chat 409 session_superseded", async () => {
+    const executor = new FreebuffExecutor();
+    let admissions = 0;
+    let gateMode = false;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-sup-" + admissions, BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") return sessionResponse({ status: "active", expiresAt: iso(BASE + 2 * 60 * 60 * 1000) });
+      if (url === AGENT_RUNS) return startOk();
+      if (url === CHAT_URL) {
+        if (gateMode) {
+          return {
+            ok: false,
+            status: 409,
+            statusText: "Conflict",
+            headers: new Headers({ "Content-Type": "application/json" }),
+            text: () => Promise.resolve(JSON.stringify({ error: "session_superseded", message: "taken over" })),
+          };
+        }
+        return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    const first = await runExecutor(executor);
+    await first.response.text();
+    gateMode = true;
+    const gated = await runExecutor(executor);
+    expect(gated.response.status).toBe(409);
+    expect(admissions).toBe(1);
+    gateMode = false;
+    const second = await runExecutor(executor);
+    await second.response.text();
+    expect(admissions).toBe(2); // next-request auto-admit (gateway fresh-seat behavior)
+    expect(second.response.status).toBe(200);
   });
 
   it("releases the old session with DELETE when the model switches on the same connection", async () => {
@@ -270,6 +499,27 @@ describe("FreeBuff free-session mode", () => {
     expect(other.instanceId).toBe("inst-a2");
     expect(admissions).toBe(2);
     expect(seen.filter((c) => c.endsWith("DELETE"))).toEqual([]); // never release another account's session
+  });
+
+  it("refuses an anonymous seat when credentials carry no connectionId", async () => {
+    const executor = new FreebuffExecutor();
+    const noId = { accessToken: "free-token", providerSpecificData: { userId: "u-1" } };
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
+      calls.push(String(url));
+      throw new Error("unexpected fetch " + url);
+    });
+    // (a) Through the executor: 400 contract, zero upstream traffic.
+    const result = await runExecutor(executor, { creds: noId });
+    expect(result.response.status).toBe(400);
+    expect(await result.response.text()).toContain("connectionId missing");
+    expect(calls).toEqual([]);
+    // (b) Direct call: the exported seat manager throws too — no shared undefined key.
+    // (FreebuffSessionError.message is the generic admission prefix; the contract lives in bodyText.)
+    const direct = await ensureFreeSession(noId, MODEL, null).catch((e) => e);
+    expect(direct).toBeInstanceOf(FreebuffSessionError);
+    expect(direct.status).toBe(400);
+    expect(direct.bodyText).toContain("connectionId missing");
   });
 
   it("free-mode system rewrite is idempotent once canonized", async () => {

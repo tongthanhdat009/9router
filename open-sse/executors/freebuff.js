@@ -50,6 +50,18 @@ const BUFFY_OPENINGS = {
   base2: "You are Buffy, the strategic coding assistant.",
   base3: "You are Buffy, the coding agent behind Codebuff.",
 };
+// Upstream chat/session gate, endsTheSession:true rows only (wire contract:
+// /mnt/ssd-250gb/freebuff common/src/types/freebuff-session.ts:1200-1224 @ bfe8408).
+// A chat rejection is the gate ONLY when the body's error code AND the HTTP
+// status BOTH match; endsTheSession:false codes (session_limit_reached/409,
+// waiting_room_queued/429, model_unavailable/410) leave the seat alive.
+const TERMINAL_GATE_STATUS = {
+  waiting_room_required: 428,
+  session_expired: 410,
+  session_superseded: 409,
+  session_model_mismatch: 409,
+};
+
 // Verified per-model free roots (free-agents.ts:166-185,418-447,530-535).
 export const FREE_ROOT_BY_MODEL = {
   "z-ai/glm-5.3-flash": "base3-free-glm-5-3-flash",
@@ -133,13 +145,23 @@ async function heartbeatFreeSession(entry, credentials, log, key) {
       headers: { ...sessionAuthHeaders(credentials), "x-freebuff-instance-id": entry.instanceId, "x-freebuff-compact-session": "1" },
       signal: AbortSignal.timeout(ADMISSION_TIMEOUT_MS),
     }, null);
-    if (!response.ok) return; // transient upstream error: keep the entry as-is
+    if (!response.ok) {
+      // Upstream gone-signal: GET /session 404 -> callFreebuffSession synthesizes {status:'none'}
+      // (freebuff-session-api.ts) = terminal. Other non-OK (408/429/5xx/auth) are transient: keep.
+      if (response.status === 404) purgeFreeSession(key, log, `seat gone HTTP ${response.status}`);
+      return;
+    }
     const text = await response.text();
     let data;
     try { data = JSON.parse(text); } catch { return; }
     if (data?.status === "active" && data?.expiresAt) {
       const expiresAt = Date.parse(data.expiresAt);
       if (!Number.isNaN(expiresAt)) entry.expiresAt = expiresAt;
+      // Only overwrite present fields: absent fields carry forward, never blank.
+      if (data.freebucks !== undefined) entry.freebucks = data.freebucks;
+      if (data.remainingMs !== undefined) entry.remainingMs = data.remainingMs;
+      if (data.accessTier !== undefined) entry.accessTier = data.accessTier;
+      if (data.admittedAt !== undefined) entry.admittedAt = data.admittedAt;
     } else if (data?.status === "ended") {
       entry.status = "ended";
       entry.graceUntil = entry.expiresAt + GRACE_MS;
@@ -186,6 +208,11 @@ async function admitFreeSession(credentials, model, log, key) {
     throw new FreebuffSessionError(502, text, null);
   }
   const entry = { fp: tokenFingerprint(credentials?.accessToken), model, instanceId: data.instanceId, expiresAt, status: data.status };
+  // Preserve admission metadata (official mergeCompactActiveSession carries it the same way).
+  if (data.freebucks !== undefined) entry.freebucks = data.freebucks;
+  if (data.remainingMs !== undefined) entry.remainingMs = data.remainingMs;
+  if (data.accessTier !== undefined) entry.accessTier = data.accessTier;
+  if (data.admittedAt !== undefined) entry.admittedAt = data.admittedAt;
   if (entry.status === "ended") entry.graceUntil = entry.expiresAt + GRACE_MS;
   freeSessions.set(key, entry);
   startFreeSessionHeartbeat(entry, credentials, log, key);
@@ -197,7 +224,13 @@ async function admitFreeSession(credentials, model, log, key) {
 // admission (single-flight); a different model or account on the same
 // connection releases/purges the previous session first.
 export async function ensureFreeSession(credentials, model, log) {
-  const key = credentials?.connectionId || "anonymous";
+  // Never key a seat by a shared fallback: without the real account identity
+  // two unrelated accounts would thrash one upstream seat (single model-bound
+  // slot per account). execute() converts this into the 400 contract.
+  if (!credentials?.connectionId) {
+    throw new FreebuffSessionError(400, JSON.stringify({ error: { message: "FreeBuff free mode requires a provider connection (connectionId missing); refusing to share an anonymous free session." } }), null);
+  }
+  const key = credentials.connectionId;
   const fp = tokenFingerprint(credentials?.accessToken);
   for (;;) {
     const entry = freeSessions.get(key);
@@ -412,8 +445,17 @@ export class FreebuffExecutor extends DefaultExecutor {
       // START mints the reserved run id, so an earlier generic preparation cannot be reused.
       const result = await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest: null });
       if (!result.response.ok) {
+        // Buffer the (small) error body so a terminal chat-gate rejection can
+        // purge the dead seat, then hand the caller the identical response.
+        const raw = await result.response.text();
+        let parsed = null;
+        try { parsed = JSON.parse(raw); } catch { /* non-JSON error body */ }
+        const gateCode = typeof parsed?.error === "string" ? parsed.error : typeof parsed?.error?.code === "string" ? parsed.error.code : null;
+        if (session && gateCode && TERMINAL_GATE_STATUS[gateCode] === result.response.status) {
+          purgeFreeSession(credentials.connectionId, log, `chat gate ${gateCode}`);
+        }
         postFinish({ runId, status: "failed", errorMessage: "Chat request failed with HTTP " + result.response.status, headers, proxyOptions, timeoutMs, log });
-        return result;
+        return { ...result, response: new Response(raw, { status: result.response.status, statusText: result.response.statusText, headers: result.response.headers }) };
       }
       return { ...result, response: wrapWithTerminalFinish(result.response, { runId, headers, proxyOptions, timeoutMs, log, callerSignal: signal }) };
     } catch (error) {
