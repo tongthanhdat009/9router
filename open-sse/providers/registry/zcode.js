@@ -1,7 +1,7 @@
 import { CLAUDE_API_HEADERS } from "../shared.js";
 
-// ZCode (Z.ai Coding Plan) — device-flow OAuth, api.z.ai anthropic inference,
-// off-peak ticketed channel on zcode.z.ai. Coding-plan models mirror glm list.
+// ZCode (Z.ai Coding Plan) — device-flow OAuth, zcode.z.ai platform-gateway
+// anthropic inference, off-peak ticketed channel. Builtin ids mirror zcode-builtin.json.
 // Scalars inlined (no src/lib import): registry entries must not import src/
 // (bare open-sse specifier inside src constants breaks root node resolution).
 export default {
@@ -21,9 +21,13 @@ export default {
   hasOAuth: true,
   authModes: ["oauth"],
   transport: {
-    baseUrl: "https://api.z.ai/api/anthropic/v1/messages",
+    // official ZCode client rewrites api.z.ai/... to this gateway (official-coding-plan-gateway.ts:22-31).
+    baseUrl: "https://zcode.z.ai/api/v1/ultra-zai/anthropic/v1/messages",
     format: "claude",
     headers: { "anthropic-version": "2023-06-01", ...CLAUDE_API_HEADERS },
+    // official client executes web_search upstream natively (tool-transform.ts);
+    // other tools run client-side so passthrough is correct.
+    quirks: { claudeSupportedToolTypes: ["web_search_20250305", "web_search_20260209"] },
   },
   oauth: {
     clientId: "client_P8X5CMWmlaRO9gyO-KSqtg",
@@ -33,6 +37,9 @@ export default {
   },
   features: { usage: false },
   models: [
+    // canonical official builtin ids (zcode-builtin.json); lowercase kept as legacy.
+    { id: "GLM-5.3" },
+    { id: "GLM-5.3-Flash" },
     { id: "glm-5.3" },
     { id: "glm-5.3-flash" },
     { id: "glm-5.2" },

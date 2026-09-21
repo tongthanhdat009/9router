@@ -409,7 +409,11 @@ export function createSSEStream(options = {}) {
           // Without it they can hang until timeout and trigger failover.
           // Gemini-family clients (Antigravity, Vertex, Gemini) reject this sentinel with 400 syntax errors.
           const isGeminiFamily = provider === "antigravity" || provider === "gemini" || provider === "vertex";
-          if (!streamDoneSent && !isGeminiFamily) {
+          // Passthrough means targetFormat is undefined and the wire format already
+          // equals the client format, so sourceFormat identifies the client. Claude
+          // protocol clients terminate on event: message_stop — an extra OpenAI
+          // sentinel confuses them (e.g. ZCode).
+          if (!streamDoneSent && !isGeminiFamily && sourceFormat !== FORMATS.CLAUDE) {
             const doneOutput = "data: [DONE]\n\n";
             reqLogger?.appendConvertedChunk?.(doneOutput);
             controller.enqueue(sharedEncoder.encode(doneOutput));
@@ -515,7 +519,7 @@ export function createSSETransformStreamWithLogger(targetFormat, sourceFormat, p
   });
 }
 
-export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null) {
+export function createPassthroughStreamWithLogger(provider = null, reqLogger = null, model = null, connectionId = null, body = null, onStreamComplete = null, apiKey = null, clientFormat = null) {
   return createSSEStream({
     mode: STREAM_MODE.PASSTHROUGH,
     provider,
@@ -524,6 +528,7 @@ export function createPassthroughStreamWithLogger(provider = null, reqLogger = n
     connectionId,
     body,
     onStreamComplete,
-    apiKey
+    apiKey,
+    sourceFormat: clientFormat
   });
 }

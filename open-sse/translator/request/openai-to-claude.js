@@ -184,7 +184,13 @@ Respond ONLY with the JSON object, no other text.`);
 
   // Tool choice
   if (body.tool_choice) {
-    result.tool_choice = convertOpenAIToolChoice(body.tool_choice);
+    result.tool_choice = { ...convertOpenAIToolChoice(body.tool_choice) };
+  } else if (body.parallel_tool_calls === false) {
+    result.tool_choice = { type: "auto" };
+  }
+  // OpenAI parallel_tool_calls:false maps to Claude disable_parallel_tool_use.
+  if (body.parallel_tool_calls === false && result.tool_choice) {
+    result.tool_choice.disable_parallel_tool_use = true;
   }
 
   // Thinking is normalized centrally by applyThinking (thinkingUnified.js) after translation.
@@ -304,7 +310,8 @@ function convertOpenAIToolChoice(choice) {
   // OpenAI string forms: "auto" | "none" | "required"
   if (typeof choice === "string") {
     if (choice === "required") return { type: "any" };
-    return { type: "auto" }; // "auto", "none", or anything unexpected
+    if (choice === "none") return { type: "none" };
+    return { type: "auto" }; // "auto" or anything unexpected
   }
 
   if (typeof choice === "object") {

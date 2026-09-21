@@ -29,7 +29,13 @@ function mockFlow(opts) {
       if (o.takeCode) return res({ code: o.takeCode }, o.takeCode === 3105 ? 429 : 400);
       return res({ code: 0, data: { ticket_id: "tk-1", status: "active" } });
     }
-    if (url === STATUS) return res({ code: 0, data: { status: o.status || "active", next_poll_after: 0 } });
+    if (url === STATUS) {
+      // New contract: bare GET is rejected; poll must POST {ticket_ids:[...]}.
+      if (options.method !== "POST") return res({ code: 405, msg: "method not allowed" }, 405);
+      const body = JSON.parse(options.body || "{}");
+      if (!Array.isArray(body.ticket_ids)) return res({ code: 400, msg: "ticket_ids required" }, 400);
+      return res({ code: 0, data: { tickets: body.ticket_ids.map((id) => ({ ticket_id: id, state: o.status || "active" })), next_poll_after: 0 } });
+    }
     if (url === SETTLE) return res({ code: 0, data: {} });
     throw new Error("unexpected url " + url);
   };
@@ -83,6 +89,49 @@ describe("zcode offpeak module", () => {
     expect(n).toBe(2);
   });
 
+  it("poll POSTs ticket_ids; queued waits then re-polls; ready is active", async () => {
+    let polls = 0;
+    const seen = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      options = options || {};
+      if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
+      if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
+      if (url === TAKE && options.method === "POST") return res({ code: 0, data: { ticket_id: "tk-1", status: "active" } });
+      if (url === STATUS) {
+        // bare GET must not activate: reject it
+        if (options.method !== "POST") return res({ code: 405, msg: "method not allowed" }, 405);
+        seen.push(JSON.parse(options.body || "{}"));
+        polls += 1;
+        const state = polls === 1 ? "queued" : "active";
+        return res({ code: 0, data: { tickets: [{ ticket_id: "tk-1", state }], next_poll_after: 0 } });
+      }
+      if (url === SETTLE) return res({ code: 0, data: {} });
+      throw new Error("unexpected url " + url);
+    });
+    const r = await resolveOffPeakAccess(creds("queued-conn"), "glm-5.3-flash");
+    expect(r).toEqual({ ok: true, ticketId: "tk-1" });
+    expect(polls).toBe(2);
+    for (const b of seen) expect(b).toEqual({ ticket_ids: ["tk-1"] });
+  });
+
+  it("ready state counts as active on first poll", async () => {
+    let polls = 0;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      options = options || {};
+      if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
+      if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
+      if (url === TAKE && options.method === "POST") return res({ code: 0, data: { ticket_id: "tk-r", status: "active" } });
+      if (url === STATUS && options.method === "POST") {
+        polls += 1;
+        return res({ code: 0, data: { tickets: [{ ticket_id: "tk-r", state: "ready" }], next_poll_after: 0 } });
+      }
+      if (url === SETTLE) return res({ code: 0, data: {} });
+      throw new Error("unexpected url " + url);
+    });
+    const r = await resolveOffPeakAccess(creds("ready-conn"), "glm-5.3-flash");
+    expect(r).toEqual({ ok: true, ticketId: "tk-r" });
+    expect(polls).toBe(1);
+  });
   it("skips ineligible models and missing JWT", async () => {
     vi.mocked(proxyAwareFetch).mockImplementation(mockFlow({ allowed: ["glm-5.3"] }));
     expect((await resolveOffPeakAccess(creds(), "glm-5.3-flash")).ok).toBe(false);
@@ -152,7 +201,7 @@ describe("zcode offpeak Option B (3103 backoff)", () => {
         if (takes === 1) return res({ code: 3103, data: { next_take_at: future } }, 429);
         return res({ code: 0, data: { ticket_id: "tk-late", status: "active" } });
       }
-      if (url === STATUS) return res({ code: 0, data: { status: "active", next_poll_after: 0 } });
+      if (url === STATUS && options.method === "POST") return res({ code: 0, data: { tickets: [{ ticket_id: "tk-late", state: "active" }], next_poll_after: 0 } });
       throw new Error("unexpected " + url);
     });
     const r1 = await resolveOffPeakAccess(creds(), "glm-5.3-flash");

@@ -8,10 +8,10 @@ describe("zcode Option B fixture and dashboard contract", () => {
     const handler = mockZcodeGateway({ df8d: "df8dfixture000000000001" });
     const customer = await handler(ROUTES.customerInfo, { headers: { Authorization: "raw-token" } });
     const take = await handler(ROUTES.take, { method: "POST" });
-    const status = await handler(ROUTES.status, { method: "POST" });
+    const status = await handler(ROUTES.status, { method: "POST", body: JSON.stringify({ ticket_ids: ["tk-fixture"] }) });
     expect((await customer.json()).data.codingPlanApiKey).toMatch(/^df8d/);
     expect((await take.json()).data.ticket_id).toBe("tk-fixture");
-    expect((await status.json()).data.status).toBe("active");
+    expect((await status.json()).data.tickets[0].state).toBe("active");
     expect(redacted("df8dfixture000000000001")).toBe("df8dfi...");
   });
 

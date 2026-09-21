@@ -109,14 +109,30 @@ async function postJson(url, credentials, proxyOptions = null) {
   return payload;
 }
 
+// POST /ticket/status {ticket_ids:[...]} per offPeakServerClient.ts batchStatus.
+// "ready" counts as active: the mock gateway admits then proxies on ready.
 async function pollTicketStatus(credentials, ticketId, proxyOptions = null) {
   const deadline = Date.now() + POLL_MAX_WAIT_MS;
   while (Date.now() < deadline) {
-    const payload = await getJson(ORIGIN + "/ticket/status", authHeaders(credentials), proxyOptions);
-    const data = payload?.data || {};
-    if (data.status === "active") return true;
+    const response = await proxyAwareFetch(ORIGIN + "/ticket/status", {
+      method: "POST",
+      headers: { ...authHeaders(credentials), Accept: "application/json", "Content-Type": "application/json" },
+      body: JSON.stringify({ ticket_ids: [ticketId] }),
+    }, proxyOptions);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok) {
+      const err = new Error("zcode poll failed (" + response.status + ")");
+      err.status = response.status;
+      const code = payload && (payload.code ?? payload.data?.code);
+      if (code !== undefined && code !== null) err.code = code;
+      throw err;
+    }
+    const data = payload?.data || payload || {};
+    const entry = Array.isArray(data.tickets) ? data.tickets.find((t) => t.ticket_id === ticketId) : null;
+    const state = entry ? entry.state : data.status;
+    if (state === "active" || state === "ready") return true;
     const waitMs = Math.min(30, Math.max(1, Number(data.next_poll_after) || 2)) * 1000;
-    if (Date.now() + waitMs > deadline) return data.status === "active";
+    if (Date.now() + waitMs > deadline) return state === "active" || state === "ready";
     await new Promise((resolve) => setTimeout(resolve, waitMs));
   }
   return false;

@@ -7,7 +7,8 @@ import { resolveOffPeakAccess, settleTicket } from "../services/offpeak/zcode.js
 import { ensureCodingPlanKey, invalidateCodingPlanKey, mintCodingPlanKey } from "../services/zcodeKey.js";
 
 const ZCODE_OFFPEAK_URL = "https://zcode.z.ai/api/v1/off-peak/anthropic/v1/messages";
-const ZCODE_NORMAL_URL = "https://api.z.ai/api/anthropic/v1/messages";
+// official ZCode client rewrites api.z.ai/... to this gateway (official-coding-plan-gateway.ts:22-31).
+const ZCODE_NORMAL_URL = "https://zcode.z.ai/api/v1/ultra-zai/anthropic/v1/messages";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 

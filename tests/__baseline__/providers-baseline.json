@@ -683,7 +683,7 @@
     "tokenUrl": "https://auth.meta.com/oidc/device/token/"
   },
   "zcode": {
-    "baseUrl": "https://api.z.ai/api/anthropic/v1/messages",
+    "baseUrl": "https://zcode.z.ai/api/v1/ultra-zai/anthropic/v1/messages",
     "format": "claude",
     "headers": {
       "anthropic-version": "2023-06-01",
@@ -691,7 +691,13 @@
       "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14"
     },
     "clientId": "client_P8X5CMWmlaRO9gyO-KSqtg",
-    "tokenUrl": "https://zcode.z.ai/api/v1/oauth/token"
+    "tokenUrl": "https://zcode.z.ai/api/v1/oauth/token",
+    "quirks": {
+      "claudeSupportedToolTypes": [
+        "web_search_20250305",
+        "web_search_20260209"
+      ]
+    }
   },
   "mmf": {
     "baseUrl": "https://api.xiaomimimo.com/api/free-ai/openai/chat",

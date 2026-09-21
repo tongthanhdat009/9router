@@ -19,8 +19,11 @@ function openWindow() {
     if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
     if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
     if (url === TAKE && options.method === "POST") return res({ code: 0, data: { ticket_id: "tk-e1", status: "active" } });
-    if (url === STATUS) return res({ code: 0, data: { status: "active", next_poll_after: 0 } });
-    throw new Error("unexpected " + url);
+    if (url === STATUS && options.method === "POST") {
+      const ids = JSON.parse(options.body || "{}").ticket_ids;
+      if (Array.isArray(ids) && ids.length) return res({ code: 0, data: { tickets: [{ ticket_id: ids[0], state: "active" }], next_poll_after: 0 } });
+    }
+    throw new Error("unexpected " + url + " " + (options.method || "GET"));
   };
 }
 function closedWindow() {
@@ -34,7 +37,7 @@ function baseCreds(id) {
   return { connectionId: id || "c-exec", rawHeaders: {}, providerSpecificData: { zcodeJwtToken: "jwt-1", codingPlanApiKey: "key-1", deviceId: "dev-1", userId: "u-1" } };
 }
 function okUpstream() {
-  return { response: { ok: true, status: 200 }, url: "https://api.z.ai/api/anthropic/v1/messages", headers: {}, transformedBody: {} };
+  return { response: { ok: true, status: 200 }, url: "https://zcode.z.ai/api/v1/ultra-zai/anthropic/v1/messages", headers: {}, transformedBody: {} };
 }
 
 describe("zcode executor", () => {
@@ -86,7 +89,7 @@ describe("zcode executor", () => {
     const superExecute = vi.spyOn(Object.getPrototypeOf(ZcodeExecutor.prototype), "execute").mockResolvedValue(okUpstream());
     await executor.execute({ model: "glm-5.3-flash", body: { model: "glm-5.3-flash", messages: [] }, stream: false, credentials, log: console });
     expect(credentials.__zcodeChannel.channel).toBe("normal");
-    expect(executor.buildUrl("m", false, 0, credentials)).toBe("https://api.z.ai/api/anthropic/v1/messages");
+    expect(executor.buildUrl("m", false, 0, credentials)).toBe("https://zcode.z.ai/api/v1/ultra-zai/anthropic/v1/messages");
     const headers = executor.buildHeaders(credentials, false, null, null, {});
     expect(headers["x-api-key"]).toBe("key-1");
     expect(headers["Authorization"]).toBe("Bearer key-1");
@@ -122,7 +125,7 @@ describe("zcode executor", () => {
       if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
       if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
       if (url === TAKE && options.method === "POST") { takes += 1; return res({ code: 0, data: { ticket_id: "tk-" + takes, status: "active" } }); }
-      if (url === STATUS) return res({ code: 0, data: { status: "active", next_poll_after: 0 } });
+      if (url === STATUS && options.method === "POST") return res({ code: 0, data: { tickets: [{ ticket_id: "tk-" + takes, state: "active" }], next_poll_after: 0 } });
       if (String(url).endsWith("/settle")) return res({ code: 0, data: {} });
       throw new Error("unexpected " + url);
     });
@@ -185,7 +188,7 @@ describe("zcode executor Option B (key provisioning)", () => {
       if (url === BALANCE) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
       if (url === AVAIL) return res({ code: 0, data: { can_take_number: true } });
       if (url === TAKE && options.method === "POST") return res({ code: 0, data: { ticket_id: "tk-b2", status: "active" } });
-      if (url === STATUS) return res({ code: 0, data: { status: "active", next_poll_after: 0 } });
+      if (url === STATUS && options.method === "POST") return res({ code: 0, data: { tickets: [{ ticket_id: "tk-b2", state: "active" }], next_poll_after: 0 } });
       throw new Error("unexpected " + url);
     });
     const executor = new ZcodeExecutor();

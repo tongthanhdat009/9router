@@ -37,7 +37,12 @@ export function mockZcodeGateway(opts) {
     if (url === ROUTES.balance) return res({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["glm-5.3-flash"] } } } });
     if (url === ROUTES.availability) return res({ code: 0, data: { can_take_number: true } });
     if (url === ROUTES.take && options.method === "POST") { state.takes += 1; return res({ code: 0, data: { ticket_id: "tk-fixture", status: "active" } }); }
-    if (url === ROUTES.status) return res({ code: 0, data: { status: "active", next_poll_after: 0 } });
+    if (url === ROUTES.status) {
+      if (options.method !== "POST") return res({ code: 405, msg: "method not allowed" }, 405);
+      const body = JSON.parse(options.body || "{}");
+      const ids = Array.isArray(body.ticket_ids) ? body.ticket_ids : [];
+      return res({ code: 0, data: { tickets: ids.map((id) => ({ ticket_id: id, state: "active" })), next_poll_after: 0 } });
+    }
     throw new Error("fixture: unexpected " + url);
   };
 }
