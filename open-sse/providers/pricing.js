@@ -100,7 +100,7 @@ export const MODEL_PRICING = {
   "kimi-k2-thinking":             { input: 1.50,  output: 6.00,  cached: 0.75,  reasoning: 9.00,   cache_creation: 1.50  },
   "kimi-k2.5":                    { input: 1.20,  output: 4.80,  cached: 0.60,  reasoning: 7.20,   cache_creation: 1.20  },
   "kimi-k2.5-thinking":           { input: 1.80,  output: 7.20,  cached: 0.90,  reasoning: 10.80,  cache_creation: 1.80  },
-  "kimi-k2.6":                    { input: 1.00,  output: 4.00,  cached: 0.50,  reasoning: 6.00,   cache_creation: 1.00  },
+  "kimi-k2.6":                    { input: 0.95,  output: 4.00,  cached: 0.16,  reasoning: 4.00,   cache_creation: 0.95  }, // official platform.moonshot.ai; cache per OR moonshotai/kimi-k2.6
   "kimi-latest":                  { input: 1.00,  output: 4.00,  cached: 0.50,  reasoning: 6.00,   cache_creation: 1.00  },
 
   // === DeepSeek ===
@@ -129,6 +129,24 @@ export const MODEL_PRICING = {
   // === Grok ===
   "grok-code-fast-1":             { input: 0.50,  output: 2.00,  cached: 0.25,  reasoning: 3.00,   cache_creation: 0.50  },
 
+  // === Catalog additions — official lab pricing where published, else current OpenRouter public catalog ($/1M tokens) ===
+  "gpt-6-astra":                  { input: 10.00, output: 50.00, cached: 1.00, cache_creation: 12.50 }, // upstream; OR openai/gpt-6-astra
+  "deepseek-v4.1-flash":          { input: 0.15,  output: 0.60,  cached: 0.003 }, // upstream; OR deepseek/deepseek-v4.1-flash
+  "deepseek-flash":               { input: 0.30,  output: 1.20,  cached: 0.006 }, // upstream; official api-docs.deepseek.com flash rate
+  "o3":                           { input: 2.00,  output: 8.00,  cached: 0.50 }, // official OpenAI; OR openai/o3
+  "mistral-large-latest":         { input: 0.50,  output: 1.50 }, // official docs.mistral.ai
+  "codestral-latest":             { input: 0.30,  output: 0.90,  cached: 0.03 }, // official docs.mistral.ai; cache per OR codestral-2508
+  "mistral-medium-latest":        { input: 1.50,  output: 7.50 }, // OR mistralai/mistral-medium-3-5
+  "command-r-plus-08-2024":       { input: 2.50,  output: 10.00 }, // OR cohere/command-r-plus-08-2024
+  "command-r-08-2024":            { input: 0.15,  output: 0.60 }, // OR cohere/command-r-08-2024
+  "command-a-03-2025":            { input: 2.50,  output: 10.00 }, // OR cohere/command-a
+  "gpt-oss-120b":                 { input: 0.15,  output: 0.60,  cached: 0.075 }, // OR openai/gpt-oss-120b
+  "llama-3.3-70b":                { input: 0.10,  output: 0.32 }, // OR meta-llama/llama-3.3-70b-instruct
+  "llama-4-scout-17b-16e-instruct": { input: 0.10, output: 0.30 }, // OR meta-llama/llama-4-scout
+  "gemma-4-31b-it":               { input: 0.09,  output: 0.34,  cached: 0.05 }, // OR google/gemma-4-31b-it
+  "longcat-2.0":                  { input: 0.30,  output: 1.20,  cached: 0.006 }, // OR meituan/longcat-2.0
+  "nemotron-3-ultra-550b-a55b":   { input: 0.60,  output: 2.40,  cached: 0.12 }, // OR nvidia/nemotron-3-ultra-550b-a55b
+  "nemotron-3-super-120b-a12b":   { input: 0.08,  output: 0.45 }, // OR nvidia/nemotron-3-super-120b-a12b
   // === OpenRouter fallback ===
   "auto":                         { input: 2.00,  output: 8.00,  cached: 1.00,  reasoning: 12.00,  cache_creation: 2.00  },
 
@@ -145,6 +163,138 @@ export const MODEL_PRICING = {
  * Keyed by provider alias (cc, cx, gc, gh, ...) or provider id (openai, anthropic, ...).
  */
 export const PROVIDER_PRICING = {
+  // Official USD: Morph https://www.morphllm.com/api/models/json ($/token x 1M).
+  morph: {
+    "morph-v3-large": { input: 0.90, output: 1.90, cached: 0.90, reasoning: 1.90, cache_creation: 0.90 },
+    "morph-v3-fast": { input: 0.80, output: 1.20, cached: 0.80, reasoning: 1.20, cache_creation: 0.80 },
+    "morph-dsv4flash": { input: 0.141953, output: 0.399625, cached: 0.0359375, reasoning: 0.399625, cache_creation: 0 },
+  },
+  // Official USD: Cloudflare Workers AI pricing page ($/1M tokens).
+  "cloudflare-ai": {
+    "@cf/meta/llama-3.2-1b-instruct": { input: 0.027, output: 0.201, cached: 0.027, reasoning: 0.201, cache_creation: 0.027 },
+    "@cf/meta/llama-3.2-3b-instruct": { input: 0.051, output: 0.335, cached: 0.051, reasoning: 0.335, cache_creation: 0.051 },
+    "@cf/meta/llama-3.1-8b-instruct-fp8-fast": { input: 0.045, output: 0.384, cached: 0.045, reasoning: 0.384, cache_creation: 0.045 },
+    "@cf/meta/llama-3.1-8b-instruct-awq": { input: 0.123, output: 0.266, cached: 0.123, reasoning: 0.266, cache_creation: 0.123 },
+    "@cf/mistralai/mistral-small-3.1-24b-instruct": { input: 0.351, output: 0.555, cached: 0.351, reasoning: 0.555, cache_creation: 0.351 },
+    "@cf/meta/llama-3.1-70b-instruct-fp8-fast": { input: 0.293, output: 2.253, cached: 0.293, reasoning: 2.253, cache_creation: 0.293 },
+    "@cf/meta/llama-3.3-70b-instruct-fp8-fast": { input: 0.293, output: 2.253, cached: 0.293, reasoning: 2.253, cache_creation: 0.293 },
+    "@cf/qwen/qwq-32b": { input: 0.660, output: 1.00, cached: 0.660, reasoning: 1.00, cache_creation: 0.660 },
+  },
+  // Current OpenRouter public catalog ($/1M tokens).
+  byteplus: {
+    "seed-2-0-code-preview-260328": { input: 0.50, output: 3.00 }, // OR bytedance-seed/seed-2.0-code
+    "seed-2-0-mini-260215": { input: 0.10, output: 0.40 }, // OR bytedance-seed/seed-2.0-mini
+    "seed-2-0-lite-260228": { input: 0.25, output: 2.00 }, // OR bytedance-seed/seed-2.0-lite
+    "gpt-oss-120b-250805": { input: 0.15, output: 0.60, cached: 0.075 }, // OR openai/gpt-oss-120b
+  },
+  cerebras: {
+    "zai-glm-4.7": { input: 0.40, output: 1.75, cached: 0.08 }, // OR z-ai/glm-4.7 (host id differs from canonical glm-4.7)
+  },
+  cl: { "kwaipilot/kat-coder-pro": { input: 0.30, output: 1.20, cached: 0.06 } }, // OR kwaipilot/kat-coder-pro-v2
+  cbcn: {
+    hy3: { input: 0.132, output: 0.528, cached: 0.033 }, // OR tencent/hy3
+    "hy3-x": { input: 0.132, output: 0.528, cached: 0.033 }, // same HY3 endpoint variant
+    "hy4-preview": { input: 0.834, output: 2.501, cached: 0.042 }, // OR tencent/hy4-preview
+    "hy4-preview-x": { input: 0.834, output: 2.501, cached: 0.042 }, // same HY4 endpoint variant
+  },
+  clinepass: {
+    "cline-pass/mimo-v2.5": { input: 0.14, output: 0.28, cached: 0.0028 }, // OR xiaomi/mimo-v2.5
+    "cline-pass/mimo-v2.5-pro": { input: 0.435, output: 0.87, cached: 0.0036 }, // OR xiaomi/mimo-v2.5-pro
+  },
+  commandcode: { "stepfun/Step-3.5-Flash": { input: 0.10, output: 0.30 } }, // OR stepfun/step-3.5-flash
+  fireworks: { "accounts/fireworks/models/llama-v3p3-70b-instruct": { input: 0.10, output: 0.32 } }, // OR meta-llama/llama-3.3-70b-instruct
+  groq: {
+    "llama-3.3-70b-versatile": { input: 0.10, output: 0.32 }, // OR meta-llama/llama-3.3-70b-instruct
+    "meta-llama/llama-4-maverick-17b-128e-instruct": { input: 0.20, output: 0.80 }, // OR meta-llama/llama-4-maverick
+  },
+  hyperbolic: {
+    "meta-llama/Llama-3.3-70B-Instruct": { input: 0.10, output: 0.32 }, // OR meta-llama/llama-3.3-70b-instruct
+    "meta-llama/Llama-3.2-3B-Instruct": { input: 0.05, output: 0.33 }, // OR meta-llama/llama-3.2-3b-instruct
+    "NousResearch/Hermes-3-Llama-3.1-70B": { input: 0.70, output: 0.70 }, // OR nousresearch/hermes-3-llama-3.1-70b
+  },
+  nebius: { "meta-llama/Llama-3.3-70B-Instruct": { input: 0.10, output: 0.32 } }, // OR meta-llama/llama-3.3-70b-instruct
+  together: {
+    "meta-llama/Llama-3.3-70B-Instruct-Turbo": { input: 0.10, output: 0.32 }, // OR meta-llama/llama-3.3-70b-instruct
+    "meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8": { input: 0.20, output: 0.80 }, // OR meta-llama/llama-4-maverick
+  },
+  venice: {
+    "zai-org-glm-5": { input: 0.60, output: 1.92, cached: 0.12 }, // OR z-ai/glm-5
+    "hermes-3-llama-3.1-405b": { input: 1.00, output: 1.00 }, // OR nousresearch/hermes-3-llama-3.1-405b
+    "mistral-small-3-2-24b-instruct": { input: 0.09375, output: 0.25 }, // OR mistralai/mistral-small-3.2-24b-instruct
+  },
+  "volcengine-ark": {
+    "Doubao-Seed-2.0-Code": { input: 0.50, output: 3.00 }, // OR bytedance-seed/seed-2.0-code
+    "Doubao-Seed-2.0-lite": { input: 0.25, output: 2.00 }, // OR bytedance-seed/seed-2.0-lite
+    "Doubao-Seed-Code": { input: 0.50, output: 3.00 }, // OR bytedance-seed/seed-2.0-code
+  },
+  "xiaomi-mimo": {
+    "mimo-v2.5-pro": { input: 0.435, output: 0.87, cached: 0.0036 }, // OR xiaomi/mimo-v2.5-pro
+    "mimo-v2.5": { input: 0.14, output: 0.28, cached: 0.0028 }, // OR xiaomi/mimo-v2.5
+  },
+  "xiaomi-tokenplan": {
+    "mimo-v2.5-pro": { input: 0.435, output: 0.87, cached: 0.0036 }, // OR xiaomi/mimo-v2.5-pro
+    "mimo-v2.5-pro-claude": { input: 0.435, output: 0.87, cached: 0.0036 }, // same model, claude-native variant (upstreamModelId mimo-v2.5-pro)
+    "mimo-v2.5": { input: 0.14, output: 0.28, cached: 0.0028 }, // OR xiaomi/mimo-v2.5
+  },
+  // Current OpenRouter public catalog: meta/muse-spark-*, xiaomi/mimo-v2.5*, tencent/hy3, tencent/hy4-preview.
+  muse: {
+    "muse-spark-1.2": { input: 1.25, output: 4.25, cached: 0.15 },
+    "muse-spark-1.2-contributor": { input: 0.10, output: 0.20, cached: 0.002 },
+    "muse-spark-1.3": { input: 1.25, output: 4.25, cached: 0.15 },
+    "muse-spark-1.3-contributor": { input: 0.10, output: 0.20, cached: 0.002 },
+  },
+  "opencode-go": {
+    hy3: { input: 0.132, output: 0.528, cached: 0.033 },
+    "hy4-preview": { input: 0.834, output: 2.501, cached: 0.042 },
+    "mimo-v2.5": { input: 0.14, output: 0.28, cached: 0.0028 },
+    "mimo-v2.5-pro": { input: 0.435, output: 0.87, cached: 0.0036 },
+    "muse-spark-1.2-contributor": { input: 0.10, output: 0.20, cached: 0.002 },
+    "muse-spark-1.3": { input: 1.25, output: 4.25, cached: 0.15 },
+    "muse-spark-1.3-contributor": { input: 0.10, output: 0.20, cached: 0.002 },
+  },
+  poolside: {
+    "poolside/laguna-s-2.1": { input: 0.09, output: 0.18, cached: 0.009 }, // OR poolside/laguna-s-2.1
+    "poolside/laguna-xs-2.1": { input: 0.06, output: 0.12, cached: 0.03 }, // OR poolside/laguna-xs-2.1
+  },
+  cbai: {
+    "hy3-preview": { input: 0.18, output: 0.60, cached: 0.06 }, // OR tencent/hy3-preview
+  },
+  perplexity: {
+    "sonar-pro": { input: 3.00, output: 15.00 }, // OR perplexity/sonar-pro
+    sonar: { input: 1.00, output: 1.00 }, // OR perplexity/sonar
+  },
+  "perplexity-agent": { "perplexity/sonar": { input: 1.00, output: 1.00 } }, // OR perplexity/sonar
+  bzl: {
+    "auto:free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 }, // free-tier router, $0 marginal
+    "mimo-v2.5": { input: 0.14, output: 0.28, cached: 0.0028 }, // OR xiaomi/mimo-v2.5
+    "mimo-v2.5-pro": { input: 0.435, output: 0.87, cached: 0.0036 }, // OR xiaomi/mimo-v2.5-pro
+  },
+  // Confirmed free-tier host (registry category "freeTier").
+  kimchi: { "nemotron-3-ultra-fp4": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 } },
+  // Free/local virtual routes with genuinely zero user-facing marginal token cost.
+  oc: {
+    "muse-spark-1.2-contributor-free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "muse-spark-1.3-contributor-free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "union-alpha": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
+  mmf: { "mimo-auto": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 } }, // registry category "free" (MiMo Code Free)
+  kgw: {
+    "kilo-auto/frontier": { input: 0.74, output: 2.96, cached: 0.15 }, // OR kwaipilot/kat-coder-pro-v2.5
+    "kilo-auto/balanced": { input: 0.08, output: 0.45 }, // OR nvidia/nemotron-3-super-120b-a12b
+    "kilo-auto/free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "nvidia/nemotron-3-super-120b-a12b:free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "nvidia/nemotron-3-ultra-550b-a55b:free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "kwaipilot/kat-coder-pro-v2.5:free": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
+  ollama: { // local inference, no upstream billing
+    "gpt-oss:120b": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "kimi-k2.5": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "glm-5": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "minimax-m2.5": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "glm-4.7-flash": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "qwen3.5": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+    "minimax-m3": { input: 0, output: 0, cached: 0, reasoning: 0, cache_creation: 0 },
+  },
   // GitHub Copilot (gh) — explicit override, matches canonical gpt-5.3-codex rate
   gh: {
     "gpt-5.3-codex": { input: 1.75, output: 14.00, cached: 0.175, reasoning: 14.00, cache_creation: 1.75 },
