@@ -72,6 +72,9 @@ const SERVICE_KIND_CAPABILITIES = {
   stt: { audioInput: true },
   tts: { audioOutput: true },
   embedding: { tools: false },
+  // Decisions models (e.g. openrouter/typesafe/jev-1.13) answer typed questions
+  // (noul/choice/score) via POST /v1/decisions — never via /v1/chat/completions.
+  decisions: { decisions: true },
 };
 
 export function capabilitiesFromServiceKind(kind) {
@@ -503,7 +506,7 @@ export function findExplicitModelCaps(provider, model) {
   return null;
 }
 
-const CUSTOM_OVERRIDE_FLAGS = ["vision", "search", "reasoning"];
+const CUSTOM_OVERRIDE_FLAGS = ["vision", "search", "reasoning", "decisions"];
 const CUSTOM_OVERRIDE_MODALITIES = ["pdf", "audioInput", "videoInput"];
 
 /**

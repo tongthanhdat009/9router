@@ -12,4 +12,8 @@ describe("capabilitiesFromServiceKind", () => {
     expect(capabilitiesFromServiceKind("stt")).toMatchObject({ audioInput: true });
     expect(capabilitiesFromServiceKind("tts")).toMatchObject({ audioOutput: true });
   });
+
+  it("maps decisions service kind to the decisions toggle (openrouter/typesafe/jev-1.13)", () => {
+    expect(capabilitiesFromServiceKind("decisions")).toMatchObject({ decisions: true });
+  });
 });

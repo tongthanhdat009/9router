@@ -12,6 +12,7 @@ import { getSettings } from "@/lib/localDb";
 import { getModelInfo, getComboModels } from "../services/model.js";
 import { handleChatCore } from "open-sse/handlers/chatCore.js";
 import { buildCustomCapabilityOverride, findExplicitModelCaps } from "open-sse/providers/capabilities.js";
+import { isDecisionsModel } from "open-sse/config/providerModels.js";
 import { getCustomModels } from "@/models";
 import { DEFAULT_HEADROOM_URL } from "@/lib/headroom/detect";
 import { getTransform as getPxpipeTransform } from "@/lib/pxpipe/loader.js";
@@ -392,6 +393,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   }
 
   const { provider, model } = modelInfo;
+
+  // Decisions models (e.g. openrouter/typesafe/jev-1.13) are NOT chat models:
+  // upstream rejects them on /chat/completions with 400. Fail fast HERE — before
+  // touching credentials — so no account gets locked with a bogus rate-limit entry.
+  // Docs: https://openrouter.ai/docs/guides/community/typesafe-sdk
+  if (isDecisionsModel(provider, model)) {
+    log.warn("CHAT", `Decisions model on chat endpoint: ${provider}/${model} — use POST /v1/decisions`);
+    const msg = `[${provider}/${model}] is a decisions model and cannot be used with the chat/completions endpoint. Use POST /v1/decisions instead.`;
+    return finalizeAffinityRequest && !affinityMeta ? (finalizeAffinityRequest({ status: HTTP_STATUS.BAD_REQUEST }), errorResponse(HTTP_STATUS.BAD_REQUEST, msg)) : errorResponse(HTTP_STATUS.BAD_REQUEST, msg);
+  }
 
   // Custom models: stored tri-state capability pins must reach chatCore's
   // modality stripping — unknown != unsupported, so an unconfigured vision

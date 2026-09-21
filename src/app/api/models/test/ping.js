@@ -132,6 +132,45 @@ export async function pingModelByKind(model, kind, baseUrl = `http://127.0.0.1:$
     return { ok: true, latencyMs, error: null, status: res.status };
   }
 
+  if (kind === "decisions") {
+    const res = await fetch(`${baseUrl}/api/v1/decisions`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({
+        model,
+        // Exercises all 3 decisions question types (screenshot: noul/choice/score).
+        // Docs: https://openrouter.ai/docs/guides/community/typesafe-sdk
+        state: { ticket: "My checkout page shows a blank screen after I click Pay." },
+        questions: {
+          is_bug: { type: "noul", instructions: "Is the customer reporting a software defect?" },
+          team: {
+            type: "choice",
+            instructions: "Which team should own this ticket?",
+            criteria: { payments: "Checkout, billing, or payment processing issues.", frontend: "Rendering or layout issues." },
+          },
+          urgency: {
+            type: "score",
+            instructions: "How urgent is this ticket?",
+            criteria: ["Can wait for the next release", "Blocking revenue right now"],
+          },
+        },
+      }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const latencyMs = Date.now() - start;
+    const rawText = await res.text().catch(() => "");
+    let parsed = null;
+    try { parsed = rawText ? JSON.parse(rawText) : null; } catch {}
+    if (!res.ok) {
+      const detail = parsed?.error?.message || parsed?.msg || parsed?.message || parsed?.error || rawText;
+      return { ok: false, latencyMs, error: `HTTP ${res.status}${detail ? `: ${String(detail).slice(0, 500)}` : ""}`, status: res.status };
+    }
+    if (!parsed?.answers || typeof parsed.answers !== "object") {
+      return { ok: false, latencyMs, status: res.status, error: "Provider returned no decisions answers for this model" };
+    }
+    return { ok: true, latencyMs, error: null, status: res.status };
+  }
+
   const res = await fetch(`${baseUrl}/api/v1/chat/completions`, {
     method: "POST",
     headers,

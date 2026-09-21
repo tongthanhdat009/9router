@@ -4,7 +4,7 @@ import { RISK_NOTICE } from "@/shared/constants/providersDisplay";
 
 const MEDIA_ENTRY_KEYS = [
   "serviceKinds", "ttsConfig", "sttConfig", "embeddingConfig",
-  "imageConfig", "imageToTextConfig", "videoConfig", "musicConfig",
+  "imageConfig", "imageToTextConfig", "videoConfig", "decisionsConfig", "musicConfig",
   "searchViaChat", "searchConfig", "fetchConfig", "credentialFallback",
   "modelsFetcher", "mediaPriority", "hiddenKinds",
 ];
@@ -78,6 +78,7 @@ export const MEDIA_PROVIDER_KINDS = [
   { id: "webSearch",   label: "Web Search",     icon: "travel_explore",    endpoint: { method: "POST", path: "/v1/search" } },
   { id: "webFetch",    label: "Web Fetch",      icon: "language",          endpoint: { method: "POST", path: "/v1/web/fetch" } },
   { id: "video",       label: "Video",          icon: "movie",             endpoint: { method: "POST", path: "/v1/videos/generations" } },
+  { id: "decisions",   label: "Decisions",      icon: "rule",              endpoint: { method: "POST", path: "/v1/decisions" } },
   { id: "music",       label: "Music",          icon: "music_note",        endpoint: { method: "POST", path: "/v1/audio/music" } },
 ];
 
