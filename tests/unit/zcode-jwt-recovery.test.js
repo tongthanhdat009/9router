@@ -76,4 +76,65 @@ describe("zcode JWT renewal via generic refresh chain", () => {
     expect(text).toContain("Re-login via device flow");
     expect(text).toContain("zcode");
   });
+
+  it("refresh OK without renewed JWT, stale JWT 401s again: bounded retries then actionable re-auth", async () => {
+    // Upstream contract boundary: refresh returns a fresh accessToken but NO
+    // JWT-shaped data.token, so the off-peak channel keeps consuming the dead JWT.
+    vi.mocked(refreshZcodeToken).mockResolvedValue({ accessToken: "acc-fresh", expiresIn: 3600 });
+    const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+    const { proxyAwareFetch: paf } = await import("../../open-sse/utils/proxyFetch.js");
+    let inferenceCalls = 0;
+    let ticketCalls = [];
+    paf.mockImplementation(async (url, options = {}) => {
+      if (String(url).includes("/v1/off-peak/anthropic/v1/messages")) {
+        inferenceCalls += 1;
+        return { ok: false, status: 401, headers: { get: () => null }, json: async () => ({ code: 4001, msg: "expired jwt" }), text: async () => "expired jwt", clone() { return this; } };
+      }
+      if (String(url).includes("/zcode-plan/billing/balance")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: { configs: { offPeak: { enable_offpeak_task: true, allowed_models: ["GLM-5.3"] } } } }), text: async () => "{}" };
+      if (String(url).includes("/ticket/availability")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: { can_take_number: true } }), text: async () => "{}" };
+      if (String(url).includes("/ticket") && options.method === "POST") {
+        if (String(url).includes("/ticket/status")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: { tickets: [{ ticket_id: "tk-stale", state: "active" }], next_poll_after: 0 } }), text: async () => "{}" };
+        if (String(url).includes("/settle")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: {} }), text: async () => "{}" };
+        ticketCalls.push("take");
+        return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: { ticket_id: "tk-stale", state: "active" } }), text: async () => "{}" };
+      }
+      if (String(url).includes("/api_keys/copy/")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: { secretKey: "s1" } }), text: async () => "{}" };
+      if (String(url).includes("/api_keys")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: [{ name: "zcode-api-key", apiKey: "k1" }] }), text: async () => "{}" };
+      if (String(url).includes("getCustomerInfo")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: { organizations: [{ organizationId: "o", projects: [{ projectId: "p" }] }] } }), text: async () => "{}" };
+      if (String(url).includes("/api/auth/z/login")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ code: 0, data: { access_token: "biz" } }), text: async () => "{}" };
+      if (String(url).includes("/v1/ultra-zai/anthropic/v1/messages")) {
+        inferenceCalls += 1;
+        return { ok: false, status: 401, headers: { get: () => null }, json: async () => ({ error: { message: "still unauthorized" } }), text: async () => "still unauthorized", clone() { return this; } };
+      }
+      if (String(url).includes("/v1/oauth/token") || String(url).includes("/oauth/token")) return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({ access_token: "acc-fresh", expires_in: 3600 }), text: async () => "{}" };
+      throw new Error("stale-jwt unexpected " + url);
+    });
+    const { response } = await handleChatCore({
+      body: { model: "GLM-5.3", messages: [{ role: "user", content: "hi" }], stream: false, max_tokens: 16 },
+      modelInfo: { provider: "zcode", model: "GLM-5.3" },
+      credentials: {
+        connectionId: "jt-4", accessToken: "stale", refreshToken: "rt-4",
+        // Active cached ticket forces the off-peak channel, which consumes the dead JWT.
+        providerSpecificData: { zcodeJwtToken: "dead.jwt.no-renewal", deviceId: "d4", codingPlanApiKey: "df8d-k1.s1" },
+      },
+      log: console,
+      connectionId: "jt-4",
+      apiKey: null,
+      userAgent: "vitest",
+      onCredentialsRefreshed: async () => {},
+    });
+    const text = await response.text();
+    expect(response.status).toBe(401);
+    // Exactly 6 upstream inference attempts, all bounded: executor does 2 off-peak
+    // + 1 normal per round; chatCore allows exactly ONE post-refresh retry round.
+    expect(inferenceCalls).toBe(6);
+    // Ticket was taken once (shared across the bounded rounds).
+    expect(ticketCalls.filter((m) => m === "take")).toHaveLength(1);
+    // Actionable re-auth, not the raw "expired jwt" body.
+    expect(text).toContain("refresh did not restore access");
+    expect(text).toContain("zcode");
+    expect(text).not.toContain("expired jwt");
+  });
 });
+
+

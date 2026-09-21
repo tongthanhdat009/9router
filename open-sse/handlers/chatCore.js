@@ -456,6 +456,16 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
           providerUrl = retryResult.url;
           providerResponseFormat = retryResult.responseFormat || targetFormat;
         } catch (e) { log?.warn?.("TOKEN", `${provider.toUpperCase()} | retry after refresh failed: ${e.message}`); }
+        // Refresh succeeded but the credential the channel consumes can still be
+        // invalid (zcode off-peak consumes zcodeJwtToken; refresh may return no
+        // renewed JWT). The single bounded retry already ran — surface actionable
+        // re-auth instead of the raw upstream 401 body.
+        if (provider === "zcode" && providerResponse && (providerResponse.status === HTTP_STATUS.UNAUTHORIZED || providerResponse.status === HTTP_STATUS.FORBIDDEN)) {
+          providerResponse = new Response(JSON.stringify({ error: { message: "zcode: session expired and refresh did not restore access. Re-login via device flow (Dashboard → Connections → ZCode → Login), or paste a fresh coding-plan key from https://z.ai/manage-apikey." } }), {
+            status: HTTP_STATUS.UNAUTHORIZED,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
       } else {
         log?.warn?.("TOKEN", `${provider.toUpperCase()} | refresh failed`);
       }
