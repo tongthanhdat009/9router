@@ -29,6 +29,77 @@ function stableClientId(credentials) {
   if (!connectionClients.has(key)) connectionClients.set(key, crypto.randomUUID());
   return connectionClients.get(key);
 }
+// Fire-and-forget FINISH on an independent timeout signal: the caller signal
+// may already be aborted (client disconnect), which must not prevent closing
+// the upstream run. Status vocabulary matches the official contract:
+// 'completed' | 'failed' | 'cancelled'.
+function postFinish({ runId, status, errorMessage, headers, proxyOptions, timeoutMs, log }) {
+  const body = JSON.stringify({
+    action: "FINISH",
+    runId,
+    status,
+    totalSteps: 1,
+    directCredits: 0,
+    totalCredits: 0,
+    errorMessage: errorMessage || null,
+    steps: [],
+  });
+  let signal;
+  try {
+    signal = AbortSignal.timeout(timeoutMs);
+  } catch { signal = undefined; }
+  proxyAwareFetch(AUTH_BASE + "/api/v1/agent-runs", {
+    method: "POST",
+    headers,
+    body,
+    ...(signal ? { signal } : {}),
+  }, proxyOptions).catch((finishError) => {
+    log?.debug?.("FREEBUFF", `FINISH ${status} failed: ${finishError?.message || finishError}`);
+  });
+}
+
+// Wrap the upstream body so FINISH fires on terminal stream state, not on
+// headers-received (super.execute resolves as soon as headers arrive for
+// stream:true). Bytes pass through unchanged; FINISH fires exactly once.
+function wrapWithTerminalFinish(response, { runId, headers, proxyOptions, timeoutMs, log, callerSignal }) {
+  const original = response.body;
+  if (!original) {
+    postFinish({ runId, status: "completed", headers, proxyOptions, timeoutMs, log });
+    return response;
+  }
+  let settled = false;
+  let reader = null;
+  const settle = (status, errorMessage) => {
+    if (settled) return;
+    settled = true;
+    postFinish({ runId, status, errorMessage, headers, proxyOptions, timeoutMs, log });
+  };
+  const wrapped = new ReadableStream({
+    async start(controller) {
+      reader = original.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          controller.enqueue(value);
+        }
+        controller.close();
+        settle("completed");
+      } catch (error) {
+        const cancelled = error?.name === "AbortError" || callerSignal?.aborted;
+        settle(cancelled ? "cancelled" : "failed", String(error?.message || error).slice(0, 5000));
+        controller.error(error);
+      } finally {
+        try { reader.releaseLock(); } catch { /* already released */ }
+      }
+    },
+    async cancel(reason) {
+      settle(callerSignal?.aborted ? "cancelled" : "failed", callerSignal?.aborted ? "Request aborted" : "Response body cancelled");
+      try { await reader?.cancel(reason); } catch { /* upstream already closed */ }
+    },
+  });
+  return new Response(wrapped, { status: response.status, statusText: response.statusText, headers: response.headers });
+}
 
 export class FreebuffExecutor extends DefaultExecutor {
   constructor() {
@@ -86,32 +157,19 @@ export class FreebuffExecutor extends DefaultExecutor {
     }
 
     credentials.__freebuffRunId = runId;
-    let failure = null;
     try {
       // START mints the reserved run id, so an earlier generic preparation cannot be reused.
       const result = await super.execute({ model, body, stream, credentials, signal, log, proxyOptions, requestId, preparedRequest: null });
-      if (!result.response.ok) failure = new Error("Chat request failed with HTTP " + result.response.status);
-      return result;
+      if (!result.response.ok) {
+        postFinish({ runId, status: "failed", errorMessage: "Chat request failed with HTTP " + result.response.status, headers, proxyOptions, timeoutMs, log });
+        return result;
+      }
+      return { ...result, response: wrapWithTerminalFinish(result.response, { runId, headers, proxyOptions, timeoutMs, log, callerSignal: signal }) };
     } catch (error) {
-      failure = error;
+      const cancelled = error?.name === "AbortError" || signal?.aborted;
+      postFinish({ runId, status: cancelled ? "cancelled" : "failed", errorMessage: String(error?.message || error).slice(0, 5000), headers, proxyOptions, timeoutMs, log });
       throw error;
     } finally {
-      const finishBody = {
-        action: "FINISH",
-        runId,
-        status: failure ? "failed" : "completed",
-        totalSteps: 1,
-        directCredits: 0,
-        totalCredits: 0,
-        errorMessage: failure ? String(failure.message || failure) : null,
-        steps: [],
-      };
-      lifecycleFetch(AUTH_BASE + "/api/v1/agent-runs", {
-        method: "POST",
-        headers,
-        body: JSON.stringify(finishBody),
-        signal,
-      }, proxyOptions, timeoutMs).catch(() => {});
       delete credentials.__freebuffRunId;
     }
   }

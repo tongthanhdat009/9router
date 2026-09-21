@@ -46,7 +46,7 @@ describe("freebuff executor lifecycle", () => {
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async (args) => {
       const body = executor.transformRequest(args.model, args.body, args.stream, args.credentials);
-      return { response: ok({ done: true }), transformedBody: body };
+      return { response: new Response(null, { status: 200 }), transformedBody: body };
     });
     const result = await run(executor);
     expect(result.transformedBody.codebuff_metadata.run_id).toBe("run-7");
@@ -175,6 +175,58 @@ describe("freebuff executor lifecycle", () => {
     superExecute.mockRestore();
   });
 
+  it("FINISH waits for stream EOF and maps caller abort to cancelled", async () => {
+    const executor = new FreebuffExecutor();
+    const finishCalls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      if (JSON.parse(options.body).action === "START") return startOk();
+      finishCalls.push({ url: String(url), body: JSON.parse(options.body) });
+      return ok({ acknowledged: true });
+    });
+    const encoder = new TextEncoder();
+    const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async () => ({
+      response: new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(encoder.encode("chunk-1\n"));
+          setTimeout(() => controller.close(), 10);
+        },
+      }), { status: 200, headers: { "content-type": "text/event-stream" } }),
+      url: CHAT_URL,
+      headers: {},
+      transformedBody: {},
+    }));
+    const result = await run(executor);
+    superExecute.mockRestore();
+    expect(result.response.ok).toBe(true);
+    const text = await result.response.text();
+    expect(text).toBe("chunk-1\n");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(finishCalls.length).toBe(1);
+    expect(finishCalls[0].body).toMatchObject({ action: "FINISH", status: "completed", runId: "run-7" });
+  });
+
+  it("FINISH uses its own timeout signal so caller abort still closes the run", async () => {
+    const executor = new FreebuffExecutor();
+    const finishCalls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+      if (JSON.parse(options.body).action === "START") return startOk();
+      finishCalls.push({ url: String(url), body: JSON.parse(options.body), signal: options.signal });
+      return ok({ acknowledged: true });
+    });
+    const abortError = new Error("The operation was aborted.");
+    abortError.name = "AbortError";
+    const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockRejectedValue(abortError);
+    const controller = new AbortController();
+    controller.abort();
+    await expect(run(executor, { signal: controller.signal })).rejects.toThrowError(abortError);
+    superExecute.mockRestore();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(finishCalls.length).toBe(1);
+    expect(finishCalls[0].body).toMatchObject({ action: "FINISH", status: "cancelled", runId: "run-7" });
+    expect(finishCalls[0].signal).not.toBe(controller.signal);
+    expect(finishCalls[0].signal?.aborted ?? false).toBe(false);
+  });
+
   it("cancellation signal and proxyOptions propagate into START, chat, and FINISH fetches", async () => {
     const executor = new FreebuffExecutor();
     const controller = new AbortController();
@@ -187,7 +239,7 @@ describe("freebuff executor lifecycle", () => {
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute").mockImplementation(async (args) => {
       seen.push(["super.chat", args.signal, args.proxyOptions]);
-      return { response: ok({}) };
+      return { response: new Response(null, { status: 200 }) };
     });
     await run(executor, { signal: controller.signal, proxyOptions });
     superExecute.mockRestore();
@@ -204,7 +256,9 @@ describe("freebuff executor lifecycle", () => {
       expect(sig.aborted).toBe(false);
     }
     controller.abort();
-    for (const [, sig] of seen) expect(sig.aborted).toBe(true);
+    expect(seen.find(([url]) => url === "super.chat")[1].aborted).toBe(true);
+    // FINISH intentionally survives caller abort on its own timeout signal.
+    expect(seen.filter(([url]) => url === AGENT_RUNS).at(-1)[1].aborted).toBe(false);
   });
 
   it("START connect timeout aborts a hanging lifecycle request", async () => {
@@ -234,8 +288,10 @@ describe("freebuff executor lifecycle", () => {
       if (JSON.parse(options.body).action === "START") return startOk();
       return ok({ choices: [{ message: { role: "assistant", content: "hey" } }] });
     });
-    await run(executor, { signal: controller.signal });
-    expect(calls.length).toBe(3); // START + chat + fire-and-forget FINISH
+    const result = await run(executor, { signal: controller.signal });
+    await result.response.text(); // drain wrapped stream so terminal FINISH fires
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(calls.length).toBe(3); // START + chat + terminal FINISH
     const [chatUrl, chatOptions] = calls[1];
     expect(chatUrl).toBe(CHAT_URL);
     const chatBody = JSON.parse(chatOptions.body);
