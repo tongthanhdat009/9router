@@ -425,7 +425,12 @@ export async function handleChatCore({ body, modelInfo, credentials, log, onCred
         }
         // Do not retry the upstream — the chain is dead; fall through to error handling with 401.
         // Muse supplies a safe re-auth message; do not expose its mint body.
-        if (provider === "muse" && newCredentials.message) {
+        if (provider === "zcode") {
+          providerResponse = new Response(JSON.stringify({ error: { message: "zcode: session expired and refresh failed. Re-login via device flow (Dashboard → Connections → ZCode → Login), or paste a fresh coding-plan key from https://z.ai/manage-apikey." } }), {
+            status: HTTP_STATUS.UNAUTHORIZED,
+            headers: { "Content-Type": "application/json" },
+          });
+        } else if (provider === "muse" && newCredentials.message) {
           providerResponse = new Response(JSON.stringify({ error: { message: newCredentials.message } }), {
             status: HTTP_STATUS.UNAUTHORIZED,
             headers: { "Content-Type": "application/json" },
