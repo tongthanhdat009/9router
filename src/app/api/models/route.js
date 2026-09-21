@@ -71,6 +71,8 @@ export async function GET() {
           vision: m.caps?.vision ?? raw?.vision,
           search: m.caps?.search ?? raw?.search,
           reasoning: m.caps?.reasoning ?? raw?.reasoning,
+          // Decisions toggle: stored pin wins; raw registry entry covers built-ins.
+          decisions: m.caps?.decisions ?? raw?.decisions,
           contextWindow: c.contextWindow,
           maxOutput: c.maxOutput,
         },

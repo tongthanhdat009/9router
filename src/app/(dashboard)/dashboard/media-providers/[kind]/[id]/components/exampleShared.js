@@ -73,4 +73,18 @@ export const KIND_EXAMPLE_CONFIG = {
     bodyKey: "prompt",
     defaultResponse: `{\n  "data": [\n    { "url": "...", "format": "mp3" }\n  ]\n}`,
   },
+  decisions: {
+    inputLabel: "State",
+    inputPlaceholder: "My checkout page shows a blank screen after I click Pay.",
+    defaultInput: "My checkout page shows a blank screen after I click Pay.",
+    bodyKey: "state",
+    extraBody: {
+      questions: {
+        is_bug: { type: "noul", instructions: "Is the customer reporting a software defect?" },
+        team: { type: "choice", instructions: "Which team should own this ticket?", criteria: { payments: "Checkout, billing, or payment processing issues.", frontend: "Rendering or layout issues." } },
+        urgency: { type: "score", instructions: "How urgent is this ticket?", criteria: ["Can wait for the next release", "Blocking revenue right now"] },
+      },
+    },
+    defaultResponse: `{\n  "answers": {\n    "is_bug": { "type": "noul", "noul": 0.96 },\n    "team": { "type": "choice", "choice": "payments", "confidence": 0.75 },\n    "urgency": { "type": "score", "score": 1.99, "confidence": 0.99 }\n  }\n}`,
+  },
 };

@@ -133,6 +133,45 @@ describe("model test route kind routing", () => {
     expect(body.error).toBe("Provider returned no embedding data");
   });
 
+  it("routes decisions tests to /api/v1/decisions (never chat/completions)", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      id: "gen-dec-1",
+      model: "typesafe/jev-1.13-20260917",
+      answers: {
+        is_bug: { type: "noul", noul: 0.96 },
+        team: { type: "choice", choice: "payments", confidence: 0.75 },
+        urgency: { type: "score", score: 1.99, confidence: 0.99 },
+      },
+    }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
+    }));
+
+    const { POST } = await import("../../src/app/api/models/test/route.js");
+
+    const req = new Request("http://localhost/api/models/test", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        // No kind passed — server must resolve decisions from the registry.
+        model: "openrouter/typesafe/jev-1.13",
+      }),
+    });
+
+    const res = await POST(req);
+    const body = await res.json();
+
+    expect(body.ok).toBe(true);
+    expect(global.fetch).toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/decisions"),
+      expect.anything(),
+    );
+    expect(global.fetch).not.toHaveBeenCalledWith(
+      expect.stringContaining("/api/v1/chat/completions"),
+      expect.anything(),
+    );
+  });
+
   it("routes stt model tests to /api/v1/audio/transcriptions", async () => {
     global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
       text: "test",

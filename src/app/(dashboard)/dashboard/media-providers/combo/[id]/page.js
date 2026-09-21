@@ -22,6 +22,7 @@ const KIND_LABELS = {
   webFetch: "Web Fetch",
   image: "Text to Image",
   tts: "Text To Speech",
+  decisions: "Decisions",
 };
 
 const EXAMPLE_PATHS = {
@@ -29,6 +30,7 @@ const EXAMPLE_PATHS = {
   webFetch: "/v1/web/fetch",
   image: "/v1/images/generations",
   tts: "/v1/audio/speech",
+  decisions: "/v1/decisions",
 };
 
 const EXAMPLE_BODIES = {
@@ -36,6 +38,16 @@ const EXAMPLE_BODIES = {
   webFetch: (n) => ({ model: n, url: "https://example.com", format: "markdown" }),
   image: (n) => ({ model: n, prompt: "A cute cat playing piano", n: 1, size: "1024x1024" }),
   tts: (n) => ({ model: n, input: "Hello, this is a test.", voice: "alloy" }),
+  // Exercises all 3 decisions question types (noul/choice/score).
+  decisions: (n) => ({
+    model: n,
+    state: { ticket: "My checkout page shows a blank screen after I click Pay." },
+    questions: {
+      is_bug: { type: "noul", instructions: "Is the customer reporting a software defect?" },
+      team: { type: "choice", instructions: "Which team should own this ticket?", criteria: { payments: "Checkout, billing, or payment processing issues.", frontend: "Rendering or layout issues." } },
+      urgency: { type: "score", instructions: "How urgent is this ticket?", criteria: ["Can wait for the next release", "Blocking revenue right now"] },
+    },
+  }),
 };
 
 // Map combo.kind → listing route to go back to
