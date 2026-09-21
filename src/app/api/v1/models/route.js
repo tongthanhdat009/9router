@@ -145,6 +145,7 @@ const MODEL_TYPE_TO_KIND = {
   stt: "stt",
   imageToText: "imageToText",
   video: "video",
+  decisions: "decisions",
 };
 
 function modelKind(model) {

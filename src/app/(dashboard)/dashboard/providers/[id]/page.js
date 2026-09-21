@@ -1096,7 +1096,7 @@ export default function ProviderDetailPage() {
     const allModels = [
       ...models,
       ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-    ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; });
+    ].filter((m) => { const k = getModelKind(m); return !k || k === "llm" || k === "decisions"; });
     const disabledSet = new Set(disabledModelIds);
     const displayModels = allModels.filter((m) => !disabledSet.has(m.id));
     const disabledDisplayModels = allModels.filter((m) => disabledSet.has(m.id));
@@ -1678,7 +1678,7 @@ export default function ProviderDetailPage() {
             const allIds = [
               ...models,
               ...kiloFreeModels.filter((fm) => !models.some((m) => m.id === fm.id)),
-            ].filter((m) => { const k = getModelKind(m); return !k || k === "llm"; }).map((m) => m.id);
+            ].filter((m) => { const k = getModelKind(m); return !k || k === "llm" || k === "decisions"; }).map((m) => m.id);
             const activeIds = allIds.filter((id) => !disabledModelIds.includes(id));
             return (
               <div className="flex gap-2">

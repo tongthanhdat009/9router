@@ -80,6 +80,30 @@ export function getModelType(aliasOrId, modelId) {
   return found?.kind || found?.type || null;
 }
 
+// Registry kind for a "prefix/id" member string (combo members, custom rows).
+// Tries id→alias first (models are keyed by alias when the registry declares one,
+// e.g. PROVIDER_MODELS["oc"] for id "opencode"), then the prefix as-is.
+// Null when the registry does not know it (passthrough/unknown ids) — callers
+// decide whether unknown means "attempt".
+// NOTE: PROVIDER_ID_TO_ALIAS is declared below; referenced lazily at call time.
+export function getRegistryKind(prefix, id) {
+  const keys = [];
+  const mapped = PROVIDER_ID_TO_ALIAS[prefix];
+  if (mapped) keys.push(mapped);
+  if (!keys.includes(prefix)) keys.push(prefix);
+  for (const key of keys) {
+    const kind = getModelType(key, id);
+    if (kind) return kind;
+  }
+  return null;
+}
+
+// True only when the registry explicitly marks this model as decisions-kind
+// (e.g. openrouter/typesafe/jev-1.13). Unknown ids return false.
+export function isDecisionsModel(prefix, id) {
+  return getRegistryKind(prefix, id) === "decisions";
+}
+
 export function getModelUpstreamId(aliasOrId, modelId) {
   // Split off thinking suffix "(level)" so lookup hits the base id; re-append it to
   // the result so downstream applyThinking still sees the suffix (body.model is stripped separately).

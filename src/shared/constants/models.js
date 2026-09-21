@@ -44,4 +44,7 @@ export const CAPACITY_META = {
   vision: { icon: "visibility", label: "Vision", desc: "Supports image input", color: "text-blue-500" },
   // search: temporarily hidden (feature not wired yet)
   reasoning: { icon: "neurology", label: "Reasoning", desc: "Supports reasoning / thinking", color: "text-amber-500" },
+  // Decisions models (e.g. openrouter/typesafe/jev-1.13) answer typed questions
+  // (noul/choice/score) via POST /v1/decisions — never via /v1/chat/completions.
+  decisions: { icon: "rule", label: "Decisions", desc: "Answers typed questions (noul/choice/score) via /v1/decisions", color: "text-purple-500" },
 };
