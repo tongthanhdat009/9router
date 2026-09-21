@@ -62,7 +62,7 @@ describe("zcode oauth adapter", () => {
     expect(tokens.accessToken).toBe("zai-at");
     expect(tokens.refreshToken).toBe("zai-rt");
     expect(tokens.providerSpecificData.zcodeJwtToken).toBe("jwt-1");
-    expect(tokens.providerSpecificData.deviceId).toBeTruthy();
+    expect(tokens.providerSpecificData.deviceId).toBeUndefined();
     expect(poll.mock.calls[0][0]).toBe(POLL_BASE + "flow-1");
   });
 

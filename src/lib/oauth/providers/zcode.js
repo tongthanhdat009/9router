@@ -68,7 +68,8 @@ const zcode = {
       email: tokens.user?.email || null,
       providerSpecificData: {
         zcodeJwtToken: tokens.token,
-        deviceId: crypto.randomUUID(),
+        // ponytail: no per-connection deviceId; inference sends the shared official
+        // deviceMid (~/.zcode/v2/telemetry-state.json) via X-Device-Mid + user_id.device_id.
         codingPlanApiKey: extra?.codingPlanApiKey || null,
         userId: tokens.user?.user_id || null,
       },

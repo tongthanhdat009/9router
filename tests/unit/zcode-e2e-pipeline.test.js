@@ -15,6 +15,7 @@ import { clearZcodeOffpeakStateForTests } from "../../open-sse/services/offpeak/
 
 const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
 const { ZcodeExecutor } = await import("../../open-sse/executors/zcode.js");
+const { zcodeDeviceMid } = await import("../../open-sse/utils/zcodeIdentity.js");
 
 const dataLine = (obj) => "data: " + JSON.stringify(obj);
 const SSE_FRAMES = [
@@ -109,7 +110,7 @@ describe("zcode E2E through real pipeline (mock upstream)", () => {
     expect(seen.inference.url).toBe("https://zcode.z.ai/api/v1/ultra-zai/anthropic/v1/messages");
     expect(seen.inference.headers["x-api-key"]).toBe("df8dkey.fixture0001");
     expect(String(seen.inference.headers["Authorization"])).toContain("df8dkey.fixture0001");
-    expect(JSON.parse(seen.inference.body.metadata.user_id)).toMatchObject({ device_id: "dev-1" });
+    expect(JSON.parse(seen.inference.body.metadata.user_id)).toMatchObject({ device_id: zcodeDeviceMid() || "dev-1", account_uuid: "" });
 
     const text = await collectThrough(createSSETransformStreamWithLogger(FORMATS.CLAUDE, FORMATS.OPENAI, "zcode", null, null, "GLM-5.3"), SSE_FRAMES);
     expect(text).toContain("get_weather");

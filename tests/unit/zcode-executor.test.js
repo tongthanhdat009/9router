@@ -4,6 +4,7 @@ vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: vi.fn() 
 
 const { ZcodeExecutor } = await import("../../open-sse/executors/zcode.js");
 const { clearZcodeOffpeakStateForTests } = await import("../../open-sse/services/offpeak/zcode.js");
+const { zcodeDeviceMid } = await import("../../open-sse/utils/zcodeIdentity.js");
 
 const BALANCE = "https://zcode.z.ai/api/v1/zcode-plan/billing/balance";
 const AVAIL = "https://zcode.z.ai/api/v1/off-peak/ticket/availability";
@@ -54,15 +55,26 @@ describe("zcode executor", () => {
     const headers = executor.buildHeaders(credentials, false, null, null, {});
     expect(headers["User-Agent"]).toBe("ZCode/3.10.2.6414");
     expect(headers["X-ZCode-Agent"]).toBe("glm");
+    expect(headers["X-Device-Mid"]).toBe(zcodeDeviceMid());
     expect(headers["X-Session-Id"]).toBe(credentials.__zcodeChannel.sessionId);
     expect(new Set([headers["X-Request-Id"], headers["X-Query-Id"], headers["X-ZCode-Trace-Id"]]).size).toBe(3);
     const body = { metadata: {} };
     executor.transformRequest("glm-5.3-flash", body, false, credentials);
     const parsed = JSON.parse(body.metadata.user_id);
-    expect(parsed.device_id).toBe("dev-1");
+    expect(parsed.device_id).toBe(zcodeDeviceMid());
+    expect(parsed.account_uuid).toBe("");
     expect(parsed.session_id).toBe(credentials.__zcodeChannel.sessionId);
     superExecute.mockRestore();
     spy.mockRestore();
+  });
+
+  it("X-Device-Mid mirrors the shared official deviceMid", async () => {
+    const mod = await import("../../open-sse/utils/zcodeIdentity.js");
+    const executor = new ZcodeExecutor();
+    const creds = baseCreds();
+    creds.__zcodeChannel = { channel: "offpeak", ticketId: "tk", sessionId: "sess-1", key: "key-1" };
+    const headers = executor.buildHeaders(creds, false, null, null, {});
+    expect(headers["X-Device-Mid"]).toBe(mod.zcodeDeviceMid());
   });
 
   it("E1 eligible+open routes offpeak with ticket headers", async () => {

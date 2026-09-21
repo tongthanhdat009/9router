@@ -2,7 +2,7 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { refreshProviderCredentials } from "../services/oauthCredentialManager.js";
 import { resolveSessionId } from "../utils/sessionManager.js";
-import { ZCODE_IDENTITY_HEADERS, zcodeRequestHeaders } from "../utils/zcodeIdentity.js";
+import { ZCODE_IDENTITY_HEADERS, zcodeDeviceMid, zcodeRequestHeaders } from "../utils/zcodeIdentity.js";
 import { resolveOffPeakAccess, settleTicket } from "../services/offpeak/zcode.js";
 import { ensureCodingPlanKey, invalidateCodingPlanKey, mintCodingPlanKey } from "../services/zcodeKey.js";
 
@@ -137,11 +137,12 @@ export class ZcodeExecutor extends BaseExecutor {
 
   transformRequest(model, body, stream, credentials) {
     const ch = credentials?.__zcodeChannel;
+    // Official CLI sends deviceMid + empty account_uuid (anthropic-request-metadata.ts).
     body.metadata = {
       ...(body.metadata || {}),
       user_id: JSON.stringify({
-        device_id: credentials?.providerSpecificData?.deviceId || credentials?.connectionId || "",
-        account_uuid: credentials?.providerSpecificData?.userId || "",
+        device_id: zcodeDeviceMid() || credentials?.providerSpecificData?.deviceId || credentials?.connectionId || "",
+        account_uuid: "",
         session_id: ch?.sessionId || credentials?.connectionId || "",
       }),
     };
