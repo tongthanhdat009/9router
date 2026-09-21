@@ -1,9 +1,26 @@
 import crypto from "node:crypto";
 import { DefaultExecutor } from "./default.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
+import { FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 
 const AUTH_BASE = "https://www.codebuff.com";
 const connectionClients = new Map();
+
+async function lifecycleFetch(url, options, proxyOptions, timeoutMs) {
+  const connectCtrl = new AbortController();
+  const connectTimer = setTimeout(() => connectCtrl.abort(new Error("fetch connect timeout")), timeoutMs);
+  const mergedSignal = options.signal ? AbortSignal.any([options.signal, connectCtrl.signal]) : connectCtrl.signal;
+  try {
+    return await proxyAwareFetch(url, { ...options, signal: mergedSignal }, proxyOptions);
+  } catch (error) {
+    // Caller abort must keep its AbortError identity (chatCore maps it to 499);
+    // a connect-timeout abort becomes a plain error so it surfaces as 502, not 499.
+    if (connectCtrl.signal.aborted && !options.signal?.aborted) throw new Error("fetch connect timeout");
+    throw error;
+  } finally {
+    clearTimeout(connectTimer);
+  }
+}
 
 function stableClientId(credentials) {
   const psd = credentials?.providerSpecificData || {};
@@ -11,12 +28,6 @@ function stableClientId(credentials) {
   const key = credentials?.connectionId || "anonymous";
   if (!connectionClients.has(key)) connectionClients.set(key, crypto.randomUUID());
   return connectionClients.get(key);
-}
-
-function upstreamError(response, text) {
-  const error = new Error("FreeBuff START failed: " + response.status + " " + (text || response.statusText || ""));
-  error.status = response.status;
-  return error;
 }
 
 export class FreebuffExecutor extends DefaultExecutor {
@@ -54,16 +65,25 @@ export class FreebuffExecutor extends DefaultExecutor {
     const headers = this.buildHeaders(credentials, false);
     const userId = credentials?.providerSpecificData?.userId;
     const startBody = { status: "START", agentId: "9router", ...(userId ? { userId } : {}) };
-    const start = await proxyAwareFetch(AUTH_BASE + "/api/v1/agent-runs", {
+    const timeoutMs = this.config?.timeoutMs || FETCH_CONNECT_TIMEOUT_MS;
+    const start = await lifecycleFetch(AUTH_BASE + "/api/v1/agent-runs", {
       method: "POST",
       headers,
       body: JSON.stringify(startBody),
       signal,
-    }, proxyOptions);
+    }, proxyOptions, timeoutMs);
     const startText = await start.text();
     let runId = null;
     try { runId = JSON.parse(startText)?.runId; } catch { runId = null; }
-    if (!start.ok || !runId) throw upstreamError(start, startText);
+    if (!start.ok || !runId) {
+      // Match the executor response contract so chatCore preserves START failures.
+      return {
+        response: new Response(startText, { status: start.ok ? 502 : start.status, headers: { "Content-Type": start.headers?.get?.("content-type") || "application/json" } }),
+        url: AUTH_BASE + "/api/v1/agent-runs",
+        headers,
+        transformedBody: startBody,
+      };
+    }
 
     credentials.__freebuffRunId = runId;
     let failure = null;
@@ -83,12 +103,12 @@ export class FreebuffExecutor extends DefaultExecutor {
         errorMessage: failure ? String(failure.message || failure) : null,
         steps: [],
       };
-      proxyAwareFetch(AUTH_BASE + "/api/v1/agent-runs", {
+      lifecycleFetch(AUTH_BASE + "/api/v1/agent-runs", {
         method: "POST",
         headers,
         body: JSON.stringify(finishBody),
         signal,
-      }, proxyOptions).catch(() => {});
+      }, proxyOptions, timeoutMs).catch(() => {});
       delete credentials.__freebuffRunId;
     }
   }

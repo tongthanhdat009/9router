@@ -2,6 +2,8 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../../open-sse/utils/proxyFetch.js", () => ({ proxyAwareFetch: vi.fn() }));
 
+const { chatCoreExecuteMock } = vi.hoisted(() => ({ chatCoreExecuteMock: vi.fn() }));
+
 const { FreebuffExecutor } = await import("../../open-sse/executors/freebuff.js");
 const { proxyAwareFetch } = await import("../../open-sse/utils/proxyFetch.js");
 
@@ -19,7 +21,7 @@ function baseCreds(overrides = {}) {
 
 function startOk() { return { ok: true, status: 200, statusText: "OK", text: () => Promise.resolve(JSON.stringify({ runId: "run-7" })) }; }
 function startBad(status, payload) {
-  return { ok: false, status, statusText: "Bad", text: () => Promise.resolve(typeof payload === "string" ? payload : JSON.stringify(payload)) };
+  return { ok: false, status, statusText: "Bad", headers: new Headers({ "content-type": "application/json" }), text: () => Promise.resolve(typeof payload === "string" ? payload : JSON.stringify(payload)) };
 }
 
 async function run(executor, { signal, preparedRequest, creds = baseCreds(), proxyOptions = null } = {}) {
@@ -98,18 +100,28 @@ describe("freebuff executor lifecycle", () => {
     expect(noUser["x-freebuff-acting-user-id"]).toBeUndefined();
   });
 
-  it("START failure surfaces upstream status without any chat request", async () => {
+  it("START failure returns the upstream status and body without any chat request", async () => {
     const executor = new FreebuffExecutor();
     const calls = [];
-    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options) => {
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url) => {
       calls.push(String(url));
       return startBad(400, { message: "No runId found in request body" });
     });
     const superExecute = vi.spyOn(Object.getPrototypeOf(FreebuffExecutor.prototype), "execute");
-    await expect(run(executor)).rejects.toThrow(/FreeBuff START failed: 400/);
+    const result = await run(executor);
+    expect(result.response.status).toBe(400);
+    await expect(result.response.json()).resolves.toEqual({ message: "No runId found in request body" });
     expect(calls).toEqual([AGENT_RUNS]);
     expect(superExecute).not.toHaveBeenCalled();
     superExecute.mockRestore();
+  });
+
+  it("START response without runId becomes a 502 response", async () => {
+    const executor = new FreebuffExecutor();
+    vi.mocked(proxyAwareFetch).mockResolvedValue(ok({}));
+    const result = await run(executor);
+    expect(result.response.status).toBe(502);
+    await expect(result.response.json()).resolves.toEqual({});
   });
 
   it("FINISH fires on chat failure with errorMessage and never throws", async () => {
@@ -157,11 +169,38 @@ describe("freebuff executor lifecycle", () => {
     });
     await run(executor, { signal: controller.signal, proxyOptions });
     superExecute.mockRestore();
-    for (const [url, sig, po] of seen) {
-      expect(sig).toBe(controller.signal);
-      expect(po).toBe(proxyOptions);
-    }
     expect(seen.length).toBe(3);
+    for (const [url, sig, po] of seen) {
+      expect(po).toBe(proxyOptions);
+      if (url === "super.chat") {
+        expect(sig).toBe(controller.signal);
+        continue;
+      }
+      // Lifecycle fetches use a merged caller+connect-timeout signal, never the raw caller signal.
+      expect(sig).toBeInstanceOf(AbortSignal);
+      expect(sig).not.toBe(controller.signal);
+      expect(sig.aborted).toBe(false);
+    }
+    controller.abort();
+    for (const [, sig] of seen) expect(sig.aborted).toBe(true);
+  });
+
+  it("START connect timeout aborts a hanging lifecycle request", async () => {
+    const executor = new FreebuffExecutor();
+    executor.config = { timeoutMs: 50 };
+    vi.mocked(proxyAwareFetch).mockImplementation(
+      (_url, options) =>
+        new Promise((_, reject) => {
+          const onAbort = () => {
+            const error = new Error("aborted");
+            error.name = "AbortError";
+            reject(error);
+          };
+          if (options.signal.aborted) onAbort();
+          else options.signal.addEventListener("abort", onAbort, { once: true });
+        }),
+    );
+    await expect(run(executor)).rejects.toThrow("fetch connect timeout");
   });
 
   it("chat fetch through the real BaseExecutor posts the transformed body to the chat URL", async () => {
@@ -199,6 +238,42 @@ describe("freebuff executor lifecycle", () => {
     const result = await run(executor, { preparedRequest: { transformedBody: {}, ctx: {}, bodyStr: "stale" }, creds: baseCreds({ costMode: "free" }) });
     expect(result.transformedBody.codebuff_metadata.cost_mode).toBe("free");
     superExecute.mockRestore();
+  });
+});
+
+describe("FreeBuff START failure through chatCore", () => {
+  vi.doMock("../../open-sse/executors/index.js", () => ({
+    getExecutor: () => ({ noAuth: true, execute: chatCoreExecuteMock }),
+  }));
+  vi.doMock("../../open-sse/utils/requestLogger.js", () => ({
+    createRequestLogger: async () => ({ logClientRawRequest: vi.fn(), logRawRequest: vi.fn(), logTargetRequest: vi.fn(), logError: vi.fn() }),
+  }));
+  vi.doMock("@/lib/usageDb.js", () => ({
+    trackPendingRequest: vi.fn(), appendRequestLog: vi.fn(async () => {}), saveRequestDetail: vi.fn(async () => {}),
+  }));
+
+  it("preserves the START 400 status and body via the executor response contract", async () => {
+    vi.resetModules();
+    const { handleChatCore } = await import("../../open-sse/handlers/chatCore.js");
+    chatCoreExecuteMock.mockResolvedValue({
+      response: new Response(JSON.stringify({ message: "No runId found in request body" }), { status: 400, headers: { "content-type": "application/json" } }),
+      url: AGENT_RUNS,
+      headers: {},
+      transformedBody: {},
+    });
+    const result = await handleChatCore({
+      body: { model: "freebuff/test", stream: false, messages: [{ role: "user", content: "hi" }] },
+      modelInfo: { provider: "freebuff", model: "test" },
+      credentials: { apiKey: "test", providerSpecificData: {} },
+      connectionId: "conn-1",
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), errorLine: vi.fn() },
+      clientRawRequest: { endpoint: "/v1/chat/completions", body: {}, headers: { accept: "application/json" } },
+    });
+
+    expect(result.status).toBe(400);
+    await expect(result.response.json()).resolves.toMatchObject({
+      error: { message: expect.stringContaining("No runId found in request body") },
+    });
   });
 });
 
