@@ -8,13 +8,28 @@ export default {
     textIcon: "FB",
     website: "https://freebuff.com",
     notice: {
-      text: "Free mode (daily Freebucks) with session admission, or paid credits. Free uses official per-model agent sessions; unsupported models use paid credits.",
+      text: "Free mode (daily Freebucks) with session admission, or paid credits. Free uses official per-model agent sessions; unsupported models return an error instead of billing. Set costMode normal on the connection for paid credits.",
       apiKeyUrl: "https://freebuff.com",
     },
   },
   category: "apikey",
   hasOAuth: true,
   authModes: ["oauth", "apikey"],
+  // Per-connection billing knob, regions precedent: FreebuffExecutor reads
+  // connection.providerSpecificData.costMode. "free" (default) routes supported
+  // models through the free-session lane; unsupported models get a hard 400 with
+  // zero upstream traffic (no free->paid fallback). "normal" = paid credits,
+  // exact legacy passthrough. ponytail: no dashboard Select reads this yet
+  // (EditConnectionModal Select is the upgrade path); declaration + notice are
+  // the user-facing documentation of the supported knob.
+  costModes: {
+    field: "costMode",
+    default: "free",
+    options: [
+      { id: "free", label: "Free (daily Freebucks, per-model agent sessions)" },
+      { id: "normal", label: "Paid credits (upstream default)" },
+    ],
+  },
   transport: {
     baseUrl: "https://www.codebuff.com/api/v1/chat/completions",
   },

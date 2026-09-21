@@ -296,6 +296,108 @@ describe("FreeBuff free-session mode", () => {
     expect(out.codebuff_metadata.freebuff_instance_id).toBe("inst-d");
   });
 
+  // --- Tool passthrough evidence (live probes 2026-09-21/22, GLM 5.3 Flash free lane) ---
+  // Mixed Buffy+foreign toolsets are NOT rejected at admission (detector runs per-request
+  // and did not fire); foreign-only toolset -> 404; strict:true -> 404; upstream MAY answer
+  // plain text with no tool_calls (KNOWN-LIMIT, client-visible, not a 9router bug).
+  // 9router itself must never mutate or synthesize tool calls.
+describe("FreeBuff free-session tool passthrough evidence", () => {
+  const BUFFY_WRITE_TODOS = {
+    type: "function",
+    function: {
+      name: "write_todos",
+      description: "Write the todo list for the current task.",
+      parameters: { type: "object", properties: { todos: { type: "array", items: { type: "object" } } }, required: ["todos"] },
+    },
+  };
+  const FOREIGN_LOOKUP_ORDER = {
+    type: "function",
+    function: {
+      name: "lookup_order",
+      description: "Look up a customer order by id.",
+      parameters: { type: "object", properties: { order_id: { type: "string" } }, required: ["order_id"] },
+    },
+  };
+
+  beforeEach(() => {
+    vi.mocked(proxyAwareFetch).mockReset();
+    _resetSessionsForTests();
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE);
+  });
+
+  afterEach(() => {
+    _resetSessionsForTests();
+    vi.useRealTimers();
+  });
+
+  function mockFreeLane(chatPayload) {
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (url === ADMISSION_URL) return admissionOk("inst-tools", BASE + 60 * 60 * 1000);
+      if (url === AGENT_RUNS) return startOk(); // START and FINISH
+      if (url === CHAT_URL) return new Response(JSON.stringify(chatPayload), { status: 200 });
+      throw new Error("unexpected fetch " + url);
+    });
+    return calls;
+  }
+
+  async function chatBodyWith({ tools, toolChoice = "auto", extraBody = {}, chatPayload } = {}) {
+    const executor = new FreebuffExecutor();
+    const calls = mockFreeLane(chatPayload || { choices: [{ message: { role: "assistant", content: "ok" } }] });
+    const body = {
+      model: MODEL,
+      messages: [{ role: "user", content: "list my todos then check order 42" }],
+      ...(tools ? { tools, tool_choice: toolChoice } : {}),
+      ...extraBody,
+    };
+    const result = await executor.execute({ model: MODEL, body, stream: false, credentials: creds(), log: console, proxyOptions: null });
+    expect(result.response.status).toBe(200); // mixed toolsets are NOT auto-rejected at admission
+    const text = await result.response.text(); // drain so the terminal FINISH settles
+    const start = calls.find((c) => c.url === AGENT_RUNS && JSON.parse(c.options.body).action === "START");
+    expect(JSON.parse(start.options.body).agentId).toBe("base3-free-glm-5-3-flash");
+    const chatCall = calls.find((c) => c.url === CHAT_URL);
+    return { chatBody: JSON.parse(chatCall.options.body), text };
+  }
+
+  it("passes mixed Buffy+foreign tools through UNMODIFIED (byte-equal)", async () => {
+    const mixed = [BUFFY_WRITE_TODOS, FOREIGN_LOOKUP_ORDER];
+    const { chatBody } = await chatBodyWith({ tools: mixed });
+    expect(chatBody.tools).toEqual(mixed);
+    expect(JSON.stringify(chatBody.tools)).toBe(JSON.stringify(mixed));
+    expect(chatBody.tool_choice).toBe("auto");
+    expect(chatBody.codebuff_metadata.cost_mode).toBe("free");
+  });
+
+  it("passes the strict flag through unmodified (upstream decides)", async () => {
+    const strictForeign = { ...FOREIGN_LOOKUP_ORDER, function: { ...FOREIGN_LOOKUP_ORDER.function, strict: true } };
+    const { chatBody } = await chatBodyWith({ tools: [BUFFY_WRITE_TODOS, strictForeign] });
+    expect(chatBody.tools[1].function.strict).toBe(true);
+    expect(JSON.stringify(chatBody.tools)).toBe(JSON.stringify([BUFFY_WRITE_TODOS, strictForeign]));
+  });
+
+  it("passes no-tools chat through untouched", async () => {
+    const { chatBody } = await chatBodyWith({});
+    expect(chatBody.tools).toBeUndefined();
+    expect(chatBody.tool_choice).toBeUndefined();
+    expect(chatBody.messages).toHaveLength(2); // Buffy system prepend + user
+    expect(chatBody.codebuff_metadata.cost_mode).toBe("free");
+  });
+
+  it("KNOWN-LIMIT: upstream may answer text with no tool_calls (client-visible, not a 9router bug)", async () => {
+    const { chatBody, text } = await chatBodyWith({
+      tools: [BUFFY_WRITE_TODOS],
+      chatPayload: { choices: [{ message: { role: "assistant", content: "I will check that for you." } }] },
+    });
+    expect(chatBody.tools).toHaveLength(1); // we forwarded the tool; upstream chose text
+    const payload = JSON.parse(text);
+    expect(payload.choices[0].message.tool_calls).toBeUndefined(); // never synthesized by 9router
+    expect(payload.choices[0].message.content).toBe("I will check that for you.");
+  });
+
+});
+
   it("FreebuffSessionError carries status, body, and parsed Retry-After", () => {
     const error = new FreebuffSessionError(403, "country_blocked", 1500);
     expect(error).toBeInstanceOf(Error);
@@ -304,4 +406,5 @@ describe("FreeBuff free-session mode", () => {
     expect(error.retryAfterMs).toBe(1500);
   });
 });
+
 

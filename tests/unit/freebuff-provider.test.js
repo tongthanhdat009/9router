@@ -53,7 +53,18 @@ describe("FreeBuff provider", () => {
       expect(model.freeRoot).toBe(expected[model.id]);
     }
     expect(freebuff.display.notice.text).toContain("Free mode (daily Freebucks)");
-    expect(freebuff.display.notice.text).toContain("unsupported models use paid credits");
+    expect(freebuff.display.notice.text).toContain("unsupported models return an error instead of billing");
+  });
+
+  it("declares the per-connection costMode billing knob (regions precedent)", () => {
+    expect(freebuff.costModes).toEqual({
+      field: "costMode",
+      default: "free",
+      options: [
+        { id: "free", label: "Free (daily Freebucks, per-model agent sessions)" },
+        { id: "normal", label: "Paid credits (upstream default)" },
+      ],
+    });
   });
 
   it("routes through the FreebuffExecutor", () => {
