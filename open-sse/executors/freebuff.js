@@ -169,11 +169,15 @@ async function heartbeatFreeSession(entry, credentials, log, key) {
       if (data.accessTier !== undefined) entry.accessTier = data.accessTier;
       if (data.admittedAt !== undefined) entry.admittedAt = data.admittedAt;
     } else if (data?.status === "ended") {
-      entry.status = "ended";
-      entry.graceUntil = entry.expiresAt + GRACE_MS;
-      log?.debug?.("FREEBUFF", `free session ended upstream; grace until ${new Date(entry.graceUntil).toISOString()}`);
+      if (freeSessions.get(key) === entry) {
+        entry.status = "ended";
+        entry.graceUntil = entry.expiresAt + GRACE_MS;
+        log?.debug?.("FREEBUFF", `free session ended upstream; grace until ${new Date(entry.graceUntil).toISOString()}`);
+      }
     } else if (data?.status === "superseded" || data?.status === "none") {
-      purgeFreeSession(key, log, data.status);
+      // Identity guard: a stale heartbeat resolving after the seat was replaced
+      // must not purge the replacement.
+      if (freeSessions.get(key) === entry) purgeFreeSession(key, log, data.status);
     }
     if (freeSessions.get(key) === entry && entry.status === "ended" && entry.graceUntil <= Date.now()) {
       purgeFreeSession(key, log, "grace expired");
@@ -341,6 +345,18 @@ export class FreebuffExecutor extends DefaultExecutor {
     super("freebuff");
   }
 
+  buildHeaders(credentials, stream, url, model, ctx) {
+    const headers = super.buildHeaders(credentials, stream, url, model, ctx);
+    // Official chat marker: sdk model-provider.ts:310 @ bfe84080 always sends
+    // `ai-sdk/openai-compatible/<VERSION>/codebuff` on /chat/completions (the
+    // llm-providers package version there is 0.10.7). Chat leg only — the
+    // official agent-runs calls use the runtime default UA.
+    if (url && String(url).includes("/chat/completions")) {
+      headers["user-agent"] = "ai-sdk/openai-compatible/0.10.7/codebuff";
+    }
+    return headers;
+  }
+
   transformRequest(model, body, stream, credentials) {
     const transformed = super.transformRequest(model, { ...body }, stream, credentials);
     const supplied = transformed.codebuff_metadata && typeof transformed.codebuff_metadata === "object"
@@ -456,7 +472,7 @@ export class FreebuffExecutor extends DefaultExecutor {
         let parsed = null;
         try { parsed = JSON.parse(raw); } catch { /* non-JSON error body */ }
         const gateCode = typeof parsed?.error === "string" ? parsed.error : typeof parsed?.error?.code === "string" ? parsed.error.code : null;
-        if (session && gateCode && TERMINAL_GATE_STATUS[gateCode] === result.response.status) {
+        if (session && gateCode && TERMINAL_GATE_STATUS[gateCode] === result.response.status && freeSessions.get(credentials.connectionId) === session) {
           purgeFreeSession(credentials.connectionId, log, `chat gate ${gateCode}`);
         }
         postFinish({ runId, status: "failed", errorMessage: "Chat request failed with HTTP " + result.response.status, headers, proxyOptions, timeoutMs, log });

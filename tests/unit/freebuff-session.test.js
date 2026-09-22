@@ -514,6 +514,106 @@ describe("FreeBuff free-session mode", () => {
     expect(second.response.status).toBe(200);
   });
 
+  it("a stale S1 chat gate error cannot purge the S2 replacement seat", async () => {
+    const executor = new FreebuffExecutor();
+    let admissions = 0;
+    let chatGatePayload = null;
+    let resolveS1Chat = null;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-stale-" + admissions, BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") {
+        // One heartbeat: the S1 heartbeat fires 404 (purge S1), arming the race.
+        return { ok: false, status: 404, statusText: "Not Found", headers: new Headers(), text: () => Promise.resolve("") };
+      }
+      if (url === AGENT_RUNS) return startOk();
+      if (url === CHAT_URL) {
+        if (chatGatePayload === "deferred") {
+          // S1 chat hangs until released below.
+          await new Promise((resolve) => { resolveS1Chat = resolve; });
+          return {
+            ok: false,
+            status: 410,
+            statusText: "Gone",
+            headers: new Headers({ "Content-Type": "application/json" }),
+            text: () => Promise.resolve(JSON.stringify({ error: "session_expired", message: "gone" })),
+          };
+        }
+        const body = JSON.parse(options.body);
+        return new Response(JSON.stringify({ inst: body.codebuff_metadata.freebuff_instance_id, choices: [] }), { status: 200 });
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    // Turn 1 on S1; its chat leg is deferred so it stays in flight.
+    chatGatePayload = "deferred";
+    const s1 = runExecutor(executor);
+    await Promise.resolve();
+    await Promise.resolve();
+    // Heartbeat 404 purges S1 (identity guard passes: map still S1).
+    await vi.advanceTimersByTimeAsync(33_000);
+    // Turn 2 admits S2 exactly once.
+    chatGatePayload = null;
+    const s2 = await runExecutor(executor);
+    await s2.response.text();
+    expect(admissions).toBe(2);
+    // Now the stale S1 chat resolves with a terminal gate error. S2 must survive.
+    resolveS1Chat();
+    const s1Result = await s1;
+    expect(s1Result.response.status).toBe(410); // surfaced, not swallowed
+    // Turn 3 must reuse S2 with zero further admissions.
+    const s3 = await runExecutor(executor);
+    await s3.response.text();
+    expect(admissions).toBe(2);
+    const third = await ensureFreeSession(creds(), MODEL, console);
+    expect(third.instanceId).toBe("inst-stale-2");
+  });
+
+  it("a stale S1 heartbeat cannot purge the S2 replacement seat", async () => {
+    let admissions = 0;
+    let heartbeatPayload = { status: "active", expiresAt: iso(BASE + 60 * 60 * 1000) };
+    let releaseHeartbeat = null;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-hstale-" + admissions, BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") {
+        if (heartbeatPayload === "deferred") {
+          await new Promise((resolve) => { releaseHeartbeat = resolve; });
+          return sessionResponse({ status: "superseded" });
+        }
+        return sessionResponse(heartbeatPayload);
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    const s1 = await ensureFreeSession(creds(), MODEL, console);
+    expect(s1.instanceId).toBe("inst-hstale-1");
+    // The S1 heartbeat is deferred; release it to report superseded and force
+    // S2. A SECOND S1 timer armed while the deferred GET waited stays pending;
+    heartbeatPayload = "deferred";
+    // Prime: let the timer fire while the GET waits (vi.advanceTimersByTimeAsync
+    // flushes the 30s timer only after the fake clock passes the period).
+    let hb = vi.advanceTimersByTimeAsync(33_000);
+    await hb.catch(() => {});
+    for (let i = 0; i < 50 && !releaseHeartbeat; i++) await vi.advanceTimersByTimeAsync(0);
+    expect(releaseHeartbeat, "heartbeat did not start").toBeTypeOf("function");
+    hb = (async () => { releaseHeartbeat(); await vi.advanceTimersByTimeAsync(0); })();
+    await hb; // stale S1 heartbeat resolves superseded -> S1 purged
+    expect(admissions).toBe(1);
+    const s2 = await ensureFreeSession(creds(), MODEL, console);
+    expect(s2.instanceId).toBe("inst-hstale-2");
+    expect(admissions).toBe(2);
+    // Stale heartbeats of the REPLACED S1 generation (armed while S1 waited) must
+    // not purge S2: they carry the old entry object, identity guard holds.
+    heartbeatPayload = { status: "active", expiresAt: iso(BASE + 60 * 60 * 1000) }; // new polls neutral
+    await vi.advanceTimersByTimeAsync(33_000);
+    const still = await ensureFreeSession(creds(), MODEL, console);
+    expect(still).toBe(s2);
+    expect(admissions).toBe(2);
+  });
+
   it("releases the old session with DELETE when the model switches on the same connection", async () => {
     const seen = [];
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
