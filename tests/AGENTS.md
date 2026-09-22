@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-12 | Updated: 2026-08-16 -->
+<!-- Generated: 2026-08-12 | Updated: 2026-09-22 -->
 
 # tests
 
@@ -21,16 +21,19 @@ Data-driven coverage of the provider/translator surface + unit tests for routing
 
 | Directory | Purpose |
 |-----------|---------|
-| `unit/` | 176 unit test files: routing, oauth, token refresh, quota, auth, providers, affinity (`affinity-logger`, `combo-affinity`, `session-affinity`, `request-detail-affinity`) |
+| `unit/` | 263 unit test files: routing, oauth, token refresh, quota, auth, providers, affinity (`affinity-logger`, `combo-affinity`, `session-affinity`, `request-detail-affinity`) |
 | `translator/` | Translation-layer tests (see `translator/AGENTS.md` — hand-authored, detailed) |
+| `auth/` | Auth-flow tests, incl. `saml.test.js` (SAML admin login, mocked) |
+| `manual/` | Manual/live probes not part of the vitest run, e.g. `zcode-offpeak-probe.mjs` (uses `../fixtures/zcode-mock-gateway.mjs`) |
+| `fixtures/` | Shared test fixtures (`zcode-mock-gateway.mjs`, …) |
 | `__baseline__/` | Regression baselines: providers/alias/OAuth-url snapshots + `verify-*.mjs` comparators + `known-fails.txt` |
 
 ## For AI Agents
 
 ### Working In This Directory
 - Run from `tests/`: `npx vitest run` (all) or `npx vitest run unit/capabilities.test.js` (single file, path relative to `tests/`).
-- **The suite is NOT expected to be all-green on a plain checkout** (~1736 pass, ~86 fail). Expected red: catalogued in `__baseline__/known-fails.txt` (86 @ 2026-08-16, refreshed at 224c05eb+; includes network-flaky cursor tests), `unit/embeddings.cloud.test.js` (imports `cloud/` dir not in this repo), `unit/xai-oauth-service.test.js` (timeout when xAI discovery unreachable), `real/*.real.test.js` (need live credentials).
-- Judge regressions with `tests/__baseline__/verify-no-regression.mjs`, never a raw run.
+- **The suite is NOT expected to be all-green on a plain checkout** (~2600 pass, ~86 fail). Expected red: catalogued in `__baseline__/known-fails.txt` (86 lines @ 2026-09-22, refreshed at 9b5e63ab; includes network-flaky cursor tests), `unit/embeddings.cloud.test.js` (imports `cloud/` dir not in this repo), `unit/xai-oauth-service.test.js` (timeout when xAI discovery unreachable), `real/*.real.test.js` (need live credentials).
+- Judge regressions with `node tests/__baseline__/verify-no-regression.mjs <results.json>`: it errors ONLY on pass→fail regressions (tests failing in the baseline are fine); fail→pass shows as improved, not an error.
 - `tests/translator/registerAll.js` is required by any test calling `translateRequest`/`translateResponse` — `require()` silently no-ops under vitest/ESM without it (false pass).
 - Run `verify-*.mjs` after touching provider registry / alias logic.
 

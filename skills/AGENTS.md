@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-12 | Updated: 2026-08-12 -->
+<!-- Generated: 2026-08-12 | Updated: 2026-09-22 -->
 
 # skills
 
@@ -13,26 +13,27 @@ Lets an agent use 9router's routing surface through the local server: chat, embe
 
 | File | Description |
 |------|-------------|
-| `README.md` | Index of the skill set |
+| `README.md` | Index of the skill set (copy-paste raw GitHub links per capability) |
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `9router/` | Core chat/API skill (see `9router/AGENTS.md`) |
+| `9router/` | Entry/setup skill — only `SKILL.md` (no AGENTS.md; it links to all capability skills) |
 | `9router-chat/` | Chat completions usage |
 | `9router-embeddings/` | Embeddings endpoint usage |
 | `9router-image/` | Image generation |
 | `9router-stt/` | Speech-to-text |
 | `9router-tts/` | Text-to-speech |
-| `9router-video/` | Video generation |
-| `9router-web-fetch/` | Web fetch tool |
+| `9router-video/` | Video generation (xAI Grok Imagine) |
+| `9router-web-fetch/` | Web fetch tool (URL → markdown) |
 | `9router-web-search/` | Web search tool |
 
 ## For AI Agents
 
 ### Working In This Directory
-- Each subdir is a single `SKILL.md`. Skills describe the local `/v1/*` endpoint contract — keep them in sync with `src/app/api/v1/*`.
+- Each subdir contains a single `SKILL.md` — nothing else; do not invent per-skill AGENTS.md files.
+- Skills describe the local `/v1/*` endpoint contract — keep them in sync with `src/app/api/v1/*`.
 - Skills are surfaced through the agent toolchain; keep instructions copy/format exact.
 
 ### Testing Requirements

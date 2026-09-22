@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-12 | Updated: 2026-08-12 -->
+<!-- Generated: 2026-08-12 | Updated: 2026-09-22 -->
 
 # docs
 
@@ -14,18 +14,21 @@ Design and decision documentation for the 9router codebase.
 | File | Description |
 |------|-------------|
 | `ARCHITECTURE.md` | Full system architecture. NOTE: persistence section is stale — state is now SQLite (`src/lib/db/`), not `db.json` |
+| `provider-cache-audit.md` | Provider cache-token coverage audit (58 KB research doc) |
 
 ## Subdirectories
 
 | Directory | Purpose |
 |-----------|---------|
-| `superpowers/` | Design docs (see `superpowers/AGENTS.md`) |
+| `plans/` | Implementation notes: 2× 2026-09-22 freebuff investigation + 2× 2026-08-27 cache design |
+| `images/` | Screenshots, incl. SAML login/admin-dashboard captures used by `tests/auth/saml.test.js` docs |
+| `superpowers/` | Design docs (no AGENTS.md here — do not link one) |
 
 ## For AI Agents
 
 ### Working In This Directory
 - Prefer updating code + CLAUDE.md + `open-sse/AGENTS.md` over docs for behavior that changed; `ARCHITECTURE.md` lags reality in places.
-- Dates in `superpowers/` filenames are YYYY-MM-DD design sessions.
+- Dates in `plans/` filenames are YYYY-MM-DD design sessions.
 
 ### Testing Requirements
 - Markdown only — no automated tests. Verify links to repo paths still resolve.

@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-12 | Updated: 2026-08-12 -->
+<!-- Generated: 2026-08-12 | Updated: 2026-09-22 -->
 
 # scripts
 
@@ -7,7 +7,7 @@ Build and registry-maintenance tooling for the dashboard/gateway.
 
 ## Purpose
 
-Developer/build scripts: registry schema migrations, display-name injection, standalone-asset copying for the CLI bundle, live combo auto-switch testing, and README translation.
+Developer/build scripts: registry schema migrations, display-name injection, standalone-asset copying for the CLI bundle, live combo auto-switch testing, provider benchmarking, upstream smoke tests, and README translation.
 
 ## Key Files
 
@@ -17,12 +17,21 @@ Developer/build scripts: registry schema migrations, display-name injection, sta
 | `migrate-registry.mjs` | Migrates all `open-sse/providers/registry/*.js` files to the Model-A schema (models[].kind, media promoted, terse format) |
 | `injectDisplayToRegistry.mjs` | Injects display/category/uiAlias/extra from `src/shared/constants/providersDisplay.js` into each registry file |
 | `test-combo-autoswitch.mjs` | Live test: sends text/image/search to a combo, reports which member ran (needs a running server) |
+| `benchmark-loader.mjs` / `benchmark-providers.mjs` | Provider benchmark loaders/runners — throughput/latency sweeps against live or mock upstreams |
+| `codex-ws-smoke.mjs` | Smoke test for the Codex upstream WebSocket path (upstream WS + mandatory HTTP/SSE fallback) |
 | `translate-readme.js` | Machine-translates README into `i18n/*` via GLM API |
+
+## Subdirectories
+
+| Directory | Purpose |
+|-----------|---------|
+| `bench/` | Benchmark harness, incl. `mux-bench.mjs` (mux multi-provider bench) + transport probes and fixtures |
 
 ## For AI Agents
 
 ### Working In This Directory
 - `open-sse/providers/registry/index.js` is auto-generated — regenerate with these scripts, never hand-edit.
+- Registry is 126 definition files (`open-sse/providers/registry/*.js`) — never hardcode provider/model strings; read the registry.
 - ⚠️ `test-combo-autoswitch.mjs` contains a **hardcoded API key** (`sk-6581be4f05a82b6b-uxy6jn-c8190ea8`) as a default — replace with env before committing this script anywhere public.
 - `translate-readme.js` makes paid API calls — respect env overrides (`GLM_API_ENDPOINT`, `GLM_API_MODEL`).
 
