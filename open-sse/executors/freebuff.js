@@ -345,18 +345,6 @@ export class FreebuffExecutor extends DefaultExecutor {
     super("freebuff");
   }
 
-  buildHeaders(credentials, stream, url, model, ctx) {
-    const headers = super.buildHeaders(credentials, stream, url, model, ctx);
-    // Official chat marker: sdk model-provider.ts:310 @ bfe84080 always sends
-    // `ai-sdk/openai-compatible/<VERSION>/codebuff` on /chat/completions (the
-    // llm-providers package version there is 0.10.7). Chat leg only — the
-    // official agent-runs calls use the runtime default UA.
-    if (url && String(url).includes("/chat/completions")) {
-      headers["user-agent"] = "ai-sdk/openai-compatible/0.10.7/codebuff";
-    }
-    return headers;
-  }
-
   transformRequest(model, body, stream, credentials) {
     const transformed = super.transformRequest(model, { ...body }, stream, credentials);
     const supplied = transformed.codebuff_metadata && typeof transformed.codebuff_metadata === "object"
@@ -391,11 +379,17 @@ export class FreebuffExecutor extends DefaultExecutor {
     return transformed;
   }
 
-
   buildHeaders(credentials, stream, url, model, ctx) {
     const headers = super.buildHeaders(credentials, stream, url, model, ctx);
     const userId = credentials?.providerSpecificData?.userId;
     if (userId) headers["x-freebuff-acting-user-id"] = userId;
+    // Official chat marker: sdk model-provider.ts:310 @ bfe8408 always sends
+    // `ai-sdk/openai-compatible/<VERSION>/codebuff` on /chat/completions (the
+    // llm-providers package version there is 0.10.7). Chat leg only — the
+    // official agent-runs calls use the runtime default UA.
+    if (url && String(url).includes("/chat/completions")) {
+      headers["user-agent"] = "ai-sdk/openai-compatible/0.10.7/codebuff";
+    }
     return headers;
   }
 

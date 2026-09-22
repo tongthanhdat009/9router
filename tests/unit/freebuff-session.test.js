@@ -614,6 +614,65 @@ describe("FreeBuff free-session mode", () => {
     expect(admissions).toBe(2);
   });
 
+  it("a stale S1 heartbeat ended status cannot end the S2 replacement seat", async () => {
+    const executor = new FreebuffExecutor();
+    let admissions = 0;
+    let chatFails = false;
+    let heartbeatPayload = { status: "active", expiresAt: iso(BASE + 60 * 60 * 1000) };
+    let releaseHeartbeat = null;
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      if (url === ADMISSION_URL) {
+        admissions += 1;
+        return admissionOk("inst-estale-" + admissions, BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "GET") {
+        if (heartbeatPayload === "deferred") {
+          await new Promise((resolve) => { releaseHeartbeat = resolve; });
+          return sessionResponse({ status: "ended", expiresAt: iso(BASE - 60 * 1000) });
+        }
+        return sessionResponse(heartbeatPayload);
+      }
+      if (url === AGENT_RUNS) return startOk();
+      if (url === CHAT_URL) {
+        if (chatFails) {
+          return { ok: false, status: 410, statusText: "Gone", headers: new Headers({ "Content-Type": "application/json" }), text: () => Promise.resolve(JSON.stringify({ error: "session_expired", message: "gone" })) };
+        }
+        return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      }
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    // Turn 1 admits S1 and arms its heartbeat timer.
+    const t1 = await runExecutor(executor);
+    await t1.response.text();
+    expect(admissions).toBe(1);
+    // S1's heartbeat GET hangs in flight.
+    heartbeatPayload = "deferred";
+    await vi.advanceTimersByTimeAsync(33_000);
+    for (let i = 0; i < 50 && !releaseHeartbeat; i++) await vi.advanceTimersByTimeAsync(0);
+    expect(releaseHeartbeat, "heartbeat did not start").toBeTypeOf("function");
+    // While it hangs, the chat gate purges S1 and the next turn admits S2.
+    chatFails = true;
+    const gated = await runExecutor(executor);
+    expect(gated.response.status).toBe(410); // surfaced, not swallowed; seat purged
+    chatFails = false;
+    const t3 = await runExecutor(executor);
+    await t3.response.text();
+    expect(admissions).toBe(2);
+    const s2 = await ensureFreeSession(creds(), MODEL, console);
+    expect(s2.instanceId).toBe("inst-estale-2");
+    // The stale S1 heartbeat finally resolves with "ended": the identity guard
+    // must leave the healthy S2 untouched (no ended status, no grace window).
+    heartbeatPayload = { status: "active", expiresAt: iso(BASE + 60 * 60 * 1000) };
+    const hb = (async () => { releaseHeartbeat(); await vi.advanceTimersByTimeAsync(0); })();
+    await hb;
+    await vi.advanceTimersByTimeAsync(0);
+    expect(s2.status).not.toBe("ended");
+    expect(s2.graceUntil).toBeUndefined();
+    const still = await ensureFreeSession(creds(), MODEL, console);
+    expect(still).toBe(s2);
+    expect(admissions).toBe(2);
+  });
+
   it("releases the old session with DELETE when the model switches on the same connection", async () => {
     const seen = [];
     vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
@@ -960,6 +1019,31 @@ describe("FreeBuff outbound transport boundary", () => {
     expect(chatCall.options.method).toBe("POST");
     expect(chatCall.options.headers.Authorization).toBe("Bearer free-token");
     expect(chatCall.options.headers["x-freebuff-acting-user-id"]).toBe("u-1");
+  });
+
+  it("chat POST carries the official codebuff user-agent marker; session calls keep runtime default", async () => {
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (url === ADMISSION_URL) return admissionOk("inst-ua", BASE + 60 * 60 * 1000);
+      if (url === AGENT_RUNS) return startOk(); // START and FINISH
+      if (url === CHAT_URL) return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      throw new Error("unexpected fetch " + url);
+    });
+    const executor = new FreebuffExecutor();
+    const result = await runExecutor(executor);
+    expect(result.response.status).toBe(200);
+    await result.response.text();
+    const chatCall = calls.find((c) => c.url === CHAT_URL);
+    // Wire marker from sdk model-provider.ts:310 @ bfe8408, stamped by the
+    // executor buildHeaders override before base.execute dispatches.
+    expect(chatCall.options.headers["user-agent"]).toBe("ai-sdk/openai-compatible/0.10.7/codebuff");
+    // Non-chat legs keep the runtime default UA: the official client only
+    // stamps this marker on the chat completion call, never agent-runs/session.
+    const admission = calls.find((c) => c.url === ADMISSION_URL);
+    expect(admission.options.headers["user-agent"]).toBeUndefined();
+    const start = calls.find((c) => c.url === AGENT_RUNS && JSON.parse(c.options.body).action === "START");
+    expect(start.options.headers["user-agent"]).toBeUndefined();
   });
 });
   it("FreebuffSessionError carries status, body, and parsed Retry-After", () => {
