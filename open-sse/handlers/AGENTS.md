@@ -1,17 +1,24 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-15 | Updated: 2026-08-15 -->
+<!-- Generated: 2026-08-15 | Updated: 2026-09-22 -->
 
 # handlers
 
 ## Purpose
-Modality cores: chat, image, embeddings, TTS, STT, search. Handlers select formats/executors and shape streaming or JSON output.
+Modality cores: chat, responses/decisions, image, embeddings, TTS, STT, video, search, fetch. Handlers select formats/executors and shape streaming or JSON output.
 
 ## Key Files
 | File | Purpose |
 |---|---|
 | `chatCore.js` | Main provider-agnostic chat flow |
-| `chatCore/` | Streaming, non-streaming, and SSE-to-JSON terminal paths |
-| `image.js`, `embeddings.js`, `tts.js`, `stt.js`, `search.js` | Per-modality cores |
+| `chatCore/` | Streaming, non-streaming, and SSE-to-JSON terminal paths (`streamingHandler.js`, `nonStreamingHandler.js`, `sseToJsonHandler.js`, `requestDetail.js`) |
+| `responsesHandler.js` / `decisionsCore.js` | Codex Responses API flow; OpenRouter SystemOne/alpha-decisions transparent JSON pass-through (no translation) |
+| `imageGenerationCore.js` / `imageProviders/` | Image generation core + per-provider backends |
+| `embeddingsCore.js` / `embeddingProviders/` | Embeddings core + per-provider backends |
+| `ttsCore.js` / `ttsProviders/` | TTS core + per-provider backends |
+| `sttCore.js` | Speech-to-text core |
+| `videoCore.js` / `videoProviders/` | Video generation core + per-provider backends |
+| `search/` | Chat search, callers, normalizers (`chatSearch.js`, `callers.js`, `normalizers.js`) |
+| `fetch/` | Web Fetch handler (firecrawl, jina-reader, tavily, exa, ollama) with normalized return shape |
 
 ## For AI Agents
 ### Working In This Directory

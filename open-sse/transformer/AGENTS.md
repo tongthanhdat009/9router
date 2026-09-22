@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-15 | Updated: 2026-08-15 -->
+<!-- Generated: 2026-08-15 | Updated: 2026-09-22 -->
 
 # transformer
 
@@ -11,6 +11,8 @@ Stream-format transformers: convert Chat Completions SSE → Codex Responses API
 |---|---|
 | `responsesTransformer.js` | Chat Completions SSE → Codex Responses API SSE; `createResponsesApiTransformStream` (Node + Cloudflare Workers) |
 | `streamToJsonConverter.js` | Responses SSE stream → single JSON response; `convertResponsesStreamToJson` |
+
+`createResponsesLogger` is also exported from `responsesTransformer.js` for debug logging of transformed streams.
 
 ## For AI Agents
 ### Working In This Directory

@@ -1,23 +1,28 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-15 | Updated: 2026-08-15 -->
+<!-- Generated: 2026-08-15 | Updated: 2026-09-22 -->
 
 # providers
 
 ## Purpose
-Provider registry, capability/pricing metadata, and shared provider endpoint/header helpers.
+Provider registry, capability/pricing metadata, thinking-level and vision heuristics, catalog overrides, and shared provider endpoint/header helpers.
 
 ## Key Files
 | File | Purpose |
 |---|---|
-| `index.js` | Assembles/exports `PROVIDERS` |
-| `registry/index.js` | Auto-generated static imports for registry files |
+| `index.js` | Builds and exports `PROVIDERS`, `PROVIDER_MODELS`, `PROVIDER_OAUTH`, `PROVIDER_MEDIA` from registry entries (transport + models co-located) |
+| `registry/` | 126 per-provider definition files, auto-imported by `registry/index.js` |
 | `REGISTRY_TEMPLATE.js` | Starting point for one provider definition |
-| `capabilities.js` / `pricing.js` | Provider/model capability and pricing helpers |
+| `schema.js` | Entry schema + `PROVIDER_DEFAULTS` |
+| `capabilities.js` / `pricing.js` / `shared.js` | Capability and pricing helpers, shared endpoint/header helpers |
+| `thinkingLevels.js` | `getThinkingLevels` — per-model reasoning-effort levels |
+| `visionPatterns.js` | Model-name vision-capability pattern matching |
+| `catalogOverride.js` | Model-catalog override resolution |
+| `models/` | Model-name parsing helpers: `schema.js`, `helpers.js`, `namePatterns.js` |
 
 ## For AI Agents
 ### Working In This Directory
 - One provider per `registry/<id>.js`; copy `REGISTRY_TEMPLATE.js`, then add models in `open-sse/config/providerModels.js`.
-- `registry/index.js` is generated — regenerate it; never hand-edit its import list.
+- `registry/index.js` is generated (static imports for all registry files) — regenerate it; never hand-edit its import list.
 - Generic OpenAI-compatible providers need no executor; add one only for non-standard protocol/transport.
 - Keep display metadata aligned with `src/shared/constants/providersDisplay.js` through the supplied scripts.
 
