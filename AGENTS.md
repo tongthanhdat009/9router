@@ -1,8 +1,8 @@
-<!-- Generated: 2026-08-12 | Updated: 2026-08-12 -->
+<!-- Generated: 2026-08-12 | Updated: 2026-09-22 -->
 
 # 9router
 
-Local AI routing gateway + Next.js dashboard. Exposes one OpenAI-compatible endpoint (`/v1/*`) and routes traffic across 40+ upstream providers with format translation, model-combo fallback, multi-account fallback, OAuth/API-key credential management, token refresh, quota/usage tracking, and optional cloud sync.
+Local AI routing gateway + Next.js dashboard. Exposes one OpenAI-compatible endpoint (`/v1/*`) and routes traffic across 126 upstream provider registry defs (`open-sse/providers/registry/`) with format translation, model-combo fallback, multi-account fallback, OAuth/API-key credential management, token refresh, quota/usage tracking, and optional cloud sync.
 
 Two published artifacts share this repo:
 - **Dashboard + gateway** (`9router-app`, root `package.json`) — the Next.js server that does the actual routing.
@@ -45,15 +45,14 @@ Two published artifacts share this repo:
 ### Working In This Directory
 - Plain JavaScript (ESM), no TypeScript. `@/*` → `src/*`.
 - Read `docs/ARCHITECTURE.md` before request-flow work; `open-sse/AGENTS.md` before editing anything under `open-sse/`.
-- State is SQLite under `src/lib/db/` (adapter fallback chain), NOT `db.json`. `src/lib/localDb.js` is a backward-compat shim — import from `@/lib/db/index.js`.
-- `src/lib/usageDb.js` (`usage.json` + `log.txt`) still lives under `~/.9router`, not `DATA_DIR`.
+- State is SQLite under `src/lib/db/` (adapter fallback chain), NOT `db.json`. `src/lib/localDb.js`, `src/lib/usageDb.js`, `src/lib/disabledModelsDb.js` are pure re-export shims — import from `@/lib/db/index.js` (`usage.json` survives only as a legacy-migration ref, not a live store).
 - Affinity bindings are process-local in `src/sse/services/sessionAffinity.js`; diagnostics at `77ccaae1` are opt-in JSONL (`src/lib/affinityLogger.js`: `<DATA_DIR>/logs/affinity.jsonl`), not SQLite usage metadata.
 - Commit style: Conventional Commits. Changelog in `CHANGELOG.md`.
 - `custom-server.js` IP handling is security-sensitive — preserve it when touching request/IP/rate-limit code.
 
 ### Testing Requirements
 - Tests live in `tests/` (independent ESM package, not wired into root `npm test`): `cd tests && npx vitest run`.
-- Suite is NOT all-green on a plain checkout (~938 pass / ~64 fail). Judge regressions with `tests/__baseline__/verify-no-regression.mjs`, not a raw run.
+- Suite is NOT all-green on a plain checkout. Judge regressions with `tests/__baseline__/verify-no-regression.mjs`, not a raw run; expected red in `tests/__baseline__/known-fails.txt` (86 entries; `tests/unit/` holds 263 test files).
 - Run `tests/__baseline__/verify-*.mjs` after touching provider registry / alias logic.
 
 ### Common Patterns
