@@ -1,5 +1,5 @@
 <!-- Parent: ../AGENTS.md -->
-<!-- Generated: 2026-08-15 | Updated: 2026-08-15 -->
+<!-- Generated: 2026-08-15 | Updated: 2026-09-22 -->
 
 # config
 
@@ -9,9 +9,18 @@ Single source of routing constants: provider definitions, model/alias matrix, ca
 ## Key Files
 | File | Purpose |
 |---|---|
-| `providerModels.js` | Alias → provider/model matrix; add model capability metadata here |
-| `runtimeConfig.js` | `HTTP_STATUS`, `RETRY_CONFIG`, `DEFAULT_RETRY_CONFIG`, timeouts/token limits |
-| `providers.js` / `registry/` | Provider configuration used by registry assembly |
+| `providerModels.js` | Alias to provider and model matrix; add model capability metadata here |
+| `runtimeConfig.js` | `HTTP_STATUS`, `RETRY_CONFIG`, `DEFAULT_RETRY_CONFIG`, timeouts and token limits |
+| `providers.js` and `registry/` | Provider configuration used by registry assembly |
+| `models/` (`schema.js`, `helpers.js`, `namePatterns.js`) | Model-id normalization (digit-digit hyphen to dot; `normalizeModel` consumed by `providers/index.js`) |
+| `thinkingLevels.js` and `visionPatterns.js` and `catalogOverride.js` | Thinking-level tiers, vision-capability patterns, catalog overrides |
+| `constants.js` and `appConstants.js` | Shared plus app-level constants |
+| `models.js` and `ollamaModels.js` and `ttsModels.js` | Generic, Ollama-local, and TTS model lists |
+| `errorConfig.js` | Normalized error shapes |
+| `mediaConfig.js` | Image and video provider media knobs |
+| `grokCli.js` and `kiroConstants.js` | Provider-specific constants |
+| `codexInstructions.js` and `defaultThinkingSignature.js` | Codex system instructions; default thinking signature |
+| `googleTtsLanguages.js` | Google TTS language and voice table |
 
 ## For AI Agents
 ### Working In This Directory
@@ -23,7 +32,7 @@ Single source of routing constants: provider definitions, model/alias matrix, ca
 - Run `tests/__baseline__/verify-*.mjs` after provider/alias changes; matrix tests derive coverage from `PROVIDER_MODELS`.
 
 ### Common Patterns
-- Export immutable constants/helpers; consumers import from here rather than duplicating values.
+- Export immutable constants and helpers; consumers import from here rather than duplicating values.
 
 ## Dependencies
 ### Internal
