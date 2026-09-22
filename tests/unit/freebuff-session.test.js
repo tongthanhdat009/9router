@@ -86,7 +86,7 @@ describe("FreeBuff free-session mode", () => {
         expect(options.method).toBe("POST");
         expect(options.headers.Authorization).toBe("Bearer free-token");
         expect(options.headers["x-fb-timezone"]).toBeTruthy();
-        expect(options.headers["x-freebuff-first-tab-discount"]).toBe("0");
+        expect(options.headers["x-freebuff-first-tab-discount"]).toBe(0);
         expect(options.headers["x-freebuff-model"]).toBe(MODEL);
         expect(options.headers["x-freebuff-wallet-spend-limit"]).toBe("0");
         expect(options.body).toBeUndefined();
@@ -530,7 +530,7 @@ describe("FreeBuff free-session mode", () => {
     const del = seen.find((c) => c.method === "DELETE");
     expect(del.url).toBe(SESSION_URL);
     expect(del.headers["x-freebuff-instance-id"]).toBe("inst-glm");
-    expect(del.headers["x-freebuff-compact-session"]).toBe("1");
+    expect(del.headers).not.toHaveProperty("x-freebuff-compact-session");
     // Call order: first admission, then DELETE release, then re-admission.
     const admissionIdx = [];
     seen.forEach((c, i) => { if (c.url === ADMISSION_URL) admissionIdx.push(i); });
@@ -726,6 +726,142 @@ describe("FreeBuff free-session tool passthrough evidence", () => {
 
 });
 
+
+
+// --- Outbound transport boundary: FINAL headers observed at the mocked
+// proxyAwareFetch call (lifecycleFetch only merges signal and passthroughs
+// headers byte-for-byte, so options.headers here IS the wire shape). ---
+describe("FreeBuff outbound transport boundary", () => {
+  beforeEach(() => {
+    vi.mocked(proxyAwareFetch).mockReset();
+    _resetSessionsForTests();
+    vi.useFakeTimers();
+    vi.setSystemTime(BASE);
+  });
+
+  afterEach(() => {
+    _resetSessionsForTests();
+    vi.useRealTimers();
+  });
+
+  it("admission POST carries exactly the 5 session headers and no Content-Type", async () => {
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (url === ADMISSION_URL) return admissionOk("inst-boundary", BASE + 60 * 60 * 1000);
+      throw new Error("unexpected fetch " + url);
+    });
+    await ensureFreeSession(creds(), MODEL, console);
+    const admission = calls.find((c) => c.url === ADMISSION_URL);
+    expect(admission.options.method).toBe("POST");
+    expect(Object.keys(admission.options.headers).sort()).toEqual([
+      "Authorization",
+      "x-fb-timezone",
+      "x-freebuff-first-tab-discount",
+      "x-freebuff-model",
+      "x-freebuff-wallet-spend-limit",
+    ]);
+    expect(admission.options.headers.Authorization).toBe("Bearer free-token");
+    expect(admission.options.headers["x-fb-timezone"]).toBeTruthy(); // IANA zone or UTC
+    expect(admission.options.headers["x-freebuff-first-tab-discount"]).toBe(0);
+    expect(admission.options.headers["x-freebuff-model"]).toBe(MODEL);
+    expect(admission.options.headers["x-freebuff-wallet-spend-limit"]).toBe("0");
+    expect(admission.options.headers["Content-Type"]).toBeUndefined();
+  });
+
+  it("heartbeat GET carries exactly the 5 compact headers", async () => {
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (url === ADMISSION_URL) return admissionOk("inst-hb-boundary", BASE + 60 * 60 * 1000);
+      if (url === SESSION_URL && options.method === "GET") return sessionResponse({ status: "active", expiresAt: iso(BASE + 2 * 60 * 60 * 1000) });
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    await ensureFreeSession(creds(), MODEL, console);
+    await vi.advanceTimersByTimeAsync(33_000); // heartbeat period is 30s +/- 2s
+    const heartbeat = calls.find((c) => c.url === SESSION_URL && c.options.method === "GET");
+    expect(heartbeat).toBeDefined();
+    expect(Object.keys(heartbeat.options.headers).sort()).toEqual([
+      "Authorization",
+      "x-fb-timezone",
+      "x-freebuff-compact-session",
+      "x-freebuff-first-tab-discount",
+      "x-freebuff-instance-id",
+    ]);
+    expect(heartbeat.options.headers.Authorization).toBe("Bearer free-token");
+    expect(heartbeat.options.headers["x-fb-timezone"]).toBeTruthy();
+    expect(heartbeat.options.headers["x-freebuff-first-tab-discount"]).toBe(0);
+    expect(heartbeat.options.headers["x-freebuff-instance-id"]).toBe("inst-hb-boundary");
+    expect(heartbeat.options.headers["x-freebuff-compact-session"]).toBe("1");
+  });
+
+  it("DELETE release on model switch carries exactly the 4 session headers and never compact", async () => {
+    const seen = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      seen.push({ url: String(url), method: options.method, headers: options.headers });
+      if (url === ADMISSION_URL) {
+        return admissionOk(options.headers["x-freebuff-model"] === "mimo/mimo-v2.5" ? "inst-mimo-del" : "inst-glm-del", BASE + 60 * 60 * 1000);
+      }
+      if (url === SESSION_URL && options.method === "DELETE") return sessionResponse({ status: "ended" });
+      throw new Error("unexpected fetch " + url + " " + options.method);
+    });
+    await ensureFreeSession(creds(), MODEL, console);
+    const second = await ensureFreeSession(creds(), "mimo/mimo-v2.5", console);
+    expect(second.instanceId).toBe("inst-mimo-del");
+    const del = seen.find((c) => c.method === "DELETE");
+    expect(del.url).toBe(SESSION_URL);
+    expect(Object.keys(del.headers).sort()).toEqual([
+      "Authorization",
+      "x-fb-timezone",
+      "x-freebuff-first-tab-discount",
+      "x-freebuff-instance-id",
+    ]);
+    expect(del.headers.Authorization).toBe("Bearer free-token");
+    expect(del.headers["x-fb-timezone"]).toBeTruthy();
+    expect(del.headers["x-freebuff-first-tab-discount"]).toBe(0);
+    expect(del.headers["x-freebuff-instance-id"]).toBe("inst-glm-del"); // the OLD seat
+    expect(del.headers).not.toHaveProperty("x-freebuff-compact-session");
+  });
+
+  it("START POST carries Content-Type, Authorization, and acting-user on the agent-runs call", async () => {
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (url === ADMISSION_URL) return admissionOk("inst-start", BASE + 60 * 60 * 1000);
+      if (url === AGENT_RUNS) return startOk(); // START and FINISH
+      if (url === CHAT_URL) return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      throw new Error("unexpected fetch " + url);
+    });
+    const executor = new FreebuffExecutor();
+    const result = await runExecutor(executor);
+    expect(result.response.status).toBe(200);
+    await result.response.text(); // drain so the terminal FINISH settles
+    const start = calls.find((c) => c.url === AGENT_RUNS && JSON.parse(c.options.body).action === "START");
+    expect(start.options.method).toBe("POST");
+    expect(start.options.headers["Content-Type"]).toBe("application/json");
+    expect(start.options.headers.Authorization).toBe("Bearer free-token");
+    expect(start.options.headers["x-freebuff-acting-user-id"]).toBe("u-1");
+  });
+
+  it("chat POST carries Authorization and acting-user on the 200 path", async () => {
+    const calls = [];
+    vi.mocked(proxyAwareFetch).mockImplementation(async (url, options = {}) => {
+      calls.push({ url: String(url), options });
+      if (url === ADMISSION_URL) return admissionOk("inst-chat", BASE + 60 * 60 * 1000);
+      if (url === AGENT_RUNS) return startOk(); // START and FINISH
+      if (url === CHAT_URL) return new Response(JSON.stringify({ choices: [] }), { status: 200 });
+      throw new Error("unexpected fetch " + url);
+    });
+    const executor = new FreebuffExecutor();
+    const result = await runExecutor(executor);
+    expect(result.response.status).toBe(200);
+    await result.response.text();
+    const chatCall = calls.find((c) => c.url === CHAT_URL);
+    expect(chatCall.options.method).toBe("POST");
+    expect(chatCall.options.headers.Authorization).toBe("Bearer free-token");
+    expect(chatCall.options.headers["x-freebuff-acting-user-id"]).toBe("u-1");
+  });
+});
   it("FreebuffSessionError carries status, body, and parsed Retry-After", () => {
     const error = new FreebuffSessionError(403, "country_blocked", 1500);
     expect(error).toBeInstanceOf(Error);
