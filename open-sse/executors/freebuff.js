@@ -101,6 +101,10 @@ function timeZoneHeader() {
   }
 }
 
+function sessionExtraHeaders() {
+  return { "x-fb-timezone": timeZoneHeader(), "x-freebuff-first-tab-discount": 0 };
+}
+
 function parseRetryAfterMs(value) {
   if (!value) return null;
   const seconds = Number(value);
@@ -131,7 +135,7 @@ function releaseFreeSession(entry, credentials, log) {
   // Fire-and-forget DELETE; expect {status:"ended"}. Never blocks admission.
   proxyAwareFetch(SESSION_URL, {
     method: "DELETE",
-    headers: { ...sessionAuthHeaders(credentials), "x-freebuff-instance-id": entry.instanceId, "x-freebuff-compact-session": "1" },
+    headers: { ...sessionAuthHeaders(credentials), ...sessionExtraHeaders(), "x-freebuff-instance-id": entry.instanceId },
     signal: AbortSignal.timeout(ADMISSION_TIMEOUT_MS),
   }, null).catch((error) => {
     log?.debug?.("FREEBUFF", `free session release failed: ${error?.message || error}`);
@@ -142,7 +146,7 @@ async function heartbeatFreeSession(entry, credentials, log, key) {
   try {
     const response = await proxyAwareFetch(SESSION_URL, {
       method: "GET",
-      headers: { ...sessionAuthHeaders(credentials), "x-freebuff-instance-id": entry.instanceId, "x-freebuff-compact-session": "1" },
+      headers: { ...sessionAuthHeaders(credentials), ...sessionExtraHeaders(), "x-freebuff-instance-id": entry.instanceId, "x-freebuff-compact-session": "1" },
       signal: AbortSignal.timeout(ADMISSION_TIMEOUT_MS),
     }, null);
     if (!response.ok) {
@@ -191,8 +195,7 @@ async function admitFreeSession(credentials, model, log, key) {
     method: "POST",
     headers: {
       ...sessionAuthHeaders(credentials),
-      "x-fb-timezone": timeZoneHeader(),
-      "x-freebuff-first-tab-discount": "0",
+      ...sessionExtraHeaders(),
       "x-freebuff-model": model,
       "x-freebuff-wallet-spend-limit": "0",
     },
