@@ -75,3 +75,12 @@ provider `fallbackStrategy` back to `fill-first`/`round-robin`; or clear
 `comboStrategies[name]` / `providerStrategies[id]` to inherit. Deterministic
 legacy behavior resumes immediately; in-memory learning expires via TTL or
 `adaptiveRouter.reset()`.
+
+## Status and verification (2026-09-24)
+
+- Implementation commits: db922cff (adaptive service + config), fc062531 (route/account integration), 32b89a21 (this doc), 0595900e..51494ddd (settings/UI + diagnostics endpoint), 0f206de6 (estimated-usage disposition + integration tests), 2ab9ffb5 (probe recovery wiring + review fixes), fc307856 (regression baseline refresh, A/B-proven), 9640631e (onSelection payload fix).
+- Test tiers: unit service 21/21 (tests/unit/adaptive-router.test.js); integration 13+ route-account + settings-ui suites green; full non-live regression gate green after baseline refresh (73 entries proven failing identically on pre-feature base df712b77; 1 real regression fixed).
+- Isolated runtime proof: /tmp/adaptive-e2e-redo/ (manifest.json thresholds, summary.json results, per-request logs).
+- Enable: Dashboard > Combos > set combo strategy to Adaptive Round Robin - speed aware; Dashboard > Providers > (account) Connections strategy to adaptive-round-robin. Absent override = inherit global. Both layers are independent opt-ins.
+- Revert: set each layer back to Round Robin / Fill First; process-local learning resets on disable or server restart.
+- Known limitations: process-local learning (no cross-worker share), cold start after restart, completed-request measurement only (a slow in-flight response is never rescued), estimated or missing usage never learned, non-stream responses contribute latency-only observations.
