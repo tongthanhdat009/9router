@@ -33,6 +33,17 @@ describe("adaptive settings contracts", () => {
     expect(s.comboStrategies.a.fallbackStrategy).toBe("fallback");
     expect(s.providerStrategies.p.fallbackStrategy).toBe("fill-first");
   });
+  it("per-layer disable returns each layer to legacy without touching the other", async () => {
+    await db.updateSettings({ comboStrategies: { c: { fallbackStrategy: "adaptive-round-robin" } }, providerStrategies: { o: { fallbackStrategy: "adaptive-round-robin" } } });
+    await db.updateSettings({ comboStrategies: { c: { fallbackStrategy: "fallback" } } });
+    let s = await db.getSettings();
+    expect(s.comboStrategies.c.fallbackStrategy).toBe("fallback");
+    expect(s.providerStrategies.o.fallbackStrategy).toBe("adaptive-round-robin");
+    await db.updateSettings({ providerStrategies: { o: { fallbackStrategy: "fill-first" } } });
+    s = await db.getSettings();
+    expect(s.comboStrategies.c.fallbackStrategy).toBe("fallback");
+    expect(s.providerStrategies.o.fallbackStrategy).toBe("fill-first");
+  });
   it("merges nested entries and fields, then deletes only named entries", async () => {
     await db.updateSettings({ comboStrategies: { b: { fallbackStrategy: "adaptive-round-robin" }, a: { fallbackStrategy: "adaptive-round-robin" } }, providerStrategies: { p: { fallbackStrategy: "adaptive-round-robin" }, q: { fallbackStrategy: "round-robin" } } });
     let s = await db.getSettings();
