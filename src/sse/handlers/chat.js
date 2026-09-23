@@ -305,6 +305,7 @@ async function findCustomModelRow(provider, model) {
 }
 
 async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, affinitySessionId = null, affinityMeta = null, diagnostics = null, finalizeAffinityRequest = null, comboUsesAdaptive = false) {
+  const adaptiveRoute = comboUsesAdaptive === true;
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -567,7 +568,23 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       onRouteAffinityStreamComplete: ({ usage, firstSemanticGenerationAt, streamEndAt, outcome = "success" }) => {
         if (clientDisconnected) outcome = "cancelled";
         // Adaptive account lease settles here exactly once per attempt; released
-        // leases are skipped so retries never double-record.
+        // leases are skipped so retries never double-record. When the account
+        // layer is legacy (no lease) but the combo layer is adaptive, record a
+        // route-layer sample so "combo adaptive only" learns without account
+        // reservations — one sample per terminal, never two sources.
+        let adaptiveRouteSample = null;
+        if (!adaptiveAttemptLease && adaptiveRoute && credentials) {
+          adaptiveRouteSample = {
+            layer: "route",
+            providerId: provider,
+            modelId: model,
+            completionTokens: usage?.completion_tokens ?? usage?.output_tokens,
+            semanticTtftMs: firstSemanticGenerationAt != null ? firstSemanticGenerationAt - attemptStartedAt : null,
+            streamSpanMs: firstSemanticGenerationAt != null ? streamEndAt - firstSemanticGenerationAt : null,
+            estimated: usage?.estimated === true,
+            outcome,
+          };
+        }
         if (adaptiveAttemptLease && credentials) {
           const lease = adaptiveAttemptLease;
           adaptiveAttemptLease = null;
@@ -587,6 +604,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             ? adaptiveRouter.markProbeResult(lease, observation)
             : { result: adaptiveRouter.recordObservation(observation), released: adaptiveRouter.release(lease) };
           logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials.connectionId, ...(settleResult.result ?? settleResult), probe: Boolean(lease.probe) });
+        }
+        // Route-only mode: settle the route sample, then fall into legacy
+        // affinity accounting below (unchanged).
+        if (adaptiveRouteSample) {
+          const settled = adaptiveRouter.recordObservation(adaptiveRouteSample);
+          logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials?.connectionId, ...settled, probe: false });
         }
         const route = affinityMeta?.routeCompletion;
         if (!route) return;

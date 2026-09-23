@@ -55,6 +55,8 @@ export function createAdaptiveRouter({ now = Date.now, config = {} } = {}) {
     const min = Math.min(...baseWeights);
     const weights = baseWeights.map((w) => Math.min(w, min * c.weightRatioCap));
     // One SWRR advance per selection; remaining fallback candidates retain their input order.
+    // A recovery probe leads as the first fallback after the head pick so bounded
+    // exploration actually executes even when the hot path rarely errors.
     let winner = -1, best = -Infinity;
     healthy.forEach(([id], index) => {
       const e = lookup(id, true);
@@ -62,8 +64,9 @@ export function createAdaptiveRouter({ now = Date.now, config = {} } = {}) {
       if (e.current > best) { best = e.current; winner = index; }
     });
     if (winner >= 0) lookup(healthy[winner][0]).current -= weights.reduce((a, b) => a + b, 0);
-    const ordered = winner < 0 ? [] : [healthy[winner][1], ...healthy.filter((_, i) => i !== winner).map(([, item]) => item)];
-    if (probe) ordered.push(probe[1]);
+    const ordered = winner < 0 ? [] : [healthy[winner][1]];
+    if (probe && (probe[1] !== ordered[0])) ordered.push(probe[1]);
+    if (winner >= 0) ordered.push(...healthy.filter(([, item]) => item !== ordered[0] && item !== probe?.[1]).map(([, item]) => item));
     return { ordered, probe: probe?.[1] ?? null, reasons };
   }
   function reserve({ layer, providerId, modelId, connectionId = null, probe = false } = {}) {
