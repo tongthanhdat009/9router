@@ -14,11 +14,34 @@ import { ROLE, OPENAI_BLOCK, RESPONSES_ITEM, OPENAI_FINISH, MODEL_FALLBACK } fro
  * Translate OpenAI chunk to Responses API events
  * @returns {Array} Array of events with { event, data } structure
  */
+// ponytail: maps Chat Completions usage to Responses API shape; client gauge needs this for auto-compact
+function toResponsesUsage(usage) {
+  if (!usage || typeof usage !== "object") return null;
+  const inputTokens = [usage.input_tokens, usage.prompt_tokens].find(Number.isFinite) ?? 0;
+  const outputTokens = [usage.output_tokens, usage.completion_tokens].find(Number.isFinite) ?? 0;
+  const res = {
+    input_tokens: inputTokens,
+    output_tokens: outputTokens,
+    total_tokens: Number.isFinite(usage.total_tokens) ? usage.total_tokens : inputTokens + outputTokens
+  };
+  const cached = [usage.input_tokens_details?.cached_tokens, usage.prompt_tokens_details?.cached_tokens].find(Number.isFinite);
+  const reasoning = [usage.output_tokens_details?.reasoning_tokens, usage.completion_tokens_details?.reasoning_tokens].find(Number.isFinite);
+  if (Number.isFinite(cached)) res.input_tokens_details = { cached_tokens: cached };
+  if (Number.isFinite(reasoning)) res.output_tokens_details = { reasoning_tokens: reasoning };
+  return res;
+}
+
 export function openaiToOpenAIResponsesResponse(chunk, state) {
   if (!chunk) {
     return flushEvents(state);
   }
-  
+
+  // Capture upstream usage BEFORE the choices guard: the last OpenAI chunk
+  // may carry usage with an empty choices array and must not be dropped.
+  if (chunk.usage) {
+    state.responsesUsage = toResponsesUsage(chunk.usage);
+  }
+
   if (!chunk.choices?.length) return [];
   
   const events = [];
@@ -112,7 +135,10 @@ export function openaiToOpenAIResponsesResponse(chunk, state) {
     for (const i in state.msgItemAdded) closeMessage(state, emit, i);
     closeReasoning(state, emit);
     for (const i in state.funcCallIds) closeToolCall(state, emit, i);
-    sendCompleted(state, emit);
+    // Direct OpenAI streams flush the trailing usage-only chunk; pivoted streams
+    // do not reach this converter on flush, so preserve their terminal event.
+    const flushReachesUs = state.targetFormat === FORMATS.OPENAI;
+    if (state.responsesUsage || !flushReachesUs) sendCompleted(state, emit);
   }
 
   return events;
@@ -376,7 +402,8 @@ function sendCompleted(state, emit) {
         created_at: state.created,
         status: "completed",
         background: false,
-        error: null
+        error: null,
+        ...(state.responsesUsage ? { usage: state.responsesUsage } : {})
       }
     });
   }

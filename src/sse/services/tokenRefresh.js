@@ -126,10 +126,14 @@ function needsProjectId(provider) {
 function _refreshProjectId(provider, connectionId, accessToken) {
   if (!needsProjectId(provider) || !connectionId || !accessToken) return;
 
+  // Lazy by default: fetching projectId across many accounts at once trips
+  // Google anti-abuse limits. Runtime handlers resolve it on demand instead.
+  if (process.env.EAGER_PROJECT_ID_REFRESH !== "true") return;
+
   // Evict the stale cached entry so getProjectIdForConnection does a real fetch
   invalidateProjectId(connectionId);
 
-  getProjectIdForConnection(connectionId, accessToken)
+  getProjectIdForConnection(connectionId, accessToken, provider)
     .then((projectId) => {
       if (!projectId) return;
       updateProviderCredentials(connectionId, { projectId }).catch((err) => {

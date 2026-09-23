@@ -29,7 +29,7 @@ import { BaseExecutor } from "./base.js";
 import { PROVIDERS } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 import { SSE_DONE } from "../utils/sseConstants.js";
-import { FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
+import { FETCH_CONNECT_TIMEOUT_MS, HTTP_STATUS } from "../config/runtimeConfig.js";
 import {
   QODER_CHAT_URL_ENCODED,
   QODER_CHAT_BASE_ALT,
@@ -279,47 +279,62 @@ async function buildQoderRequestBody({ model, body, credentials, log, proxyOptio
 
 /**
  * Check if a qoder error message indicates a billing/quota block.
- * Signatures: code 112 (quota exhausted), code 10605 (queue throttle), pricingUrl field.
+ * Signatures: code 110 (billing daily count exceeded), code 112 (quota
+ * exhausted), code 10605 (queue throttle), pricingUrl field.
  */
 function isBillingBlock(inner) {
   if (!inner || typeof inner !== "string") return false;
   const lowerMsg = inner.toLowerCase();
-  // Match: {"code":"112",...}, {"code":"10605",...}, or pricingUrl field
-  return /\"code\"\s*:\s*\"(112|10605)\"/.test(inner) || lowerMsg.includes("pricingurl");
+  if (lowerMsg.includes("pricingurl")) return true;
+  // Parsed code preferred over regex: matches numeric or string "110"/"112"/"10605".
+  try {
+    const parsed = JSON.parse(inner);
+    const code = String(parsed?.code ?? "");
+    if (code === "110" || code === "112" || code === "10605") return true;
+  } catch { /* not JSON — fall through to legacy shape match */ }
+  // Match legacy exact shapes: {"code":"112",...}, {"code":"10605",...}.
+  return /"code"\s*:\s*"(112|10605)"/.test(inner);
 }
 
 /**
- * Peek the first SSE frame to detect billing errors before piping.
- * Returns { isBilling, statusVal, message, consumed } — `consumed` is every
+ * Peek the first SSE data line to detect upstream errors before piping.
+ * Returns { isError, isBilling, statusVal, message, consumed } — `consumed` is every
  * byte read so far (including the peeked line) so the caller can re-process
  * it and nothing is dropped from the stream.
  */
 async function peekFirstQoderFrame(reader, decoder) {
   let consumed = "";
+  let offset = 0;
+  let upstreamDone = false;
   while (true) {
-    const { done, value } = await reader.read();
-    if (done) return { isBilling: false, consumed, upstreamDone: true };
+    let nl = consumed.indexOf("\n", offset);
+    if (nl === -1 && !upstreamDone) {
+      const { done, value } = await reader.read();
+      upstreamDone = done;
+      consumed += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      continue;
+    }
+    if (offset >= consumed.length) return { isError: false, consumed, upstreamDone };
+    if (nl === -1) nl = consumed.length;
 
-    consumed += decoder.decode(value, { stream: true });
-    const nl = consumed.indexOf("\n");
-    if (nl === -1) continue; // need a full line first
-
-    const line = consumed.slice(0, nl).replace(/\r$/, "").trim();
+    const line = consumed.slice(offset, nl).replace(/\r$/, "").trim();
+    offset = nl + 1;
     if (!line.startsWith("data:")) continue;
 
     const data = line.slice(5).trimStart();
-    if (data === "[DONE]") return { isBilling: false, consumed };
+    if (data === "[DONE]") return { isError: false, consumed, upstreamDone };
 
     let envelope;
-    try { envelope = JSON.parse(data); } catch { return { isBilling: false, consumed }; }
-
-    const statusVal = typeof envelope.statusCodeValue === "number" ? envelope.statusCodeValue : 200;
-    const inner = typeof envelope.body === "string" ? envelope.body : "";
-
-    if (statusVal !== 200 && isBillingBlock(inner)) {
-      return { isBilling: true, statusVal, message: inner || `qoder billing block (${statusVal})` };
+    try { envelope = JSON.parse(data); } catch { return { isError: false, consumed, upstreamDone }; }
+    const raw = Number(envelope?.statusCodeValue);
+    const statusVal = Number.isNaN(raw) ? 200 : raw;
+    const inner = typeof envelope?.body === "string"
+      ? envelope.body
+      : envelope?.body != null ? JSON.stringify(envelope.body) : "";
+    if (statusVal !== 200) {
+      return { isError: true, isBilling: isBillingBlock(inner), statusVal, message: inner || `upstream status ${statusVal}` };
     }
-    return { isBilling: false, consumed };
+    return { isError: false, consumed, upstreamDone };
   }
 }
 
@@ -338,24 +353,28 @@ async function peekFirstQoderFrame(reader, decoder) {
  * response.text() which hangs until the socket closes — so on terminal
  * events we cancel the upstream reader and close our stream immediately.
  *
- * NEW: Peek first frame to detect billing blocks (code 112/10605/pricingUrl).
- * If detected, return 403 response so chatCore marks connection unavailable
- * and triggers combo fallback instead of leaking error text into chat.
+ * Peek the first frame for errors before committing to HTTP 200. Preserve
+ * upstream error statuses so chatCore can handle failures instead of recording
+ * error text as a successful completion. Billing blocks retain the existing
+ * 403 mapping for quota/account fallback.
  */
-async function wrapQoderSSE(response, model) {
+async function wrapQoderSSE(response, model, log = null) {
   if (!response.ok || !response.body) return response;
 
   const decoder = new TextDecoder();
   const reader = response.body.getReader();
 
-  // Peek first frame to detect billing block
+  // Detect errors before returning a successful streaming response.
   const peek = await peekFirstQoderFrame(reader, decoder);
-  if (peek?.isBilling) {
-    // Billing block detected — return 403 so chatCore fails this connection
+  if (peek.isError) {
     await reader.cancel().catch(() => {});
+    const status = peek.isBilling
+      ? HTTP_STATUS.FORBIDDEN
+      : Number.isInteger(peek.statusVal) && peek.statusVal >= HTTP_STATUS.BAD_REQUEST && peek.statusVal <= 599
+        ? peek.statusVal : HTTP_STATUS.BAD_GATEWAY;
     return new Response(
       JSON.stringify({ error: { message: peek.message, code: peek.statusVal } }),
-      { status: 403, headers: { "Content-Type": "application/json" } }
+      { status, headers: { "Content-Type": "application/json" } }
     );
   }
 
@@ -381,18 +400,45 @@ async function wrapQoderSSE(response, model) {
 
     let envelope;
     try { envelope = JSON.parse(data); } catch { return; }
-    const statusVal = typeof envelope.statusCodeValue === "number" ? envelope.statusCodeValue : 200;
-    const inner = typeof envelope.body === "string" ? envelope.body : "";
+    const statusVal = Number(envelope.statusCodeValue) || 200;
+    const inner = typeof envelope.body === "string"
+      ? envelope.body
+      : envelope.body != null ? JSON.stringify(envelope.body) : "";
     if (statusVal !== 200) {
-      const msg = inner || `upstream status ${statusVal}`;
-      const errChunk = JSON.stringify({
-        id: `qoder-error-${Date.now()}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: { content: `\n[qoder error ${statusVal}: ${truncate(msg, 200)}]` }, finish_reason: "stop" }],
+      // Always visible: error envelopes are rare and worth one stderr line at
+        // any log level (response bodies carry no credentials).
+      try {
+        console.error(`[QODER] error envelope status=${statusVal} statusType=${typeof envelope.statusCodeValue} bodyType=${typeof envelope.body} body=${truncate(inner, 300)}`);
+      } catch { /* logging must not break the stream */ }
+      if (isBillingBlock(inner)) {
+        // Billing/quota envelope at any stream position (peek only covers the
+        // first frame): emit a structured error chunk, not fake assistant text.
+        // parseSSEToOpenAIResponse understands chunk.error and turns it into a
+        // non-200 result so chat.js locks the model and falls back. Streaming
+        // clients receive a real SSE error instead of "[qoder error ...]" text.
+        const errObj = JSON.stringify({
+          error: {
+            message: inner || `qoder billing block (${statusVal})`,
+            code: "qoder_billing_block",
+            status: 403,
+            type: "quota_error",
+          },
+        });
+        controller.enqueue(encoder.encode(`data: ${errObj}\n\n`));
+        controller.enqueue(encoder.encode(SSE_DONE));
+        doneEmitted = true;
+        return;
+      }
+      const errObj = JSON.stringify({
+        error: {
+          message: inner || `upstream status ${statusVal}`,
+          code: "qoder_upstream_error",
+          status: Number.isInteger(statusVal) && statusVal >= HTTP_STATUS.BAD_REQUEST && statusVal <= 599
+            ? statusVal : HTTP_STATUS.BAD_GATEWAY,
+          type: "upstream_error",
+        },
       });
-      controller.enqueue(encoder.encode(`data: ${errChunk}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${errObj}\n\n`));
       controller.enqueue(encoder.encode(SSE_DONE));
       doneEmitted = true;
       return;
@@ -608,8 +654,12 @@ export class QoderExecutor extends BaseExecutor {
       response = await proxyAwareFetch(
         url,
         { method: "POST", headers, body: encodedBodyBuf, signal: mergedSignal },
-        proxyOptions,
+        // A proxy fallback must not replay the same signed COSY request directly.
+        { ...proxyOptions, strictProxy: true },
       );
+    } catch (err) {
+      if (mergedSignal.aborted) throw mergedSignal.reason;
+      throw err;
     } finally {
       clearTimeout(connectTimer);
     }
@@ -619,7 +669,7 @@ export class QoderExecutor extends BaseExecutor {
       return { response, url, headers, transformedBody: payload };
     }
 
-    const wrapped = await wrapQoderSSE(response, `qoder/${qoderKey}`);
+    const wrapped = await wrapQoderSSE(response, `qoder/${qoderKey}`, log);
     return { response: wrapped, url, headers, transformedBody: payload };
   }
 
