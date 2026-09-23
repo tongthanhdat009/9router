@@ -339,7 +339,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   let rotatedModels = !adaptive && preferredRoute && models.includes(preferredRoute)
     ? [preferredRoute, ...models.filter((model) => model !== preferredRoute)]
     : getRotatedModels(adaptive ? adaptiveModels : models, comboName, comboStrategy, comboStickyLimit, rotationScope, adaptive ? canonicalModels : null);
-  onSelection?.({ rotationUsed: adaptive || !(preferredRoute && models.includes(preferredRoute)), strategy: comboStrategy });
+  onSelection?.({ rotationUsed: adaptive || !(preferredRoute && models.includes(preferredRoute)) });
 
   // Auto-switch: float models that satisfy the request's required capabilities to the front.
   // Adaptive already applied capability tiers + SWRR above; skip the legacy reorder.
