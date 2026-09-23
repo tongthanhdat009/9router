@@ -210,7 +210,11 @@ export function createSSEStream(options = {}) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
-                usage = estimated;
+                // Inject an estimate only when nothing is buffered yet; otherwise
+                // keep the buffered (possibly authoritative) usage — a later
+                // authoritative frame then replaces the injected estimate via
+                // mergeUsage (see usageTracking.js).
+                if (!usage) usage = estimated;
                 injectedUsage = true;
               } else if (isFinishChunk && usage) {
                 const buffered = addBufferToUsage(usage);
