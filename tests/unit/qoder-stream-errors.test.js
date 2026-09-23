@@ -56,6 +56,16 @@ describe("Qoder first-frame errors", () => {
     expect(wrapped.status).toBe(502);
   });
 
+  it("emits a structured status-bearing error after a successful frame", async () => {
+    const first = JSON.stringify({ choices: [{ delta: { content: "hi" } }] });
+    const { response } = upstream([frame(200, first), frame(503, "service unavailable")]);
+    const wrapped = await wrapQoderSSE(response, "qoder/auto");
+    const text = await wrapped.text();
+    expect(text).toContain('"status":503');
+    expect(text).toContain('"code":"qoder_upstream_error"');
+    expect(text).not.toContain("[qoder error");
+  });
+
   it("replays successful frames after a heartbeat without losing or duplicating content", async () => {
     const first = JSON.stringify({ choices: [{ delta: { content: "hello" } }] });
     const second = JSON.stringify({ choices: [{ delta: { content: "world" } }] });
