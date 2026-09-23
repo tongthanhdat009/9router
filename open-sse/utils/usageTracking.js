@@ -324,7 +324,15 @@ export function extractUsage(chunk) {
 export function mergeUsage(prev, next) {
   if (!prev) return next || null;
   if (!next) return prev;
-  const merged = { ...prev };
+  // An injected estimate must never survive the arrival of real provider usage:
+  // when `next` carries authoritative token counts, drop the inherited
+  // `estimated` flag instead of max-merging it. (adaptive sampling ignores
+  // estimated samples, so a sticky flag would block all real learning.)
+  const realArrived = hasValidUsage(next) && next.estimated !== true;
+  // Estimated counts are not authoritative either: let the real frame replace
+  // them, even when the estimate happened to be numerically larger.
+  const merged = realArrived && prev.estimated === true ? {} : { ...prev };
+  if (realArrived) delete merged.estimated;
   for (const [k, v] of Object.entries(next)) {
     // typeof NaN === "number" — guard with Number.isFinite so one malformed
     // chunk can't poison the whole accumulation (Math.max(x, NaN) is NaN).
