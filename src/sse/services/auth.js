@@ -166,7 +166,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     } else if (adaptiveStrategy) {
       // Post-eligibility adaptive pick: never probes quota/auth/model-locked accounts
       // (they were filtered above). Lock is held for bookkeeping selection only.
-      const { ordered } = adaptiveRouter.selectAccount({
+      const { ordered, probe } = adaptiveRouter.selectAccount({
         providerId,
         modelId: model || "any",
         candidates: availableConnections.map((c) => ({ connectionId: c.id })),
@@ -181,6 +181,7 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
           providerId,
           modelId: model || "any",
           connectionId: connection.id,
+          probe: (typeof probe === "string" ? probe : probe?.connectionId) === connection.id,
         });
         if (!adaptiveAccount) adaptiveAccount = null;
       }

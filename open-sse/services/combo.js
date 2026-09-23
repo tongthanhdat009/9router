@@ -206,9 +206,9 @@ function rotateModelsFromIndex(models, currentIndex) {
  * @param {number|string} [stickyLimit=1] - Requests per combo model before switching
  * @returns {string[]} Rotated models array
  */
-export function getRotatedModels(models, comboName, strategy, stickyLimit = 1, rotationScope = null) {
+export function getRotatedModels(models, comboName, strategy, stickyLimit = 1, rotationScope = null, canonicalModels = null) {
   // D3: adaptive selects once per logical request and ignores legacy sticky limits.
-  if (strategy === "adaptive-round-robin") return adaptiveRoundRobinModels(models, comboName);
+  if (strategy === "adaptive-round-robin") return adaptiveRoundRobinModels(models, comboName, canonicalModels);
   if (!models || models.length <= 1 || strategy !== "round-robin") {
     return models;
   }
@@ -251,13 +251,16 @@ function parseRouteCandidate(modelStr) {
   return { providerId: String(modelStr).slice(0, slash), modelId: String(modelStr).slice(slash + 1) };
 }
 
-export function adaptiveRoundRobinModels(models, comboName) {
+export function adaptiveRoundRobinModels(models, comboName, canonicalModels = null) {
   if (!Array.isArray(models) || models.length <= 1) return models;
   const scope = String(comboName || "__combo_default__");
   const candidates = [];
+  const byModel = new Map(Array.isArray(canonicalModels) ? canonicalModels.map((c) => [c?.model, c]) : []);
   for (const modelStr of models) {
-    const parsed = parseRouteCandidate(modelStr);
-    if (parsed) candidates.push({ ...parsed, model: modelStr });
+    // P1d: canonicalize aliases (cx/*, provider aliases) before keying so route
+    // keys hash identically to the canonicalized recordObservation keys in chat.js.
+    const canonical = byModel.get(modelStr) || parseRouteCandidate(modelStr);
+    if (canonical?.providerId && canonical?.modelId) candidates.push({ providerId: canonical.providerId, modelId: canonical.modelId, model: modelStr });
   }
   if (!candidates.length) return models;
   // One SWRR advance per logical request; healthy-list order then input fallback order.
@@ -320,7 +323,7 @@ function isCodexSseTransientError(modelStr, errorText) {
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
-export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, deprioritizedRoute = null, onSelection = null, rotationScope = null }) {
+export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, deprioritizedRoute = null, onSelection = null, rotationScope = null, canonicalModels = null }) {
   const adaptive = comboStrategy === "adaptive-round-robin";
   // Adaptive ignores affinity and applies capability tiers before its single SWRR advance.
   const required = autoSwitch ? detectRequiredCapabilities(body) : new Set();
@@ -335,7 +338,7 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
   // Preferred affinity deliberately bypasses legacy rotation; cursor remains unchanged.
   let rotatedModels = !adaptive && preferredRoute && models.includes(preferredRoute)
     ? [preferredRoute, ...models.filter((model) => model !== preferredRoute)]
-    : getRotatedModels(adaptive ? adaptiveModels : models, comboName, comboStrategy, comboStickyLimit, rotationScope);
+    : getRotatedModels(adaptive ? adaptiveModels : models, comboName, comboStrategy, comboStickyLimit, rotationScope, adaptive ? canonicalModels : null);
   onSelection?.({ rotationUsed: adaptive || !(preferredRoute && models.includes(preferredRoute)), strategy: comboStrategy });
 
   // Auto-switch: float models that satisfy the request's required capabilities to the front.

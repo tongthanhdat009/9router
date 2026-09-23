@@ -109,6 +109,16 @@ describe("adaptive route + account integration", () => {
     expect(attempted.length).toBe(new Set(attempted).size);
   });
 
+  it("alias-canonicalized route keys: getRotatedModels hashes aliases with canonical keys", () => {
+    // Unit-level: the canonicalModels map makes an aliased member score under the same key as its canonical twin.
+    const canonicalModels = [{ model: "cx/gpt-5", providerId: "codex", modelId: "gpt-5" }];
+    adaptiveRouter.recordObservation({ layer: "route", providerId: "codex", modelId: "gpt-5", outcome: "success", completionTokens: 64, semanticTtftMs: 400, streamSpanMs: 6000 });
+    adaptiveRouter.recordObservation({ layer: "route", providerId: "codex", modelId: "gpt-5", outcome: "success", completionTokens: 64, semanticTtftMs: 400, streamSpanMs: 6000 });
+    const ordered = getRotatedModels(["cx/gpt-5", "codex/backup"], "alias-combo", "adaptive-round-robin", 1, null, canonicalModels);
+    expect(ordered[0]).toBe("codex/backup");
+    expect(adaptiveRouter.snapshot().entries.find((entry) => entry.key[0] === "route" && entry.key[1] === "codex" && entry.key[2] === "gpt-5").cooledUntil).toBeGreaterThan(0);
+  });
+
   it("delete/disable mid-stream: cooled keys expire without blocking selection", () => {
     adaptiveRouter.recordObservation({ layer: "account", providerId: "p", modelId: "m", connectionId: "gone", outcome: "success", completionTokens: 200, semanticTtftMs: 500, streamSpanMs: 5000 });
     // A deleted/disabled connection is simply absent from candidates; selection continues.

@@ -229,4 +229,34 @@ describe("adaptive router", () => {
     }
     expect(r.snapshot().entries.length).toBeLessThanOrEqual(5);
   });
+
+  it("cooled probe success above recoveryTpsMargin clears cooldown", () => {
+    const { router } = env;
+    const slow = { ...ok({}), completionTokens: 64, semanticTtftMs: 500, streamSpanMs: 6000 };
+    router.recordObservation(slow);
+    router.recordObservation(slow);
+    const cooled = router.snapshot().entries.find((e) => e.key[0] === "account");
+    expect(cooled.cooledUntil).toBeGreaterThan(0);
+    const sel = router.selectAccount({ providerId: "p", modelId: "m", candidates: ["a"] });
+    const probeLease = router.reserve({ layer: "account", providerId: "p", modelId: "m", connectionId: "a", probe: true });
+    expect(probeLease?.probe).toBe(true);
+    expect(sel.probe).toBe("a");
+    const fast = { ...ok({}), completionTokens: 1600, semanticTtftMs: 400, streamSpanMs: 4000, generation: probeLease.generation };
+    const settled = router.markProbeResult(probeLease, fast);
+    expect(settled.accepted).toBe(true);
+    const recovered = router.snapshot().entries.find((e) => e.key[0] === "account");
+    expect(recovered.cooledUntil).toBe(0);
+  });
+
+  it("probe success below recoveryTpsMargin keeps cooldown", () => {
+    const { router } = env;
+    const slow = { ...ok({}), completionTokens: 64, semanticTtftMs: 500, streamSpanMs: 6000 };
+    router.recordObservation(slow);
+    router.recordObservation(slow);
+    const probeLease = router.reserve({ layer: "account", providerId: "p", modelId: "m", connectionId: "a", probe: true });
+    expect(probeLease?.probe).toBe(true);
+    const stillSlow = { ...ok({}), completionTokens: 64, semanticTtftMs: 500, streamSpanMs: 6000, generation: probeLease.generation };
+    expect(router.markProbeResult(probeLease, stillSlow).accepted).toBe(true);
+    expect(router.snapshot().entries.find((e) => e.key[0] === "account").cooledUntil).toBeGreaterThan(0);
+  });
 });

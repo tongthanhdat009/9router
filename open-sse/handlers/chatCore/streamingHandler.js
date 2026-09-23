@@ -111,7 +111,7 @@ export async function handleStreamingResponse({ providerResponse, provider, mode
 /**
  * Build onStreamComplete callback for streaming usage tracking.
  */
-export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log, affinity, affinityDiagnostics, finalizeAffinityRequest, onRouteAffinityStreamComplete }) {
+export function buildOnStreamComplete({ provider, model, connectionId, apiKey, requestStartTime, body, stream, finalBody, translatedBody, clientRawRequest, pxpipe, reqTag, log, affinity, affinityDiagnostics, finalizeAffinityRequest, onRouteAffinityStreamComplete, streamController }) {
   const streamDetailId = `${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 
   const onStreamComplete = (contentObj, usage, ttftAt, firstSemanticGenerationAt) => {
@@ -139,7 +139,11 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
 
     // One terminal callback per stream (guarded by stream.js finalizeStream).
     // Adaptive reuses the same canonical usage and semantic timing as affinity.
-    onRouteAffinityStreamComplete?.({ usage, firstSemanticGenerationAt, streamEndAt: Date.now(), outcome: "success" });
+    // Abort-vs-terminal ordering (P1b): a client disconnect flips the controller
+    // before finalizeStream can run; a success disposition here would let a
+    // racing post-abort sample in as a healthy one — record the real outcome.
+    const aborted = streamController ? !streamController.isConnected() : false;
+    onRouteAffinityStreamComplete?.({ usage, firstSemanticGenerationAt, streamEndAt: Date.now(), outcome: aborted ? "cancelled" : "success" });
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
     saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, affinity, affinityDiagnostics, finalizeAffinityRequest, label: "STREAM USAGE", silent: true });

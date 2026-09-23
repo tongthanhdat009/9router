@@ -173,6 +173,24 @@ describe("adaptive handler lifecycle integration", () => {
     expect(attempted).toEqual(["openai/model", "openai/backup"]);
   });
 
+  it("probe path through real auth: cooled account recovers via fast success terminal", async () => {
+    const slowSample = { layer: "account", providerId: "openai", modelId: "model", connectionId: "slow", outcome: "success", completionTokens: 64, semanticTtftMs: 500, streamSpanMs: 6000 };
+    adaptiveRouter.recordObservation(slowSample);
+    adaptiveRouter.recordObservation(slowSample);
+    expect(adaptiveRouter.snapshot().entries.find((entry) => entry.key[3] === "slow").cooledUntil).toBeGreaterThan(0);
+    // One eligible account: the real auth selector must reserve its cooled pick as a probe.
+    mocks.connections.mockResolvedValueOnce([accounts[0]]);
+    const probeCreds = await getProviderCredentials("openai", null, "model", { adaptiveAccount: true });
+    expect(probeCreds.connectionId).toBe("slow");
+    expect(probeCreds.adaptiveAccountLease?.probe).toBe(true);
+    const settled = adaptiveRouter.markProbeResult(probeCreds.adaptiveAccountLease, {
+      layer: "account", providerId: "openai", modelId: "model", connectionId: "slow",
+      outcome: "success", completionTokens: 1600, semanticTtftMs: 400, streamSpanMs: 4000, generation: probeCreds.adaptiveAccountLease.generation,
+    });
+    expect(settled.accepted).toBe(true);
+    expect(adaptiveRouter.snapshot().entries.find((entry) => entry.key[3] === "slow").cooledUntil).toBe(0);
+  });
+
   it("final-only/dup/malformed/truncated Chat passthrough: usage + semantic counted once", async () => {
     const full = await stream([
       chat({ choices: [{ delta: { role: "assistant" } }] }),

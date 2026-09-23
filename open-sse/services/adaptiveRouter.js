@@ -87,7 +87,7 @@ export function createAdaptiveRouter({ now = Date.now, config = {} } = {}) {
     }
     return true;
   }
-  function recordObservation(obs = {}) {
+  function recordObservation(obs = {}, leaseProbe = null) {
     const { layer = "account", providerId, modelId, connectionId, outcome, completionTokens, semanticTtftMs, streamSpanMs, estimated, generation: observedGeneration } = obs;
     if (observedGeneration !== undefined && observedGeneration !== generation) return { accepted: false, reason: "stale_generation" };
     if (outcome === "cancelled") return { accepted: false, reason: "cancelled" };
@@ -98,6 +98,7 @@ export function createAdaptiveRouter({ now = Date.now, config = {} } = {}) {
     if (!Number.isFinite(streamSpanMs) || streamSpanMs <= 0 || !Number.isFinite(semanticTtftMs) || semanticTtftMs < 0) return { accepted: false, reason: "invalid_timing" };
     const tps = completionTokens * 1000 / Math.max(streamSpanMs, c.minSpanMs);
     if (!Number.isFinite(tps) || tps <= 0) return { accepted: false, reason: "invalid_tps" };
+    const probeSuccess = leaseProbe?.probe === true && tps >= c.recoveryTpsMargin;
     const update = (id) => {
       const e = lookup(id, true);
       e.tps = e.samples ? c.ewmaAlpha * tps + (1 - c.ewmaAlpha) * e.tps : tps;
@@ -107,9 +108,10 @@ export function createAdaptiveRouter({ now = Date.now, config = {} } = {}) {
       if (tps < c.slowTps) {
         e.slowStreak++;
         if (e.slowStreak >= c.slowStreakThreshold) e.cooledUntil = now() + c.cooldownMs;
-      } else if (!isCooled(e)) {
+      } else if (probeSuccess || !isCooled(e)) {
         e.slowStreak = 0;
-        if (e.ramp) e.ramp = Math.min(1, e.ramp + c.ewmaAlpha);
+        if (probeSuccess && isCooled(e)) { e.cooledUntil = 0; e.ramp = c.recoveryRamp; }
+        else if (e.ramp) e.ramp = Math.min(1, e.ramp + c.ewmaAlpha);
       }
     };
     update(key(layer, providerId, modelId, connectionId));
@@ -119,7 +121,7 @@ export function createAdaptiveRouter({ now = Date.now, config = {} } = {}) {
   function markProbeResult(lease, observation) {
     if (!lease?.probe || leases.get(lease.id) !== lease || lease.generation !== generation) return { accepted: false, reason: "stale_probe" };
     const entry = entries.get(lease.key);
-    const result = observation?.outcome === "success" ? recordObservation({ ...observation, layer: lease.layer, generation }) : { accepted: false, reason: observation?.outcome === "cancelled" ? "cancelled" : "probe_failed" };
+    const result = observation?.outcome === "success" ? recordObservation({ ...observation, layer: lease.layer, generation }, lease) : { accepted: false, reason: observation?.outcome === "cancelled" ? "cancelled" : "probe_failed" };
     if (entry) entry.probedAt = now();
     if (entry && result.accepted && result.tps >= c.recoveryTpsMargin) {
       entry.cooledUntil = 0;

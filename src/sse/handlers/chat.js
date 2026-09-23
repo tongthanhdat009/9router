@@ -31,6 +31,15 @@ import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, get
 import { logAffinity } from "@/lib/affinityLogger.js";
 import { adaptiveRouter } from "open-sse/services/adaptiveRouter.js";
 
+// Resolve combo candidates through the same model lookup as the eventual
+// attempt, so route selection and observation share canonical keys.
+async function canonicalRouteModels(models) {
+  return Promise.all(models.map(async (member) => {
+    const info = await getModelInfo(member);
+    return { model: member, providerId: info?.provider, modelId: info?.model };
+  }));
+}
+
 /**
  * Handle chat completion request
  * Supports: OpenAI, Claude, Gemini, OpenAI Responses API formats
@@ -160,6 +169,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
 
     if (comboStrategy === "fusion") {
       log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
+      diagnostics.selection.comboStrategy = "fusion";
       diagnostics.finalized = true; // Fusion stays outside affinity diagnostics scope.
       return handleFusionChat({
         body,
@@ -180,6 +190,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
+    const canonicalModels = comboStrategy === "adaptive-round-robin" ? await canonicalRouteModels(augmentedModels) : null;
     // Voluntary expiry: if the route binding has served >= MAX successful requests, drop it before selection.
     // Must run before the hard-cap check so limit takes precedence; throughput escape is consumed after.
     let routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
@@ -249,6 +260,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
       preferredRoute: effectivePreferredRoute,
       deprioritizedRoute: escapedRoute,
       rotationScope: affinitySessionId,
+      canonicalModels,
     }));
   }
 
@@ -329,6 +341,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
 
       const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
+      const canonicalModels = comboStrategy === "adaptive-round-robin" ? await canonicalRouteModels(augmentedModels) : null;
       let routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
       if (routeAffinity && AFFINITY_MAX_LOGICAL_REQUESTS > 0 && Number.isFinite(routeAffinity.requestCount) && routeAffinity.requestCount >= AFFINITY_MAX_LOGICAL_REQUESTS) {
         logAffinity("affinity.limit_expired", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", routeScope: modelStr, route: routeAffinity.route, requestCount: routeAffinity.requestCount, limit: AFFINITY_MAX_LOGICAL_REQUESTS });
@@ -350,7 +363,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
       diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
-      diagnostics.selection.comboStrategy = comboStrategy === "adaptive-round-robin" ? "adaptive-round-robin" : (comboStrategy === "round-robin" ? "round-robin" : "fallback");
+      diagnostics.selection.comboStrategy = comboStrategy;
       let demotionSelectedLogged = false;
       const priorRouteRequestCount = routeAffinity?.requestCount ?? 0;
       const priorRouteForCount = routeAffinity?.route || null;
@@ -359,6 +372,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return handleComboChat({
         body,
         models: augmentedModels,
+        canonicalModels,
         onSelection: ({ rotationUsed }) => { diagnostics.selection.comboRotationUsed = rotationUsed; },
         handleSingleModel: withCapacityAdapterStripping(
           async (b, m) => {
@@ -428,11 +442,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
 
   let isOuterAccountAttempt = true;
+  let clientDisconnected = false;
   // Adaptive account lease for the current attempt; non-stream terminals settle
   // inline below. Released/null means no reservation (legacy, noauth, or error paths).
   let adaptiveAttemptLease = null;
-  const requestStartedAt = Date.now();
   while (true) {
+    clientDisconnected = false;
+    const attemptStartedAt = Date.now();
     let affinity = getAccountAffinity(affinitySessionId, provider, model);
     if (isOuterAccountAttempt && affinity && AFFINITY_MAX_LOGICAL_REQUESTS > 0 && Number.isFinite(affinity.requestCount) && affinity.requestCount >= AFFINITY_MAX_LOGICAL_REQUESTS) {
       logAffinity("affinity.limit_expired", { requestId: diagnostics?.requestId, sessionHash: diagnostics?.sessionHash, layer: "account", provider, model, connectionId: affinity.connectionId, requestCount: affinity.requestCount, limit: AFFINITY_MAX_LOGICAL_REQUESTS });
@@ -514,7 +530,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    const result = await handleChatCore({
+    let result;
+    try {
+      result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       capabilityOverride,
@@ -547,6 +565,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       affinityDiagnostics: diagnostics,
       finalizeAffinityRequest,
       onRouteAffinityStreamComplete: ({ usage, firstSemanticGenerationAt, streamEndAt, outcome = "success" }) => {
+        if (clientDisconnected) outcome = "cancelled";
         // Adaptive account lease settles here exactly once per attempt; released
         // leases are skipped so retries never double-record.
         if (adaptiveAttemptLease && credentials) {
@@ -558,7 +577,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
             modelId: model,
             connectionId: credentials.connectionId,
             completionTokens: usage?.completion_tokens ?? usage?.output_tokens,
-            semanticTtftMs: firstSemanticGenerationAt != null ? firstSemanticGenerationAt - requestStartedAt : null,
+            semanticTtftMs: firstSemanticGenerationAt != null ? firstSemanticGenerationAt - attemptStartedAt : null,
             streamSpanMs: firstSemanticGenerationAt != null ? streamEndAt - firstSemanticGenerationAt : null,
             estimated: usage?.estimated === true,
             outcome,
@@ -583,6 +602,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       // chatCore already forwards onDisconnect through streamController; it is
       // the one cancel/abort hook available without changing its shared API.
       onDisconnect: () => {
+        clientDisconnected = true;
         if (!adaptiveAttemptLease) return;
         const lease = adaptiveAttemptLease;
         adaptiveAttemptLease = null;
@@ -618,7 +638,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         const effectiveNext = (priorConn && priorConn !== credentials.connectionId) ? 1 : (Number.isFinite(priorCount) && priorCount > 0 ? priorCount + 1 : 1);
         bindAccountAffinity(affinitySessionId, provider, model, credentials.connectionId, { requestCount: effectiveNext });
       }
-    });
+      });
+    } finally {
+      // A successful stream transfers ownership to its terminal callback.
+      // Throws and non-stream responses have no such owner.
+      const streamPending = result?.success && result.response?.body && /text\/event-stream/i.test(result.response.headers?.get?.("content-type") || "");
+      if (adaptiveAttemptLease && !streamPending) {
+        adaptiveRouter.release(adaptiveAttemptLease);
+        logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials?.connectionId, accepted: false, reason: "not_success" });
+        adaptiveAttemptLease = null;
+      }
+    }
 
     if (result.success) {
       const isStreaming = result.response?.body && /text\/event-stream/i.test(result.response.headers?.get?.("content-type") || "");
@@ -634,11 +664,6 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return result.response;
     }
 
-    if (adaptiveAttemptLease) {
-      adaptiveRouter.release(adaptiveAttemptLease);
-      logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials.connectionId, accepted: false, reason: "not_success" });
-      adaptiveAttemptLease = null;
-    }
     invalidateAccountAffinity(affinitySessionId, provider, model);
     let quotaResetMs = null;
     let resetsAtMs = result.resetsAtMs;
