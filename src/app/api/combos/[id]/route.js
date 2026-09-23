@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getComboById, updateCombo, deleteCombo, getComboByName } from "@/lib/localDb";
+import { getComboById, updateCombo, deleteCombo, getComboByName, updateSettings, getSettings } from "@/lib/localDb";
 import { resetComboRotation } from "open-sse/services/combo.js";
 
 // Validate combo name: only a-z, A-Z, 0-9, -, _
@@ -51,7 +51,21 @@ export async function PUT(request, { params }) {
 
     // Invalidate rotation state (models/strategy/name may have changed)
     if (prev?.name) resetComboRotation(prev.name);
-    if (combo.name && combo.name !== prev?.name) resetComboRotation(combo.name);
+    if (combo.name && combo.name !== prev?.name) {
+      resetComboRotation(combo.name);
+      // Move the strategy entry so old route state never leaks into a same-name new combo.
+      const settings = await getSettings();
+      const strategies = settings.comboStrategies || {};
+      if (strategies[prev.name] !== undefined && strategies[combo.name] === undefined) {
+        await updateSettings({ comboStrategies: { [combo.name]: strategies[prev.name], [prev.name]: null } });
+      } else if (strategies[prev.name] !== undefined) {
+        await updateSettings({ comboStrategies: { [prev.name]: null } });
+      }
+      try {
+        const { adaptiveRouter } = await import("open-sse/services/adaptiveRouter.js");
+        adaptiveRouter.invalidate({});
+      } catch { /* ponytail: engine absent in dashboard-only builds */ }
+    }
 
     return NextResponse.json(combo);
   } catch (error) {
@@ -71,7 +85,14 @@ export async function DELETE(request, { params }) {
       return NextResponse.json({ error: "Combo not found" }, { status: 404 });
     }
 
-    if (prev?.name) resetComboRotation(prev.name);
+    if (prev?.name) {
+      resetComboRotation(prev.name);
+      await updateSettings({ comboStrategies: { [prev.name]: null } });
+      try {
+        const { adaptiveRouter } = await import("open-sse/services/adaptiveRouter.js");
+        adaptiveRouter.invalidate({});
+      } catch { /* ponytail: engine absent in dashboard-only builds */ }
+    }
     
     return NextResponse.json({ success: true });
   } catch (error) {
