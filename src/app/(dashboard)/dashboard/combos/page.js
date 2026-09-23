@@ -307,16 +307,16 @@ function AdaptiveNote({ value }) {
   return <p className="mt-1 text-[11px] text-text-muted">Learning shapes later requests; the streaming one is unaffected.</p>;
 }
 
-function AdaptiveSpeed({ comboName }) {
+function AdaptiveSpeed({ models }) {
   const [rows, setRows] = useState(null);
   useEffect(() => {
     let cancelled = false;
     fetch("/api/settings/adaptive-diagnostics", { cache: "no-store" })
       .then((res) => (res.ok ? res.json() : null))
-      .then((data) => { if (!cancelled && data) setRows(data.entries.filter((e) => e.layer === "route" && e.model === comboName).slice(0, 3)); })
+      .then((data) => { if (!cancelled && data) setRows(data.entries.filter((e) => e.layer === "route" && models.some((m) => m === `${e.provider}/${e.model}`)).slice(0, 3)); })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, [comboName]);
+  }, [models]);
   if (!rows?.length) return null;
   return (
     <div className="mt-1 flex flex-wrap gap-1">
@@ -362,7 +362,7 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
             </div>
             {/* Fusion: judge picker (Auto = first model) */}
             <AdaptiveNote value={current} />
-            {current === "adaptive-round-robin" && <AdaptiveSpeed comboName={combo.name} />}
+            {current === "adaptive-round-robin" && <AdaptiveSpeed models={combo.models} />}
             {isFusion && (
               <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
                 <span className="text-[11px] font-medium text-text-muted">Judge</span>
