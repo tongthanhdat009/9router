@@ -51,6 +51,7 @@ export default function CombosPage() {
   const [editingCombo, setEditingCombo] = useState(null);
   const [activeProviders, setActiveProviders] = useState([]);
   const [comboStrategies, setComboStrategies] = useState({});
+  const [globalComboStrategy, setGlobalComboStrategy] = useState("fallback");
   const [capacityAdapter, setCapacityAdapter] = useState(EMPTY_CAPACITY_ADAPTER);
   const { getCaps } = useModelCaps();
   const [confirmState, setConfirmState] = useState(null);
@@ -77,6 +78,7 @@ export default function CombosPage() {
         setActiveProviders(providersData.connections || []);
       }
       setComboStrategies(settingsData.comboStrategies || {});
+      setGlobalComboStrategy(settingsData.comboStrategy || "fallback");
       const rawAdapter = settingsData.capacityAdapter || {};
       const normalized = {};
       for (const cap of CAPACITY_ADAPTER_CAPS) {
@@ -159,28 +161,26 @@ export default function CombosPage() {
     });
   };
 
-  // Merge a per-combo strategy patch into settings.comboStrategies. Passing an empty
-  // patch (strategy back to default "fallback") drops the entry entirely.
+  // Merge a per-combo strategy patch atomically; the server merges per-name entries.
+  // Explicit fallback persists as an explicit entry (never inherit global round-robin).
   const handleSetComboStrategy = async (comboName, patch) => {
+    const previous = comboStrategies;
+    const next = { ...(previous[comboName] || {}), ...patch };
+    setComboStrategies({ ...previous, [comboName]: next });
     try {
-      const updated = { ...comboStrategies };
-      const next = { ...(updated[comboName] || {}), ...patch };
-      // Prune to keep settings clean: default fallback with no extras = no entry.
-      if (!next.fallbackStrategy || next.fallbackStrategy === "fallback") {
-        delete updated[comboName];
-      } else {
-        updated[comboName] = next;
-      }
-
-      await fetch("/api/settings", {
+      const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ comboStrategies: updated }),
+        body: JSON.stringify({ comboStrategies: { [comboName]: patch } }),
       });
-
-      setComboStrategies(updated);
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      const saved = await res.json().catch(() => null);
+      if (saved?.comboStrategies) setComboStrategies(saved.comboStrategies);
+      else setComboStrategies((cur) => ({ ...cur, [comboName]: next }));
     } catch (error) {
       console.log("Error updating combo strategy:", error);
+      setComboStrategies(previous); // Roll back on failed PATCH.
+      alert(`Failed to save combo strategy: ${error.message}`);
     }
   };
 
@@ -239,6 +239,7 @@ export default function CombosPage() {
               onEdit={() => setEditingCombo(combo)}
               onDelete={() => handleDelete(combo.id)}
               strategy={comboStrategies[combo.name] || {}}
+              globalStrategy={globalComboStrategy}
               onSetStrategy={(patch) => handleSetComboStrategy(combo.name, patch)}
             />
           ))}
@@ -291,12 +292,47 @@ export default function CombosPage() {
 const STRATEGY_OPTIONS = [
   { value: "fallback", label: "Fallback — try in order" },
   { value: "round-robin", label: "Round Robin — rotate" },
+  { value: "adaptive-round-robin", label: "Adaptive Round Robin — speed aware" },
   { value: "fusion", label: "Fusion — panel + judge" },
 ];
 
-function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, onSetStrategy }) {
+function StrategyLabel({ value, explicit }) {
+  if (explicit) return null;
+  return <span className="text-[10px] text-text-muted">Inherited ({value})</span>;
+}
+
+// Learning affects subsequent requests, not the one currently streaming.
+function AdaptiveNote({ value }) {
+  if (value !== "adaptive-round-robin") return null;
+  return <p className="mt-1 text-[11px] text-text-muted">Learning shapes later requests; the streaming one is unaffected.</p>;
+}
+
+function AdaptiveSpeed({ comboName }) {
+  const [rows, setRows] = useState(null);
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/settings/adaptive-diagnostics", { cache: "no-store" })
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => { if (!cancelled && data) setRows(data.entries.filter((e) => e.layer === "route" && e.model === comboName).slice(0, 3)); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [comboName]);
+  if (!rows?.length) return null;
+  return (
+    <div className="mt-1 flex flex-wrap gap-1">
+      {rows.map((r, i) => (
+        <code key={i} className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-[10px] text-text-muted dark:bg-white/5">
+          {r.provider}: {r.confidence === "learning" ? "learning" : r.tps == null ? "unknown" : `${Number(r.tps).toFixed(1)} tok/s · ${Math.round(r.semanticTtftMs ?? 0)}ms`}
+        </code>
+      ))}
+    </div>
+  );
+}
+
+
+function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdit, onDelete, strategy = {}, globalStrategy = "fallback", onSetStrategy }) {
   const [showJudgeSelect, setShowJudgeSelect] = useState(false);
-  const current = strategy.fallbackStrategy || "fallback";
+  const current = strategy.fallbackStrategy || globalStrategy;
   const judge = strategy.judgeModel || "";
   const isFusion = current === "fusion";
 
@@ -325,6 +361,8 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
               )}
             </div>
             {/* Fusion: judge picker (Auto = first model) */}
+            <AdaptiveNote value={current} />
+            {current === "adaptive-round-robin" && <AdaptiveSpeed comboName={combo.name} />}
             {isFusion && (
               <div className="mt-2 flex min-w-0 flex-wrap items-center gap-1.5">
                 <span className="text-[11px] font-medium text-text-muted">Judge</span>
@@ -360,6 +398,7 @@ function ComboCard({ combo, getCaps, activeProviders = [], copied, onCopy, onEdi
               onChange={(e) => onSetStrategy({ fallbackStrategy: e.target.value })}
               selectClassName="py-1.5 text-xs"
             />
+            <StrategyLabel value={current} explicit={Boolean(strategy.fallbackStrategy)} />
           </div>
 
           <div className="grid grid-cols-3 gap-1 sm:flex">

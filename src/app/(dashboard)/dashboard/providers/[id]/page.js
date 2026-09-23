@@ -65,6 +65,8 @@ export default function ProviderDetailPage() {
   const [bulkProxyPoolId, setBulkProxyPoolId] = useState("__none__");
   const [bulkUpdatingProxy, setBulkUpdatingProxy] = useState(false);
   const [providerStrategy, setProviderStrategy] = useState(null);
+  const [globalProviderStrategy, setGlobalProviderStrategy] = useState("fill-first");
+  const [adaptiveSpeed, setAdaptiveSpeed] = useState([]);
   const [providerStickyLimit, setProviderStickyLimit] = useState("");
   const [thinkingMode, setThinkingMode] = useState("auto");
   const [autoPing, setAutoPing] = useState({ enabled: false, connections: {} });
@@ -314,6 +316,11 @@ export default function ProviderDetailPage() {
       // Load per-provider strategy override
       const override = (settingsData.providerStrategies || {})[providerId] || {};
       setProviderStrategy(override.fallbackStrategy || null);
+      setGlobalProviderStrategy(settingsData.fallbackStrategy || "fill-first");
+      fetch("/api/settings/adaptive-diagnostics", { cache: "no-store" })
+        .then((res) => res.ok ? res.json() : null)
+        .then((data) => { if (data) setAdaptiveSpeed(data.entries.filter((e) => e.layer === "account" && e.provider === providerId).slice(0, 3)); })
+        .catch(() => {});
       setProviderStickyLimit(override.stickyRoundRobinLimit != null ? String(override.stickyRoundRobinLimit) : "1");
       // Load per-provider thinking config
       const thinkingCfg = (settingsData.providerThinking || {})[providerId] || {};
@@ -364,33 +371,34 @@ export default function ProviderDetailPage() {
     }
   };
 
-  const saveProviderStrategy = async (strategy, stickyLimit) => {
+  // Atomic per-provider save; explicit fill-first persists, never deleted. Server merges
+  // per-id entries so unrelated proxy/rotation fields survive; rollback on failed PATCH.
+  const saveProviderStrategy = async (strategy, stickyLimit, prevStrategy) => {
+    const previous = prevStrategy !== undefined ? prevStrategy : providerStrategy;
+    setProviderStrategy(strategy);
     try {
-      const settingsRes = await fetch("/api/settings", { cache: "no-store" });
-      const settingsData = settingsRes.ok ? await settingsRes.json() : {};
-      const current = settingsData.providerStrategies || {};
-
-      // Build override: null strategy means remove override, use global
       const override = {};
       if (strategy) override.fallbackStrategy = strategy;
-      if (strategy === "round-robin" && stickyLimit !== "") {
-        override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      if (strategy === "round-robin" && stickyLimit !== "") override.stickyRoundRobinLimit = Number(stickyLimit) || 3;
+      if (strategy === null) {
+        const res = await fetch("/api/settings", {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ providerStrategies: { [providerId]: null } }),
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+        return;
       }
-
-      const updated = { ...current };
-      if (Object.keys(override).length === 0) {
-        delete updated[providerId];
-      } else {
-        updated[providerId] = override;
-      }
-
-      await fetch("/api/settings", {
+      const res = await fetch("/api/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ providerStrategies: updated }),
+        body: JSON.stringify({ providerStrategies: { [providerId]: override } }),
       });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
     } catch (error) {
       console.log("Error saving provider strategy:", error);
+      setProviderStrategy(previous);
+      alert(`Failed to save strategy: ${error.message}`);
     }
   };
 
@@ -398,7 +406,6 @@ export default function ProviderDetailPage() {
     const strategy = enabled ? "round-robin" : null;
     const sticky = enabled ? (providerStickyLimit || "1") : providerStickyLimit;
     if (enabled && !providerStickyLimit) setProviderStickyLimit("1");
-    setProviderStrategy(strategy);
     saveProviderStrategy(strategy, sticky);
   };
 
@@ -1470,13 +1477,19 @@ export default function ProviderDetailPage() {
                   )}
                 </>
               )}
-              {/* Round Robin toggle */}
+              {/* Account strategy: explicit fill-first/round-robin/adaptive persist; unset inherits global */}
               <div className="flex flex-wrap items-center gap-2">
-                <span className="text-xs text-text-muted font-medium">Round Robin</span>
-                <Toggle
-                  checked={providerStrategy === "round-robin"}
-                  onChange={handleRoundRobinToggle}
-                />
+                <span className="text-xs text-text-muted font-medium">Account strategy</span>
+                <select
+                  value={providerStrategy || ""}
+                  onChange={(e) => saveProviderStrategy(e.target.value || null, providerStickyLimit, providerStrategy)}
+                  className="px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
+                >
+                  <option value="">Inherited ({globalProviderStrategy})</option>
+                  <option value="fill-first">Fill-first — priority order</option>
+                  <option value="round-robin">Round Robin — rotate</option>
+                  <option value="adaptive-round-robin">Adaptive Round Robin — speed aware</option>
+                </select>
                 {providerStrategy === "round-robin" && (
                   <div className="flex items-center gap-1.5">
                     <span className="text-xs text-text-muted">Sticky:</span>
@@ -1488,6 +1501,15 @@ export default function ProviderDetailPage() {
                       placeholder="1"
                       className="w-14 px-2 py-1 text-xs border border-border rounded-md bg-background focus:outline-none focus:border-primary"
                     />
+                  </div>
+                )}
+                {(providerStrategy || globalProviderStrategy) === "adaptive-round-robin" && adaptiveSpeed.length > 0 && (
+                  <div className="flex flex-wrap gap-1">
+                    {adaptiveSpeed.map((r, i) => (
+                      <code key={i} className="rounded bg-black/5 px-1.5 py-0.5 font-mono text-[10px] text-text-muted dark:bg-white/5">
+                        {r.confidence === "learning" ? "learning" : r.tps == null ? "unknown" : `${Number(r.tps).toFixed(1)} tok/s`}
+                      </code>
+                    ))}
                   </div>
                 )}
               </div>
