@@ -429,15 +429,16 @@ async function wrapQoderSSE(response, model, log = null) {
         doneEmitted = true;
         return;
       }
-      const msg = inner || `upstream status ${statusVal}`;
-      const errChunk = JSON.stringify({
-        id: `qoder-error-${Date.now()}`,
-        object: "chat.completion.chunk",
-        created: Math.floor(Date.now() / 1000),
-        model,
-        choices: [{ index: 0, delta: { content: `\n[qoder error ${statusVal}: ${truncate(msg, 200)}]` }, finish_reason: "stop" }],
+      const errObj = JSON.stringify({
+        error: {
+          message: inner || `upstream status ${statusVal}`,
+          code: "qoder_upstream_error",
+          status: Number.isInteger(statusVal) && statusVal >= HTTP_STATUS.BAD_REQUEST && statusVal <= 599
+            ? statusVal : HTTP_STATUS.BAD_GATEWAY,
+          type: "upstream_error",
+        },
       });
-      controller.enqueue(encoder.encode(`data: ${errChunk}\n\n`));
+      controller.enqueue(encoder.encode(`data: ${errObj}\n\n`));
       controller.enqueue(encoder.encode(SSE_DONE));
       doneEmitted = true;
       return;
