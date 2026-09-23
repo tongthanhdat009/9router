@@ -6,6 +6,7 @@ import { checkFallbackError, formatRetryAfter } from "./accountFallback.js";
 import { unavailableResponse } from "../utils/error.js";
 import { getCapabilitiesForModel } from "../providers/capabilities.js";
 import { extractTextContent } from "../translator/formats/gemini.js";
+import { adaptiveRouter } from "./adaptiveRouter.js";
 
 // Hard capabilities = input modalities; missing one drops request data (e.g. image
 // stripped). Must be prioritized. Soft (e.g. search) only degrades a feature.
@@ -206,6 +207,8 @@ function rotateModelsFromIndex(models, currentIndex) {
  * @returns {string[]} Rotated models array
  */
 export function getRotatedModels(models, comboName, strategy, stickyLimit = 1, rotationScope = null) {
+  // D3: adaptive selects once per logical request and ignores legacy sticky limits.
+  if (strategy === "adaptive-round-robin") return adaptiveRoundRobinModels(models, comboName);
   if (!models || models.length <= 1 || strategy !== "round-robin") {
     return models;
   }
@@ -238,10 +241,34 @@ export function getRotatedModels(models, comboName, strategy, stickyLimit = 1, r
   return rotatedModels;
 }
 
-/**
- * Reset in-memory rotation state when combo/settings change
- * @param {string} [comboName] - Combo name to reset; omit to clear all
- */
+// Normalize a combo member for the route layer: canonical (providerId, modelId).
+// Aggregation policy: one SWRR advance per logical request over canonical keys;
+// all-cooled falls back to input order. Account observations update route health
+// without a separate route reservation or second sample.
+function parseRouteCandidate(modelStr) {
+  const slash = String(modelStr || "").indexOf("/");
+  if (slash <= 0) return null;
+  return { providerId: String(modelStr).slice(0, slash), modelId: String(modelStr).slice(slash + 1) };
+}
+
+export function adaptiveRoundRobinModels(models, comboName) {
+  if (!Array.isArray(models) || models.length <= 1) return models;
+  const scope = String(comboName || "__combo_default__");
+  const candidates = [];
+  for (const modelStr of models) {
+    const parsed = parseRouteCandidate(modelStr);
+    if (parsed) candidates.push({ ...parsed, model: modelStr });
+  }
+  if (!candidates.length) return models;
+  // One SWRR advance per logical request; healthy-list order then input fallback order.
+  const { ordered } = adaptiveRouter.selectRoute({ providerId: "combo", modelId: scope, candidates });
+  const orderedNames = new Set((ordered || []).map((item) => item.model));
+  return [
+    ...(ordered || []).map((item) => item.model),
+    ...models.filter((modelStr) => !orderedNames.has(modelStr)),
+  ];
+}
+
 export function resetComboRotation(comboName) {
   if (comboName) {
     // Clear shared cursor + all per-session cursors for this combo (NUL-suffixed keys).
@@ -289,20 +316,31 @@ function isCodexSseTransientError(modelStr, errorText) {
  * @param {Function} options.handleSingleModel - Function to handle single model: (body, modelStr) => Promise<Response>
  * @param {Object} options.log - Logger object
  * @param {string} [options.comboName] - Name of the combo (for round-robin tracking)
- * @param {string} [options.comboStrategy] - Strategy: "fallback" or "round-robin"
+ * @param {string} [options.comboStrategy] - Strategy: "fallback", "round-robin", or "adaptive-round-robin"
  * @param {number|string} [options.comboStickyLimit=1] - Requests per combo model before switching
  * @returns {Promise<Response>}
  */
 export async function handleComboChat({ body, models, handleSingleModel, log, comboName, comboStrategy, comboStickyLimit = 1, autoSwitch = true, preferredRoute = null, deprioritizedRoute = null, onSelection = null, rotationScope = null }) {
-  // Preferred affinity deliberately bypasses rotation; cursor remains unchanged.
-  let rotatedModels = preferredRoute && models.includes(preferredRoute)
+  const adaptive = comboStrategy === "adaptive-round-robin";
+  // Adaptive ignores affinity and applies capability tiers before its single SWRR advance.
+  const required = autoSwitch ? detectRequiredCapabilities(body) : new Set();
+  const capabilityOrdered = adaptive && required.size > 0 ? reorderByCapabilities(models, required) : models;
+  const adaptiveModels = adaptive && required.size > 0
+    ? capabilityOrdered.filter((m) => {
+        const slash = m.indexOf("/");
+        const caps = getCapabilitiesForModel(m.slice(0, slash), m.slice(slash + 1));
+        return [...required].filter((cap) => HARD_CAPS.has(cap)).every((cap) => caps[cap] === true);
+      })
+    : capabilityOrdered;
+  // Preferred affinity deliberately bypasses legacy rotation; cursor remains unchanged.
+  let rotatedModels = !adaptive && preferredRoute && models.includes(preferredRoute)
     ? [preferredRoute, ...models.filter((model) => model !== preferredRoute)]
-    : getRotatedModels(models, comboName, comboStrategy, comboStickyLimit, rotationScope);
-  // Diagnostics-only hook: whether the initial ordering consumed rotation state.
-  onSelection?.({ rotationUsed: !(preferredRoute && models.includes(preferredRoute)) });
+    : getRotatedModels(adaptive ? adaptiveModels : models, comboName, comboStrategy, comboStickyLimit, rotationScope);
+  onSelection?.({ rotationUsed: adaptive || !(preferredRoute && models.includes(preferredRoute)), strategy: comboStrategy });
 
   // Auto-switch: float models that satisfy the request's required capabilities to the front.
-  if (autoSwitch) {
+  // Adaptive already applied capability tiers + SWRR above; skip the legacy reorder.
+  if (autoSwitch && !adaptive) {
     const required = detectRequiredCapabilities(body);
     if (required.size > 0) {
       const preferredActive = Boolean(preferredRoute && rotatedModels[0] === preferredRoute);
@@ -321,10 +359,19 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     }
   }
 
-  if (deprioritizedRoute && rotatedModels.length > 1 && rotatedModels.includes(deprioritizedRoute)) {
+  // Adaptive ignores the legacy one-shot escape; its probes recover through observations.
+  if (!adaptive && deprioritizedRoute && rotatedModels.length > 1 && rotatedModels.includes(deprioritizedRoute)) {
     rotatedModels = [...rotatedModels.filter((model) => model !== deprioritizedRoute), deprioritizedRoute];
   }
-  
+
+  // Deduped attempt list: one adaptive pass may repeat canonical routes; keep first occurrence.
+  const attempted = new Set();
+  rotatedModels = rotatedModels.filter((modelStr) => {
+    if (!modelStr || attempted.has(modelStr)) return false;
+    attempted.add(modelStr);
+    return true;
+  });
+
   let lastError = null;
   let earliestRetryAfter = null;
   let lastStatus = null;
@@ -333,9 +380,11 @@ export async function handleComboChat({ body, models, handleSingleModel, log, co
     const modelStr = rotatedModels[i];
     log.info("COMBO", `Trying model ${i + 1}/${rotatedModels.length}: ${modelStr}`);
 
+    // The account layer owns the observation. Route health is aggregated from
+    // the selected account by adaptiveRouter.recordObservation; never reserve both.
     try {
       const result = await handleSingleModel(body, modelStr);
-      
+
       // Success (2xx) - return response
       if (result.ok) {
         log.info("COMBO", `Model ${modelStr} succeeded`);

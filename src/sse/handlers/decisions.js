@@ -85,7 +85,9 @@ export async function handleDecisions(request) {
   }
   if (comboModels?.length) {
     const comboStrategies = settings.comboStrategies || {};
-    const comboStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
+    const configuredStrategy = comboStrategies[modelStr]?.fallbackStrategy || settings.comboStrategy || "fallback";
+    // D2: decisions has no adaptive completion lifecycle; use legacy rotation.
+    const comboStrategy = configuredStrategy === "adaptive-round-robin" ? "round-robin" : configuredStrategy;
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     log.info("DECISIONS", `Combo "${modelStr}" with ${comboModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({

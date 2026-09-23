@@ -73,7 +73,9 @@ export async function handleSearch(request) {
   const comboModels = getComboModelsFromData(providerInput, combos);
   if (comboModels) {
     const comboStrategies = settings.comboStrategies || {};
-    const comboStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
+    const configuredStrategy = comboStrategies[providerInput]?.fallbackStrategy || settings.comboStrategy || "fallback";
+    // D2: search has no adaptive completion lifecycle; use legacy rotation.
+    const comboStrategy = configuredStrategy === "adaptive-round-robin" ? "round-robin" : configuredStrategy;
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
     log.info("SEARCH", `Combo "${providerInput}" with ${comboModels.length} providers (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     return handleComboChat({

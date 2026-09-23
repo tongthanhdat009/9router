@@ -137,7 +137,9 @@ export function buildOnStreamComplete({ provider, model, connectionId, apiKey, r
       console.error("[RequestDetail] Failed to update streaming content:", err.message);
     });
 
-    onRouteAffinityStreamComplete?.({ usage, firstSemanticGenerationAt, streamEndAt: Date.now() });
+    // One terminal callback per stream (guarded by stream.js finalizeStream).
+    // Adaptive reuses the same canonical usage and semantic timing as affinity.
+    onRouteAffinityStreamComplete?.({ usage, firstSemanticGenerationAt, streamEndAt: Date.now(), outcome: "success" });
 
     // Persist stream usage to DB (no console line; the "📊 done" line below is authoritative)
     saveUsageStats({ provider, model, tokens: usage, connectionId, apiKey, endpoint: clientRawRequest?.endpoint, affinity, affinityDiagnostics, finalizeAffinityRequest, label: "STREAM USAGE", silent: true });

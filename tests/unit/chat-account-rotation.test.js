@@ -62,7 +62,7 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.markAccountUnavailable).toHaveBeenCalledWith("conn-a", 503, expect.any(String), "codex", "gpt-5", undefined);
-    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5", { preferredConnectionId: null });
+    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5", { preferredConnectionId: null, adaptiveAccount: true, explicitConnectionId: null });
   });
 
   it("honors fill-first account affinity, clears it after failure, then rebinds the fallback", async () => {
@@ -81,13 +81,13 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect((await handleChat(request())).status).toBe(200);
     expect(selectorCalls).toEqual([
-      { provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-a" } },
-      { provider: "codex", excluded: new Set(["conn-a"]), model: "gpt-5", options: { preferredConnectionId: null } },
+      { provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-a", adaptiveAccount: true, explicitConnectionId: null } },
+      { provider: "codex", excluded: new Set(["conn-a"]), model: "gpt-5", options: { preferredConnectionId: null, adaptiveAccount: true, explicitConnectionId: null } },
     ]);
     expect(getAccountAffinity("session-1", "codex", "gpt-5")?.connectionId).toBe("conn-b");
 
     expect((await handleChat(request())).status).toBe(200);
-    expect(selectorCalls.at(-1)).toEqual({ provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-b" } });
+    expect(selectorCalls.at(-1)).toEqual({ provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-b", adaptiveAccount: true, explicitConnectionId: null } });
   });
 
   it("invalidates stored route affinity when it misses required hard capabilities", async () => {
@@ -234,6 +234,6 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect(response.status).toBe(503);
     expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(3);
-    expect(mocks.getProviderCredentials).toHaveBeenLastCalledWith("codex", new Set(["conn-a", "conn-b"]), "gpt-5", { preferredConnectionId: null });
+    expect(mocks.getProviderCredentials).toHaveBeenLastCalledWith("codex", new Set(["conn-a", "conn-b"]), "gpt-5", { preferredConnectionId: null, adaptiveAccount: true, explicitConnectionId: null });
   });
 });

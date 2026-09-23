@@ -5,6 +5,7 @@ import { MAX_RATE_LIMIT_COOLDOWN_MS } from "open-sse/config/errorConfig.js";
 import { resolveProviderId, FREE_PROVIDERS } from "@/shared/constants/providers.js";
 import { getAntigravityQuotaCache } from "./antigravityQuota.js";
 import * as log from "../utils/logger.js";
+import { adaptiveRouter } from "open-sse/services/adaptiveRouter.js";
 
 // Provider-scoped mutexes preserve round-robin writes without blocking unrelated providers.
 const providerMutexes = new Map();
@@ -31,6 +32,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     ? excludeConnectionIds
     : (excludeConnectionIds ? new Set([excludeConnectionIds]) : new Set());
   const preferredConnectionId = options?.preferredConnectionId || null;
+  const explicitConnectionId = options?.explicitConnectionId || null;
+  const adaptiveEnabled = options?.adaptiveAccount === true;
   // Resolve aliases before selecting a provider-scoped lock.
   const providerId = resolveProviderId(provider);
   const previous = providerMutexes.get(providerId) || Promise.resolve();
@@ -138,9 +141,21 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     const providerOverride = (settings.providerStrategies || {})[providerId] || {};
     const strategy = providerOverride.fallbackStrategy || settings.fallbackStrategy || "fill-first";
 
+    // Gate: only explicit adaptive chat lifecycles reserve; non-chat/modality
+    // callers (embeddings, stt/tts, image, video, fetch, search, passthrough
+    // route, bench) never reserve without a completion lifecycle.
+    const adaptiveStrategy = strategy === "adaptive-round-robin" && adaptiveEnabled;
     let connection;
-    // Pin to preferred connection if specified and available
-    if (preferredConnectionId) {
+    let adaptiveAccount = null;
+    // Explicit pin (e.g. x-connection-id) is required and never overridden.
+    if (explicitConnectionId) {
+      connection = availableConnections.find((c) => c.id === explicitConnectionId);
+      if (connection) {
+        log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
+      }
+    }
+    // Opportunistic affinity may be overridden by adaptive.
+    if (!connection && preferredConnectionId && !adaptiveStrategy) {
       connection = availableConnections.find((c) => c.id === preferredConnectionId);
       if (connection) {
         log.info("AUTH", `${provider} | pinned to ${connection.id?.slice(0, 8)} (${connection.name || connection.email || "unnamed"})`);
@@ -148,6 +163,28 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     }
     if (connection) {
       // skip strategy
+    } else if (adaptiveStrategy) {
+      // Post-eligibility adaptive pick: never probes quota/auth/model-locked accounts
+      // (they were filtered above). Lock is held for bookkeeping selection only.
+      const { ordered } = adaptiveRouter.selectAccount({
+        providerId,
+        modelId: model || "any",
+        candidates: availableConnections.map((c) => ({ connectionId: c.id })),
+      });
+      const pickId = (ordered || [])
+        .map((item) => (typeof item === "string" ? item : item?.connectionId))
+        .find((id) => availableConnections.some((c) => c.id === id)) || null;
+      if (pickId) {
+        connection = availableConnections.find((c) => c.id === pickId);
+        adaptiveAccount = adaptiveRouter.reserve({
+          layer: "account",
+          providerId,
+          modelId: model || "any",
+          connectionId: connection.id,
+        });
+        if (!adaptiveAccount) adaptiveAccount = null;
+      }
+      if (!connection) connection = availableConnections[0];
     } else if (strategy === "round-robin") {
       const stickyLimit = providerOverride.stickyRoundRobinLimit || settings.stickyRoundRobinLimit || 3;
 
@@ -215,6 +252,8 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
         vercelRelayUrl: resolvedProxy.vercelRelayUrl || "",
       },
       connectionId: connection.id,
+      adaptiveAccountLease: adaptiveAccount,
+      adaptiveStrategy: adaptiveStrategy ? "adaptive-round-robin" : strategy,
       // Include current status for optimization check
       testStatus: connection.testStatus,
       lastError: connection.lastError,
