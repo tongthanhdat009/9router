@@ -7,6 +7,7 @@ import { createErrorResult, parseUpstreamError, formatProviderError } from "../u
 import { HTTP_STATUS, FETCH_CONNECT_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { refreshTokenByProvider } from "../services/tokenRefresh.js";
 import { PROVIDER_MEDIA } from "../providers/index.js";
+import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
 export function getDecisionsConfig(provider) {
   return PROVIDER_MEDIA[provider]?.decisionsConfig || null;
@@ -26,6 +27,7 @@ function buildHeaders({ token, extra, bearer }) {
  * @param {string|Buffer|null} [options.rawBody] - Exact body to forward
  * @param {object} options.credentials - { accessToken?, apiKey?, refreshToken? }
  * @param {AbortSignal} [options.signal]
+ * @param {object|null} [options.proxyOptions]
  * @param {number} [options.timeoutMs]
  * @param {object} [options.log]
  * @param {function} [options.onCredentialsRefreshed]
@@ -36,6 +38,7 @@ export async function handleDecisionsProxyCore({
   rawBody = null,
   credentials,
   signal,
+  proxyOptions = null,
   timeoutMs = FETCH_CONNECT_TIMEOUT_MS,
   log,
   onCredentialsRefreshed,
@@ -50,7 +53,7 @@ export async function handleDecisionsProxyCore({
     ? AbortSignal.any([signal, timeoutSignal])
     : signal || timeoutSignal || undefined;
 
-  const doFetch = async () => fetch(url, {
+  const doFetch = async () => proxyAwareFetch(url, {
     method: "POST",
     headers: buildHeaders({
       token: credentials?.accessToken || credentials?.apiKey,
@@ -64,7 +67,7 @@ export async function handleDecisionsProxyCore({
       ? rawBody
       : JSON.stringify(rawBody ?? {}),
     signal: fetchSignal,
-  });
+  }, proxyOptions);
 
   let upstream;
   try {

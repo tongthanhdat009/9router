@@ -175,11 +175,19 @@ async function handleSingleModelDecisions(body, request, { raw, apiKey, url }) {
       continue;
     }
 
+    const proxyOptions = {
+      connectionProxyEnabled: refreshedCredentials?.providerSpecificData?.connectionProxyEnabled === true,
+      connectionProxyUrl: refreshedCredentials?.providerSpecificData?.connectionProxyUrl || "",
+      connectionNoProxy: refreshedCredentials?.providerSpecificData?.connectionNoProxy || "",
+      vercelRelayUrl: refreshedCredentials?.providerSpecificData?.vercelRelayUrl || "",
+    };
+
     const result = await handleDecisionsProxyCore({
       provider,
       rawBody: forwardBody,
       credentials: refreshedCredentials,
       signal: request.signal,
+      proxyOptions,
       log,
       onCredentialsRefreshed: async (newCreds) => {
         if (newCreds.__terminalRefreshFailure) { await recordUnrecoverableRefreshFailure(credentials.connectionId, newCreds.__terminalRefreshFailure); return; }
