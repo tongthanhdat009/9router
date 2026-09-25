@@ -2,6 +2,13 @@ import { getAdapter } from "../driver.js";
 import { parseJson, stringifyJson } from "../helpers/jsonCol.js";
 import { makeTtlCache } from "../cache.js";
 
+export const ADAPTIVE_ROUND_ROBIN = "adaptive-round-robin";
+export const COMBO_STRATEGIES = ["fallback", "round-robin", "fusion", ADAPTIVE_ROUND_ROBIN];
+export const PROVIDER_STRATEGIES = ["fill-first", "round-robin", ADAPTIVE_ROUND_ROBIN];
+export function validateStrategy(layer, value) {
+  return (layer === "combo" ? COMBO_STRATEGIES : layer === "provider" ? PROVIDER_STRATEGIES : []).includes(value);
+}
+
 const DEFAULT_MITM_ROUTER_BASE = "http://localhost:20128";
 const DEFAULT_HEADROOM_URL = process.env.HEADROOM_URL || "http://localhost:8787";
 
@@ -108,6 +115,19 @@ export async function updateSettings(updates) {
     const row = db.get(`SELECT data FROM settings WHERE id = 1`);
     const current = row ? parseJson(row.data, {}) : {};
     next = { ...current, ...updates };
+    // Merge individual overrides atomically; null removes only the named entry.
+    for (const mapKey of ["comboStrategies", "providerStrategies"]) {
+      if (!Object.prototype.hasOwnProperty.call(updates, mapKey)) continue;
+      const patch = updates[mapKey];
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new TypeError(`${mapKey} must be an object`);
+      const merged = { ...(current[mapKey] || {}) };
+      for (const [name, value] of Object.entries(patch)) {
+        if (value === null) delete merged[name];
+        else if (value && typeof value === "object" && !Array.isArray(value)) merged[name] = { ...(merged[name] || {}), ...value };
+        else throw new TypeError(`${mapKey}.${name} must be an object or null`);
+      }
+      next[mapKey] = merged;
+    }
     db.run(
       `INSERT INTO settings(id, data) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`,
       [stringifyJson(next)],

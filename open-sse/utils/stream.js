@@ -60,7 +60,8 @@ export function createSSEStream(options = {}) {
   const decoder = new TextDecoder("utf-8", { fatal: false });
 
   const state = mode === STREAM_MODE.TRANSLATE
-    ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), model }
+    // ponytail: targetFormat needed so Responses translator knows whether stream will reach flushEvents
+    ? { ...initState(sourceFormat), provider, toolNameMap, customToolNames: new Set(customToolNames || []), model, targetFormat }
     : null;
 
   let totalContentLength = 0;
@@ -209,7 +210,11 @@ export function createSSEStream(options = {}) {
                 const estimated = estimateUsage(body, totalContentLength, FORMATS.OPENAI);
                 parsed.usage = filterUsageForFormat(estimated, FORMATS.OPENAI);
                 output = `data: ${JSON.stringify(parsed)}\n`;
-                usage = estimated;
+                // Inject an estimate only when nothing is buffered yet; otherwise
+                // keep the buffered (possibly authoritative) usage — a later
+                // authoritative frame then replaces the injected estimate via
+                // mergeUsage (see usageTracking.js).
+                if (!usage) usage = estimated;
                 injectedUsage = true;
               } else if (isFinishChunk && usage) {
                 const buffered = addBufferToUsage(usage);

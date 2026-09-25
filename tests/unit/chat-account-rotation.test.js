@@ -62,7 +62,7 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.markAccountUnavailable).toHaveBeenCalledWith("conn-a", 503, expect.any(String), "codex", "gpt-5", undefined);
-    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5", { preferredConnectionId: null });
+    expect(mocks.getProviderCredentials).toHaveBeenNthCalledWith(2, "codex", new Set(["conn-a"]), "gpt-5", { preferredConnectionId: null, adaptiveAccount: true, explicitConnectionId: null });
   });
 
   it("honors fill-first account affinity, clears it after failure, then rebinds the fallback", async () => {
@@ -81,13 +81,13 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect((await handleChat(request())).status).toBe(200);
     expect(selectorCalls).toEqual([
-      { provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-a" } },
-      { provider: "codex", excluded: new Set(["conn-a"]), model: "gpt-5", options: { preferredConnectionId: null } },
+      { provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-a", adaptiveAccount: true, explicitConnectionId: null } },
+      { provider: "codex", excluded: new Set(["conn-a"]), model: "gpt-5", options: { preferredConnectionId: null, adaptiveAccount: true, explicitConnectionId: null } },
     ]);
     expect(getAccountAffinity("session-1", "codex", "gpt-5")?.connectionId).toBe("conn-b");
 
     expect((await handleChat(request())).status).toBe(200);
-    expect(selectorCalls.at(-1)).toEqual({ provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-b" } });
+    expect(selectorCalls.at(-1)).toEqual({ provider: "codex", excluded: new Set(), model: "gpt-5", options: { preferredConnectionId: "conn-b", adaptiveAccount: true, explicitConnectionId: null } });
   });
 
   it("invalidates stored route affinity when it misses required hard capabilities", async () => {
@@ -234,6 +234,79 @@ describe("chat account-loop rotation on synthetic 503", () => {
 
     expect(response.status).toBe(503);
     expect(mocks.getProviderCredentials).toHaveBeenCalledTimes(3);
-    expect(mocks.getProviderCredentials).toHaveBeenLastCalledWith("codex", new Set(["conn-a", "conn-b"]), "gpt-5", { preferredConnectionId: null });
+    expect(mocks.getProviderCredentials).toHaveBeenLastCalledWith("codex", new Set(["conn-a", "conn-b"]), "gpt-5", { preferredConnectionId: null, adaptiveAccount: true, explicitConnectionId: null });
+  });
+
+  it("throwing handleChatCore releases the handled adaptive lease (inFlight back to 0)", async () => {
+    const { adaptiveRouter } = await import("open-sse/services/adaptiveRouter.js");
+    adaptiveRouter.reset();
+    const lease = adaptiveRouter.reserve({ layer: "account", providerId: "codex", modelId: "gpt-5", connectionId: "conn-a" });
+    expect(lease).not.toBeNull();
+    expect(adaptiveRouter.snapshot().entries.find((row) => row.key[3] === "conn-a").inFlight).toBe(1);
+    mocks.getProviderCredentials.mockResolvedValue({ connectionId: "conn-a", connectionName: "Acc A", providerSpecificData: {}, adaptiveAccountLease: lease });
+    mocks.handleChatCore.mockRejectedValue(new Error("boom"));
+    await expect(handleChat(chatRequest())).rejects.toThrow("boom");
+    expect(adaptiveRouter.snapshot().entries.find((row) => row.key[3] === "conn-a").inFlight).toBe(0);
+    expect(adaptiveRouter.release(lease)).toBe(false);
+    expect(mocks.logAffinity).toHaveBeenCalledWith("adaptive.observation", expect.objectContaining({ accepted: false, reason: "not_success" }));
+  });
+
+  it("attempt-2 TTFT excludes attempt-1 failure latency", async () => {
+    const { adaptiveRouter } = await import("open-sse/services/adaptiveRouter.js");
+    adaptiveRouter.reset();
+    const lease = adaptiveRouter.reserve({ layer: "account", providerId: "codex", modelId: "gpt-5", connectionId: "conn-b" });
+    const ttfts = [];
+    let t = 1000000;
+    vi.spyOn(Date, "now").mockImplementation(() => t);
+    try {
+      mocks.getProviderCredentials
+        .mockResolvedValueOnce({ connectionId: "conn-a", connectionName: "Acc A", providerSpecificData: {} })
+        .mockResolvedValueOnce({ connectionId: "conn-b", connectionName: "Acc B", providerSpecificData: {}, adaptiveAccountLease: lease });
+      mocks.handleChatCore.mockImplementationOnce(async () => {
+        t += 900;
+        return { success: false, status: 503, error: "capacity", response: new Response("err", { status: 503 }) };
+      }).mockImplementationOnce(async ({ onRouteAffinityStreamComplete }) => {
+        t += 100;
+        const semantic = t + 50;
+        const usage = { completion_tokens: 200, prompt_tokens: 10 };
+        ttfts.push({ semantic });
+        onRouteAffinityStreamComplete({ usage, firstSemanticGenerationAt: semantic, streamEndAt: semantic + 1000, outcome: "success" });
+        ttfts[0].captured = mocks.logAffinity.mock.calls.filter(([event]) => event === "adaptive.observation").at(-1)?.[1];
+        return { success: true, response: new Response("ok", { status: 200 }) };
+      });
+      mocks.markAccountUnavailable.mockResolvedValue({ shouldFallback: true });
+      const response = await handleChat(chatRequest());
+      expect(response.status).toBe(200);
+      // Attempt-2 semantic TTFT must reflect only the ~150ms second attempt, not the 900ms first.
+      expect(ttfts[0].captured).toMatchObject({ accepted: true });
+      const account = adaptiveRouter.snapshot().entries.find((row) => row.key[3] === "conn-b");
+      expect(account.ttftMs).toBe(150);
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it("aborted large-token stream records abort, never success", async () => {
+    const { adaptiveRouter } = await import("open-sse/services/adaptiveRouter.js");
+    adaptiveRouter.reset();
+    const lease = adaptiveRouter.reserve({ layer: "account", providerId: "codex", modelId: "gpt-5", connectionId: "conn-a" });
+    let disconnect = null;
+    let terminal = null;
+    mocks.getProviderCredentials.mockResolvedValue({ connectionId: "conn-a", connectionName: "Acc A", providerSpecificData: {}, adaptiveAccountLease: lease });
+    mocks.handleChatCore.mockImplementationOnce(async ({ onRouteAffinityStreamComplete, onDisconnect }) => {
+      disconnect = onDisconnect;
+      terminal = onRouteAffinityStreamComplete;
+      const chunks = Array.from({ length: 64 }, (_, i) => "data: " + JSON.stringify({ choices: [{ delta: { content: "token" + i } }] }) + "\n\n");
+      return { success: true, response: new Response(chunks.join(""), { status: 200, headers: { "content-type": "text/event-stream" } }) };
+    });
+    const response = await handleChat(chatRequest());
+    expect(response.status).toBe(200);
+    await response.text();
+    // Client aborts mid-flight: the disconnect path settles first...
+    disconnect?.();
+    // ...so a racing success terminal is recorded as an abort disposition, never success.
+    terminal({ usage: { completion_tokens: 4000, prompt_tokens: 10 }, firstSemanticGenerationAt: Date.now(), streamEndAt: Date.now() + 1000, outcome: "success" });
+    expect(adaptiveRouter.snapshot().entries.find((row) => row.key[3] === "conn-a").samples ?? 0).toBe(0);
+    expect(mocks.logAffinity).toHaveBeenCalledWith("adaptive.observation", expect.objectContaining({ accepted: false, reason: "cancelled" }));
   });
 });

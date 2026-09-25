@@ -9,6 +9,7 @@ import { isMuseSparkModel } from "../providers/models/helpers.js";
 import { ANTHROPIC_API_VERSION } from "../providers/shared.js";
 import { normalizeResponsesInput } from "../translator/formats/responsesApi.js";
 import { sanitizeConsoleResponsesToolSchemas } from "../utils/jsonSchema.js";
+import { applyFingerprintTools } from "../utils/opencodeFingerprint.js";
 
 const OPENCODE_UA = "opencode/1.18.31";
 const MAX_SESSION_LENGTH = 256;
@@ -516,10 +517,10 @@ export class OpenCodeExecutor extends BaseExecutor {
       normalizeResponsesTools(body);
       sanitizeConsoleResponsesToolSchemas(body);
       sanitizeResponsesItems(body);
-      cloakOpencodeTools(body, true);
+      applyFingerprintTools(body, true);
     } else if (body && typeof body === "object") {
       if (isMessagesModel(model || body.model)) cloakOpencodeMessagesTools(body);
-      else cloakOpencodeTools(body, false);
+      else applyFingerprintTools(body, false);
     }
     return injectReasoningContent({ provider: this.provider, model, body });
   }

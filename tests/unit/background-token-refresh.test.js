@@ -191,6 +191,43 @@ describe("runBackgroundTokenRefreshTick", () => {
     ).resolves.toBeUndefined();
     expect(refreshConnection).not.toHaveBeenCalled();
   });
+
+  it("refreshes sequentially with injected sleep between accounts", async () => {
+    const a = conn({
+      id: "a",
+      provider: "antigravity",
+      expiresAt: new Date(NOW + 10 * 60 * 1000).toISOString(),
+    });
+    const b = conn({
+      id: "b",
+      provider: "grok-cli",
+      expiresAt: new Date(NOW + 10 * 60 * 1000).toISOString(),
+    });
+    const order = [];
+    const refreshConnection = vi.fn(async (c) => {
+      order.push(c.id);
+      return c;
+    });
+    const loadConnections = vi.fn(async () => [a, b]);
+    const sleeps = [];
+
+    const { runBackgroundTokenRefreshTick } = await import(
+      "../../src/sse/services/backgroundTokenRefresh.js"
+    );
+
+    await runBackgroundTokenRefreshTick({
+      loadConnections,
+      refreshConnection,
+      sleep: (ms) => {
+        sleeps.push(ms);
+        return Promise.resolve();
+      },
+    });
+
+    expect(order).toEqual(["a", "b"]);
+    expect(sleeps).toHaveLength(1);
+    expect(sleeps[0]).toBeGreaterThanOrEqual(12000);
+  });
 });
 
 describe("start/stop guards", () => {

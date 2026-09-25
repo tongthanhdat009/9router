@@ -2,6 +2,32 @@ import { NextResponse } from "next/server";
 import { getSettings, updateSettings } from "@/lib/localDb";
 import { applyOutboundProxyEnv } from "@/lib/network/outboundProxy";
 import { resetComboRotation } from "open-sse/services/combo.js";
+import { validateStrategy, ADAPTIVE_ROUND_ROBIN } from "@/lib/db/repos/settingsRepo.js";
+
+function collectStrategyErrors(body) {
+  const errors = [];
+  if (body.comboStrategy !== undefined && !validateStrategy("combo", body.comboStrategy)) errors.push(`comboStrategy: ${body.comboStrategy}`);
+  for (const [name, entry] of Object.entries(body.comboStrategies || {})) {
+    if (entry === null) continue;
+    if (!entry || typeof entry !== "object") { errors.push(`comboStrategies.${name}: must be an object`); continue; }
+    if (entry.fallbackStrategy !== undefined && !validateStrategy("combo", entry.fallbackStrategy)) errors.push(`comboStrategies.${name}.fallbackStrategy: ${entry.fallbackStrategy}`);
+  }
+  for (const [id, entry] of Object.entries(body.providerStrategies || {})) {
+    if (entry === null) continue;
+    if (!entry || typeof entry !== "object") { errors.push(`providerStrategies.${id}: must be an object`); continue; }
+    if (entry.fallbackStrategy !== undefined && !validateStrategy("provider", entry.fallbackStrategy)) errors.push(`providerStrategies.${id}.fallbackStrategy: ${entry.fallbackStrategy}`);
+  }
+  return errors;
+}
+
+async function invalidateAdaptive(changed) {
+  try {
+    const { adaptiveRouter } = await import("open-sse/services/adaptiveRouter.js");
+    if (changed) adaptiveRouter.invalidate({});
+    else adaptiveRouter.reset?.();
+  } catch { /* ponytail: routing consumes settings generation when the engine is not importable */ }
+}
+
 import bcrypt from "bcryptjs";
 
 export const dynamic = "force-dynamic";
@@ -76,7 +102,14 @@ export async function PATCH(request) {
       }
     }
 
-    const settings = await updateSettings(body);
+    const strategyErrors = collectStrategyErrors(body);
+    if (strategyErrors.length) return NextResponse.json({ error: `Invalid strategy: ${strategyErrors.join("; ")}` }, { status: 400 });
+
+    const settings = await updateSettings(body).catch((error) => {
+      if (error instanceof TypeError) return { __invalid: error.message };
+      throw error;
+    });
+    if (settings?.__invalid) return NextResponse.json({ error: `Invalid strategy payload: ${settings.__invalid}` }, { status: 400 });
 
     // Apply outbound proxy settings immediately (no restart required)
     if (
@@ -91,9 +124,12 @@ export async function PATCH(request) {
     if (
       Object.prototype.hasOwnProperty.call(body, "comboStrategy") ||
       Object.prototype.hasOwnProperty.call(body, "comboStickyRoundRobinLimit") ||
-      Object.prototype.hasOwnProperty.call(body, "comboStrategies")
+      Object.prototype.hasOwnProperty.call(body, "comboStrategies") ||
+      Object.prototype.hasOwnProperty.call(body, "providerStrategies")
     ) {
+      const touchesAdaptive = JSON.stringify(body).includes(ADAPTIVE_ROUND_ROBIN);
       resetComboRotation();
+      await invalidateAdaptive(touchesAdaptive);
     }
 
     if (

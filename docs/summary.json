@@ -1,0 +1,149 @@
+{
+ "head": "183a851b",
+ "artifacts": "/tmp/adaptive-e2e-redo",
+ "manifest": {
+  "head": "183a851b",
+  "declaredBeforeEvaluation": true,
+  "fixture": {
+   "tokens": 64,
+   "fastIntervalMs": 15,
+   "slowIntervalMs": 500,
+   "fastObservedMs": 982,
+   "slowObservedMs": 32050,
+   "sustained": true
+  },
+  "strategy": {
+   "RR": "explicit round-robin",
+   "steady": "combo adaptive + both providers adaptive"
+  },
+  "thresholds": {
+   "rrSlowShare": [
+    0.35,
+    0.65
+   ],
+   "adaptiveSteadySlowShareMax": 0.25,
+   "p50RatioMax": 0.8,
+   "p95RatioMax": 0.8,
+   "recovery": "cooledUntil cleared + reheated sample accepted",
+   "abort": "aborted stream not accepted as success"
+  }
+ },
+ "rr": {
+  "n": 8,
+  "p50": 32057,
+  "p95": 32229,
+  "max": 32229,
+  "slowShare": 0.5
+ },
+ "steady": {
+  "n": 12,
+  "p50": 984,
+  "p95": 32052,
+  "max": 32052,
+  "slowShare": 0.08333333333333333
+ },
+ "p50Ratio": 0.030695323954206568,
+ "p95Ratio": 0.994508051754631,
+ "matrix": {
+  "A_comboOnly": {
+   "share": 0.5,
+   "ms": [
+    982,
+    32052,
+    986,
+    32054,
+    988,
+    32046,
+    983,
+    32050
+   ]
+  },
+  "B_accountOnly_fallbackOrder": {
+   "share": 0,
+   "ms": [
+    982,
+    980,
+    989,
+    990,
+    995,
+    998,
+    983,
+    987
+   ]
+  },
+  "D_neither": {
+   "share": 0,
+   "ms": [
+    981,
+    984,
+    981,
+    985,
+    980,
+    982,
+    980,
+    987
+   ]
+  },
+  "directFastMs": 982,
+  "directSlowMs": 32040
+ },
+ "cooldown": {
+  "ms": [
+   1034,
+   32057,
+   992,
+   993,
+   986,
+   32048,
+   1023,
+   1032
+  ],
+  "slowEntry": {
+   "layer": "route",
+   "provider": "openai-compatible-chat-4a07dd98-18fb-43c1-bbb5-af3ea0498fc9",
+   "model": "e2e-model",
+   "samples": 2,
+   "tps": 2.029581146905622,
+   "semanticTtftMs": 502,
+   "weight": 6.811183511952687,
+   "inFlight": 0,
+   "probeCount": 0,
+   "cooldownMs": 58940,
+   "confidence": "low"
+  }
+ },
+ "recovery": {
+  "ms": [
+   990,
+   990,
+   981,
+   983,
+   982,
+   987,
+   982,
+   989
+  ],
+  "slowEntry": {
+   "layer": "route",
+   "provider": "openai-compatible-chat-4a07dd98-18fb-43c1-bbb5-af3ea0498fc9",
+   "model": "e2e-model",
+   "samples": 3,
+   "tps": 20.620706802833936,
+   "semanticTtftMs": 356.79999999999995,
+   "weight": 15.29934154930445,
+   "inFlight": 0,
+   "probeCount": 0,
+   "cooldownMs": 0,
+   "confidence": "established"
+  }
+ },
+ "abort": {
+  "aborted": true,
+  "before": 3,
+  "after": 3
+ },
+ "upstreamStop": {
+  "status": 200,
+  "ms": 7022
+ }
+}

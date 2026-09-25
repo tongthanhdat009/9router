@@ -29,6 +29,16 @@ import { getProjectIdForConnection } from "open-sse/services/projectId.js";
 import { resolveClientAffinitySessionId, sha16 } from "open-sse/utils/sessionManager.js";
 import { getAccountAffinity, bindAccountAffinity, invalidateAccountAffinity, getRouteAffinity, bindRouteAffinity, consumeRouteAffinityEscape, recordRouteAffinityThroughput, invalidateRouteAffinity, AFFINITY_MAX_LOGICAL_REQUESTS } from "../services/sessionAffinity.js";
 import { logAffinity } from "@/lib/affinityLogger.js";
+import { adaptiveRouter } from "open-sse/services/adaptiveRouter.js";
+
+// Resolve combo candidates through the same model lookup as the eventual
+// attempt, so route selection and observation share canonical keys.
+async function canonicalRouteModels(models) {
+  return Promise.all(models.map(async (member) => {
+    const info = await getModelInfo(member);
+    return { model: member, providerId: info?.provider, modelId: info?.model };
+  }));
+}
 
 /**
  * Handle chat completion request
@@ -159,6 +169,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
 
     if (comboStrategy === "fusion") {
       log.info("CHAT", `Combo "${modelStr}" with ${comboModels.length} models (strategy: fusion)`);
+      diagnostics.selection.comboStrategy = "fusion";
       diagnostics.finalized = true; // Fusion stays outside affinity diagnostics scope.
       return handleFusionChat({
         body,
@@ -179,6 +190,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
     }
 
     const comboStickyLimit = settings.comboStickyRoundRobinLimit;
+    const canonicalModels = comboStrategy === "adaptive-round-robin" ? await canonicalRouteModels(augmentedModels) : null;
     // Voluntary expiry: if the route binding has served >= MAX successful requests, drop it before selection.
     // Must run before the hard-cap check so limit takes precedence; throughput escape is consumed after.
     let routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
@@ -197,14 +209,16 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
     if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
     // Round-robin is the explicit rotation intent: per-session cursor wins over
     // affinity pinning — each session advances its own member sequence per request.
+    // Adaptive also ignores affinity; it probes cooled routes via observations.
     const rrSessionRotation = comboStrategy === "round-robin";
-    const escapedRoute = !rrSessionRotation && preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+    const adaptiveRoute = comboStrategy === "adaptive-round-robin";
+    const escapedRoute = !rrSessionRotation && !adaptiveRoute && preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
     if (escapedRoute) logAffinity("affinity.throughput.escape_consumed", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, route: escapedRoute });
-    const effectivePreferredRoute = rrSessionRotation ? null : (escapedRoute ? null : preferredRoute);
+    const effectivePreferredRoute = (rrSessionRotation || adaptiveRoute) ? null : (escapedRoute ? null : preferredRoute);
     log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
     diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
     diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
-    diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
+    diagnostics.selection.comboStrategy = comboStrategy === "adaptive-round-robin" ? "adaptive-round-robin" : (comboStrategy === "round-robin" ? "round-robin" : "fallback");
     let demotionSelectedLogged = false;
     const priorRouteRequestCount = routeAffinity?.requestCount ?? 0;
     const priorRouteForCount = routeAffinity?.route || null;
@@ -228,7 +242,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
             routeCompletion: { sessionId: affinitySessionId, routeScope: modelStr, route: m },
             routeSwitch: Boolean(routePrior && routePrior !== m),
             rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
-          }, diagnostics, finalizeAffinityRequest);
+          }, diagnostics, finalizeAffinityRequest, adaptiveRoute);
           if (response.ok) {
             if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
             const nextCount = priorRouteForCount === m ? priorRouteRequestCount + 1 : 1;
@@ -246,6 +260,7 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
       preferredRoute: effectivePreferredRoute,
       deprioritizedRoute: escapedRoute,
       rotationScope: affinitySessionId,
+      canonicalModels,
     }));
   }
 
@@ -289,7 +304,8 @@ async function findCustomModelRow(provider, model) {
   }
 }
 
-async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, affinitySessionId = null, affinityMeta = null, diagnostics = null, finalizeAffinityRequest = null) {
+async function handleSingleModelChat(body, modelStr, clientRawRequest = null, request = null, apiKey = null, affinitySessionId = null, affinityMeta = null, diagnostics = null, finalizeAffinityRequest = null, comboUsesAdaptive = false) {
+  const adaptiveRoute = comboUsesAdaptive === true;
   const modelInfo = await getModelInfo(modelStr);
 
   // If provider is null, this might be a combo name - check and handle
@@ -326,6 +342,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       }
 
       const comboStickyLimit = chatSettings.comboStickyRoundRobinLimit;
+      const canonicalModels = comboStrategy === "adaptive-round-robin" ? await canonicalRouteModels(augmentedModels) : null;
       let routeAffinity = getRouteAffinity(affinitySessionId, modelStr);
       if (routeAffinity && AFFINITY_MAX_LOGICAL_REQUESTS > 0 && Number.isFinite(routeAffinity.requestCount) && routeAffinity.requestCount >= AFFINITY_MAX_LOGICAL_REQUESTS) {
         logAffinity("affinity.limit_expired", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", routeScope: modelStr, route: routeAffinity.route, requestCount: routeAffinity.requestCount, limit: AFFINITY_MAX_LOGICAL_REQUESTS });
@@ -338,15 +355,16 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         ? routeAffinity.route
         : null;
       if (routeAffinity && !preferredRoute) invalidateRouteAffinity(affinitySessionId, modelStr);
-      // Mirrors outer site: round-robin rotates per session instead of pinning.
+      // Mirrors outer site: adaptive and round-robin do not pin route affinity.
       const rrSessionRotation = comboStrategy === "round-robin";
-      const escapedRoute = !rrSessionRotation && preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
+      const adaptiveRoute = comboStrategy === "adaptive-round-robin";
+      const escapedRoute = !rrSessionRotation && !adaptiveRoute && preferredRoute ? consumeRouteAffinityEscape(affinitySessionId, modelStr)?.route || null : null;
       if (escapedRoute) logAffinity("affinity.throughput.escape_consumed", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, routeScope: modelStr, route: escapedRoute });
-      const effectivePreferredRoute = rrSessionRotation ? null : (escapedRoute ? null : preferredRoute);
+      const effectivePreferredRoute = (rrSessionRotation || adaptiveRoute) ? null : (escapedRoute ? null : preferredRoute);
       log.info("CHAT", `Combo "${modelStr}" with ${augmentedModels.length} models (strategy: ${comboStrategy}, sticky: ${comboStickyLimit})`);
       diagnostics.affinity.route = { eligible: Boolean(affinitySessionId), hit: Boolean(effectivePreferredRoute), missReason: affinitySessionId ? (effectivePreferredRoute ? null : (routeAffinity ? "hard_capability_mismatch" : "no_binding")) : "no_session", boundProvider: routeAffinity?.route?.split("/")[0] || null, boundModel: routeAffinity?.route || null, switched: false };
       diagnostics.selection.routeSource = effectivePreferredRoute ? "route_affinity" : "combo_initial";
-      diagnostics.selection.comboStrategy = comboStrategy === "round-robin" ? "round-robin" : "fallback";
+      diagnostics.selection.comboStrategy = comboStrategy;
       let demotionSelectedLogged = false;
       const priorRouteRequestCount = routeAffinity?.requestCount ?? 0;
       const priorRouteForCount = routeAffinity?.route || null;
@@ -355,6 +373,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       return handleComboChat({
         body,
         models: augmentedModels,
+        canonicalModels,
         onSelection: ({ rotationUsed }) => { diagnostics.selection.comboRotationUsed = rotationUsed; },
         handleSingleModel: withCapacityAdapterStripping(
           async (b, m) => {
@@ -367,7 +386,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               routeCompletion: { sessionId: affinitySessionId, routeScope: modelStr, route: m },
               routeSwitch: Boolean(routePrior && routePrior !== m),
               rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
-            }, diagnostics, finalizeAffinityRequest);
+            }, diagnostics, finalizeAffinityRequest, adaptiveRoute);
             if (response.ok) {
               if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
               const nextCount = priorRouteForCount === m ? priorRouteRequestCount + 1 : 1;
@@ -424,7 +443,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
   let lastStatus = null;
 
   let isOuterAccountAttempt = true;
+  let clientDisconnected = false;
+  // Adaptive account lease for the current attempt; non-stream terminals settle
+  // inline below. Released/null means no reservation (legacy, noauth, or error paths).
+  let adaptiveAttemptLease = null;
   while (true) {
+    clientDisconnected = false;
+    const attemptStartedAt = Date.now();
     let affinity = getAccountAffinity(affinitySessionId, provider, model);
     if (isOuterAccountAttempt && affinity && AFFINITY_MAX_LOGICAL_REQUESTS > 0 && Number.isFinite(affinity.requestCount) && affinity.requestCount >= AFFINITY_MAX_LOGICAL_REQUESTS) {
       logAffinity("affinity.limit_expired", { requestId: diagnostics?.requestId, sessionHash: diagnostics?.sessionHash, layer: "account", provider, model, connectionId: affinity.connectionId, requestCount: affinity.requestCount, limit: AFFINITY_MAX_LOGICAL_REQUESTS });
@@ -433,11 +458,21 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     }
     const credentials = await getProviderCredentials(provider, excludeConnectionIds, model, {
       preferredConnectionId: affinity?.connectionId || null,
+      adaptiveAccount: true,
+      explicitConnectionId: request?.headers?.get?.("x-connection-id") || null,
     });
-    if (affinity && credentials?.connectionId !== affinity.connectionId) {
+    if (affinity && credentials?.adaptiveStrategy === "adaptive-round-robin") {
+      // Assumption 3: opportunistic affinity may be overridden by adaptive; required
+      // continuations never reach adaptive picks because explicit pins bypass selection.
+      logAffinity("affinity.account.adaptive_overridden", { requestId: diagnostics?.requestId, provider, model, preferredConnectionId: affinity.connectionId, selected: credentials?.connectionId ?? null });
+      invalidateAccountAffinity(affinitySessionId, provider, model);
+    } else if (affinity && credentials?.connectionId !== affinity.connectionId) {
       logAffinity("affinity.invariant_violation", { code: "AFFINITY_ACCOUNT_HIT_SELECTED_OTHER", requestId: diagnostics?.requestId, provider, model, preferredConnectionId: affinity.connectionId, selected: credentials?.connectionId ?? null });
       invalidateAccountAffinity(affinitySessionId, provider, model);
     }
+
+    // Claim the reservation for this attempt boundary (even when stale and retried).
+    adaptiveAttemptLease = credentials?.adaptiveAccountLease || null;
 
     // All accounts unavailable
     if (!credentials || credentials.allRateLimited) {
@@ -459,7 +494,7 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Account selection shown in the unified "▶" line (acc:...)
     if (diagnostics) {
       diagnostics.attemptCount++;
-      diagnostics.selection = { ...diagnostics.selection, provider, model, connectionId: credentials.connectionId, accountSource: affinity?.connectionId === credentials.connectionId ? "account_affinity" : (excludeConnectionIds.size ? "account_fallback" : "fill_first") };
+      diagnostics.selection = { ...diagnostics.selection, provider, model, connectionId: credentials.connectionId, accountStrategy: credentials.adaptiveStrategy === "adaptive-round-robin" ? "adaptive-round-robin" : credentials.adaptiveStrategy, accountSource: credentials.adaptiveAccountLease ? "adaptive_round_robin" : (affinity?.connectionId === credentials.connectionId ? "account_affinity" : (excludeConnectionIds.size ? "account_fallback" : "fill_first")) };
       diagnostics.affinity.account = { eligible: Boolean(affinitySessionId), hit: Boolean(affinity?.connectionId === credentials.connectionId), missReason: affinitySessionId ? (affinity ? (affinity.connectionId === credentials.connectionId ? null : "preferred_ineligible") : "no_binding") : "no_session", preferredConnectionId: affinity?.connectionId || null, switched: Boolean(accountPrior?.connectionId && credentials.connectionId !== accountPrior.connectionId) };
     }
     const refreshedCredentials = await checkAndRefreshToken(provider, credentials);
@@ -471,6 +506,12 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       log.warn("AUTH", `Account ${credentials.connectionName} token refresh failed, needs re-auth (401)`);
       if (diagnostics) { diagnostics.fallback.accountFallbackCount++; diagnostics.fallback.lastReason = "account_fallback"; }
       excludeConnectionIds.add(credentials.connectionId);
+      // Failed attempt: lease ends here as ignored (never a failure sample).
+      if (adaptiveAttemptLease) {
+        adaptiveRouter.release(adaptiveAttemptLease);
+        logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials.connectionId, accepted: false, reason: "reauth_failure" });
+        adaptiveAttemptLease = null;
+      }
       lastError = "Token refresh failed, re-authentication required";
       lastStatus = HTTP_STATUS.UNAUTHORIZED;
       isOuterAccountAttempt = false;
@@ -490,7 +531,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     // Use shared chatCore
     const chatSettings = await getSettings();
     const providerThinking = (chatSettings.providerThinking || {})[provider] || null;
-    const result = await handleChatCore({
+    let result;
+    try {
+      result = await handleChatCore({
       body: { ...body, model: `${provider}/${model}` },
       modelInfo: { provider, model },
       capabilityOverride,
@@ -522,7 +565,52 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
       requestId: diagnostics?.requestId,
       affinityDiagnostics: diagnostics,
       finalizeAffinityRequest,
-      onRouteAffinityStreamComplete: ({ usage, firstSemanticGenerationAt, streamEndAt }) => {
+      onRouteAffinityStreamComplete: ({ usage, firstSemanticGenerationAt, streamEndAt, outcome = "success" }) => {
+        if (clientDisconnected) outcome = "cancelled";
+        // Adaptive account lease settles here exactly once per attempt; released
+        // leases are skipped so retries never double-record. When the account
+        // layer is legacy (no lease) but the combo layer is adaptive, record a
+        // route-layer sample so "combo adaptive only" learns without account
+        // reservations — one sample per terminal, never two sources.
+        let adaptiveRouteSample = null;
+        if (!adaptiveAttemptLease && adaptiveRoute && credentials) {
+          adaptiveRouteSample = {
+            layer: "route",
+            providerId: provider,
+            modelId: model,
+            completionTokens: usage?.completion_tokens ?? usage?.output_tokens,
+            semanticTtftMs: firstSemanticGenerationAt != null ? firstSemanticGenerationAt - attemptStartedAt : null,
+            streamSpanMs: firstSemanticGenerationAt != null ? streamEndAt - firstSemanticGenerationAt : null,
+            estimated: usage?.estimated === true,
+            outcome,
+          };
+        }
+        if (adaptiveAttemptLease && credentials) {
+          const lease = adaptiveAttemptLease;
+          adaptiveAttemptLease = null;
+          const observation = {
+            layer: "account",
+            providerId: provider,
+            modelId: model,
+            connectionId: credentials.connectionId,
+            completionTokens: usage?.completion_tokens ?? usage?.output_tokens,
+            semanticTtftMs: firstSemanticGenerationAt != null ? firstSemanticGenerationAt - attemptStartedAt : null,
+            streamSpanMs: firstSemanticGenerationAt != null ? streamEndAt - firstSemanticGenerationAt : null,
+            estimated: usage?.estimated === true,
+            outcome,
+            generation: lease.generation,
+          };
+          const settleResult = lease.probe
+            ? adaptiveRouter.markProbeResult(lease, observation)
+            : { result: adaptiveRouter.recordObservation(observation), released: adaptiveRouter.release(lease) };
+          logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials.connectionId, ...(settleResult.result ?? settleResult), probe: Boolean(lease.probe) });
+        }
+        // Route-only mode: settle the route sample, then fall into legacy
+        // affinity accounting below (unchanged).
+        if (adaptiveRouteSample) {
+          const settled = adaptiveRouter.recordObservation(adaptiveRouteSample);
+          logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials?.connectionId, ...settled, probe: false });
+        }
         const route = affinityMeta?.routeCompletion;
         if (!route) return;
         const throughput = recordRouteAffinityThroughput({ ...route, completionTokens: usage?.completion_tokens, firstSemanticGenerationAt, streamEndAt, estimated: usage?.estimated });
@@ -533,6 +621,17 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
           if (throughput.recovered) logAffinity("affinity.throughput.recovered", details);
           if (throughput.escapeArmed) logAffinity("affinity.throughput.escape_armed", details);
         }
+      },
+      // chatCore already forwards onDisconnect through streamController; it is
+      // the one cancel/abort hook available without changing its shared API.
+      onDisconnect: () => {
+        clientDisconnected = true;
+        if (!adaptiveAttemptLease) return;
+        const lease = adaptiveAttemptLease;
+        adaptiveAttemptLease = null;
+        adaptiveRouter.recordObservation({ layer: "account", providerId: provider, modelId: model, connectionId: credentials.connectionId, outcome: "cancelled", generation: lease.generation });
+        adaptiveRouter.release(lease);
+        logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials.connectionId, accepted: false, reason: "cancelled" });
       },
       affinity: {
         sessionHash: affinitySessionId ? sha16(affinitySessionId) : null,
@@ -562,10 +661,29 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         const effectiveNext = (priorConn && priorConn !== credentials.connectionId) ? 1 : (Number.isFinite(priorCount) && priorCount > 0 ? priorCount + 1 : 1);
         bindAccountAffinity(affinitySessionId, provider, model, credentials.connectionId, { requestCount: effectiveNext });
       }
-    });
+      });
+    } finally {
+      // A successful stream transfers ownership to its terminal callback.
+      // Throws and non-stream responses have no such owner.
+      const streamPending = result?.success && result.response?.body && /text\/event-stream/i.test(result.response.headers?.get?.("content-type") || "");
+      if (adaptiveAttemptLease && !streamPending) {
+        adaptiveRouter.release(adaptiveAttemptLease);
+        logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials?.connectionId, accepted: false, reason: "not_success" });
+        adaptiveAttemptLease = null;
+      }
+    }
 
     if (result.success) {
-      if (diagnostics && result.response?.body && /text\/event-stream/i.test(result.response.headers?.get?.("content-type") || "")) diagnostics.streamPending = true;
+      const isStreaming = result.response?.body && /text\/event-stream/i.test(result.response.headers?.get?.("content-type") || "");
+      if (diagnostics && isStreaming) diagnostics.streamPending = true;
+      if (!isStreaming && adaptiveAttemptLease) {
+        const lease = adaptiveAttemptLease;
+        adaptiveAttemptLease = null;
+        // Non-streaming has no semantic delta; latency-only is intentionally
+        // ignored by the TPS scorer (no invented token-rate sample).
+        adaptiveRouter.release(lease);
+        logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials.connectionId, accepted: false, reason: "latency_only" });
+      }
       return result.response;
     }
 
@@ -596,4 +714,9 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
     if (finalizeAffinityRequest) finalizeAffinityRequest({ status: result.response?.status ?? result.status ?? null });
     return result.response;
   }
+}
+
+// Cancel/explicit-abort notes for the adaptive lifecycle: cancel is ignore, never failure.
+export function resolveAdaptiveCancelDisposition(streamCancelReason) {
+  return { disposition: "ignore", reason: streamCancelReason ? "cancel" : "abort" };
 }

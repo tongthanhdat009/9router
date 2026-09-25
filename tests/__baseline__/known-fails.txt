@@ -1,13 +1,51 @@
 tests/translator/bugs-toClaude-context.test.js :: OpenAI → Claude context mapping assistant reasoning_content becomes a thinking block
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) does not send additionalModelRequestFields for Kiro models without effort support
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) injects thinking_mode tag when model implies thinking
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) keeps conversationId stable from client session headers and replays frozen msg0
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) keeps the legacy thinking fallback for unsupported GPT-5.6 effort auto
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) keeps the legacy thinking fallback for unsupported GPT-5.6 effort minimal
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) keeps the legacy thinking fallback for unsupported GPT-5.6 effort ultra
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) keeps top-level systemPrompt stable across turns
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) maps output_config.effort high to Kiro CLI-style additionalModelRequestFields for effort models
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) normalizes an unsupported Kiro intensity suffix while preserving agentic behavior
+tests/translator/claude-kiro-direct.test.js :: Claude → Kiro (direct route) sends Claude system as top-level systemPrompt and keeps a user-content fallback
 tests/translator/golden-request.test.js :: GOLDEN request: OpenAI → Kiro full body (image base64 + tool_result)
 tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) anthropic → headers (apiKey / oauth)
 tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) cline → headers (apiKey / oauth)
 tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) clinepass → headers (apiKey / oauth)
 tests/translator/golden-url-header.test.js :: GOLDEN buildHeaders (default executor providers) kimi → headers (apiKey / oauth)
 tests/translator/golden-url-header.test.js :: GOLDEN buildUrl (default executor providers) blackbox → url (stream + non-stream)
+tests/translator/thinking-unified.test.js :: applyThinking per provider format applies a supported Codex Ultra suffix
+tests/translator/thinking-unified.test.js :: applyThinking per provider format normalizes Codex gpt-5.6-luna effort max to max
+tests/translator/thinking-unified.test.js :: applyThinking per provider format normalizes Codex gpt-5.6-luna effort ultra to max
+tests/translator/thinking-unified.test.js :: applyThinking per provider format normalizes Codex gpt-5.6-sol effort max to max
+tests/translator/thinking-unified.test.js :: applyThinking per provider format normalizes Codex gpt-5.6-sol effort ultra to ultra
+tests/translator/thinking-unified.test.js :: applyThinking per provider format normalizes Codex gpt-5.6-terra effort max to max
+tests/translator/thinking-unified.test.js :: applyThinking per provider format normalizes Codex gpt-5.6-terra effort ultra to ultra
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache message non-tail 1h
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache message non-tail 5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache message non-tail default-5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache message tail 1h
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache message tail 5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache message tail default-5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache system non-tail 1h
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache system non-tail 5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache system non-tail default-5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache system tail 1h
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache system tail 5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache system tail default-5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache tools non-tail 1h
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache tools non-tail 5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache tools non-tail default-5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache tools tail 1h
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache tools tail 5m
+tests/unit/claude-cache-intent.test.js :: anchorClaudeCache tools tail default-5m
 tests/unit/claude-header-forwarding.test.js :: proxyAwareFetch — api.anthropic.com routing routes api.anthropic.com to gotScraping (non-streaming) and returns ok response
 tests/unit/codex-image-fetch.test.js :: CodexExecutor image handling execute() prefetches images before sending to upstream
 tests/unit/codex-image-fetch.test.js :: CodexExecutor image handling fetches 1MB remote image and inlines it as base64 data URI
+tests/unit/codex-native-passthrough-thinking.test.js :: native Codex passthrough thinking suffixes converts unsupported Luna Ultra to Max without dropping reasoning metadata
+tests/unit/codex-native-passthrough-thinking.test.js :: native Codex passthrough thinking suffixes forwards Ultra for Sol
+tests/unit/codex-native-passthrough-thinking.test.js :: native Codex passthrough thinking suffixes forwards Ultra through a Terra review alias
 tests/unit/combo-autoswitch.test.js :: detectRequiredCapabilities web_search tool -> search
 tests/unit/combo-autoswitch.test.js :: reorderByCapabilities keeps order when no model matches
 tests/unit/cursor-agent-proto.test.js :: Cursor AgentService codec (cursorProtobuf.js) McpArgs decode decodes name, toolName, toolCallId, and typed args map
@@ -50,7 +88,12 @@ tests/unit/executor-const-guard.test.js :: antigravity retry (intentional change
 tests/unit/force-stream-config.test.js :: forceStream provider config keeps forced-stream providers streaming for JSON clients when body.stream is false
 tests/unit/force-stream-config.test.js :: forceStream provider config keeps forced-stream providers streaming for JSON clients when body.stream is undefined
 tests/unit/image-fetch-hardening.test.js :: fetchImageAsBase64 hardening accepts valid PNG from public host
+tests/unit/kiro-api-key-endpoint-routing.test.js :: Kiro auth-aware endpoint routing keeps Builder ID OAuth on the Kiro runtime surface
+tests/unit/kiro-api-key-endpoint-routing.test.js :: Kiro auth-aware endpoint routing keeps external IdP on CodeWhisperer before Amazon Q
+tests/unit/kiro-api-key-endpoint-routing.test.js :: Kiro auth-aware endpoint routing regionalizes AWS endpoints for IDC without changing Kiro runtime
+tests/unit/kiro-external-idp.test.js :: Kiro external_idp (CLIProxyAPI) import and refresh adds CodeWhisperer external IdP headers and endpoint ordering
 tests/unit/kiro-terminal-integrity.test.js :: Kiro terminal integrity recovery bounds the retry HTTP error body
+tests/unit/kiro-terminal-integrity.test.js :: Kiro terminal integrity recovery keeps model-controlled parser detail out of the retry system prompt
 tests/unit/kiro-terminal-integrity.test.js :: Kiro terminal integrity recovery surfaces retry HTTP failures as SSE after heartbeat commits headers
 tests/unit/mimo-free.live.test.js :: MiMo Free anti-abuse gate (live) chat WITH Chrome User-Agent → 200
 tests/unit/oauth-cursor-auto-import.test.js :: GET /api/oauth/cursor/auto-import extracts tokens using exact keys
@@ -62,6 +105,29 @@ tests/unit/oauth-cursor-auto-import.test.js :: GET /api/oauth/cursor/auto-import
 tests/unit/oauth-cursor-auto-import.test.js :: GET /api/oauth/cursor/auto-import unsupported platform returns 400
 tests/unit/oauth-cursor-auto-import.test.js :: GET /api/oauth/cursor/auto-import unwraps JSON-encoded string values
 tests/unit/openai-to-claude.test.js :: openaiToClaudeResponse omits empty Read pages tool argument before emitting Claude input deltas
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget clamps OpenAI Responses reasoning.effort xhigh to max_thinking_length 32000
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget clamps reasoning_effort max to Kiro max_thinking_length 32000
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget does not send Claude-specific additionalModelRequestFields for non-Claude aliases
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget does not send Claude-specific additionalModelRequestFields for prefixed non-Claude aliases
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget does not send additionalModelRequestFields for date-suffixed Claude 4 model ids
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget does not send additionalModelRequestFields for legacy Kiro model ids
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget does not send additionalModelRequestFields for pre-4 legacy Kiro model ids
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget does not send additionalModelRequestFields for prefixed pre-4 legacy Kiro model ids
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget keeps the legacy thinking fallback for unsupported GPT-5.6 effort auto
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget keeps the legacy thinking fallback for unsupported GPT-5.6 effort minimal
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget keeps the legacy thinking fallback for unsupported GPT-5.6 effort ultra
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget keeps the thinking-alias fallback when GPT effort is blank
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget keeps top-level systemPrompt stable across turns
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget maps reasoning_effort high to max_thinking_length 24576
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget maps reasoning_effort low to max_thinking_length 1024
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget normalizes unsupported Kiro intensity suffix for claude-sonnet-4.5-thinking-agentic(high)
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget normalizes unsupported Kiro intensity suffix for glm-5-thinking-agentic(medium)
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget uses Claude thinking.budget_tokens as max_thinking_length
+tests/unit/openai-to-kiro.test.js :: openaiToKiroRequest thinking budget uses the default budget for synthetic -thinking models with no explicit config
+tests/unit/pricing-catalog-coverage.test.js :: token catalog pricing coverage resolves every active token model or documents its deliberate exclusion
+tests/unit/provider-models-fetcher.test.js :: mergeProviderModels ignores invalid entries without a value
+tests/unit/provider-models-fetcher.test.js :: mergeProviderModels keeps the first model when later groups contain the same value
+tests/unit/request-details-tab.test.js :: backupDbLite — excludes requestDetails, keeps critical data backup file omits requestDetails rows but keeps other tables
 tests/unit/request-details-tab.test.js :: getDistinctProviders — providers route (no full-row parse) returns unique provider list without parsing data blobs
 tests/unit/request-details-tab.test.js :: request details — tab crash-risk cases oversized field → stored truncated + reparseable (no circular)
 tests/unit/security-audit.test.js :: AUDIT-001: Synchronous restart guard mitmIsRestarting should be reset on max-restarts early return
@@ -77,6 +143,13 @@ tests/unit/security-audit.test.js :: AUDIT-004: Atomic lock file for MITM startu
 tests/unit/security-audit.test.js :: AUDIT-018: XSS escaping in OAuth callback should escape ampersand, angle brackets, and quotes
 tests/unit/security-audit.test.js :: AUDIT-018: XSS escaping in OAuth callback should use safeMessage in rendered HTML, not raw message
 tests/unit/security-audit.test.js :: AUDIT-018: XSS escaping in OAuth callback source should contain escapeHtml function
+tests/unit/system-inject.test.js :: system-inject kiro empty old prompt prepends to chosen user content
+tests/unit/system-inject.test.js :: system-inject kiro exact retry idempotency for kiro
+tests/unit/system-inject.test.js :: system-inject kiro if old prompt not mirrored at head, do not alter user content
+tests/unit/system-inject.test.js :: system-inject kiro updates systemPrompt and mirrored prefix of first history user preserving tail
+tests/unit/system-inject.test.js :: system-inject kiro when no history user, updates currentMessage instead
+tests/unit/system-inject.test.js :: system-inject regression fixes kiro empty-old prepend fires when prompt appears mid-tail only
+tests/unit/system-inject.test.js :: system-inject regression fixes kiro partial mutation converges on retry after transient content write failure
 tests/unit/translator-request-normalization.test.js :: request normalization claudeToOpenAIRequest flattens text-only content arrays into string
 tests/unit/translator-request-normalization.test.js :: request normalization filterToOpenAIFormat flattens text-only arrays to string
 tests/unit/translator-request-normalization.test.js :: request normalization parseSSELine supports provider raw NDJSON stream lines

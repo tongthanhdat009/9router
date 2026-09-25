@@ -1,0 +1,27 @@
+{
+ "head": "183a851b",
+ "declaredBeforeEvaluation": true,
+ "fixture": {
+  "tokens": 64,
+  "fastIntervalMs": 15,
+  "slowIntervalMs": 500,
+  "fastObservedMs": 982,
+  "slowObservedMs": 32050,
+  "sustained": true
+ },
+ "strategy": {
+  "RR": "explicit round-robin",
+  "steady": "combo adaptive + both providers adaptive"
+ },
+ "thresholds": {
+  "rrSlowShare": [
+   0.35,
+   0.65
+  ],
+  "adaptiveSteadySlowShareMax": 0.25,
+  "p50RatioMax": 0.8,
+  "p95RatioMax": 0.8,
+  "recovery": "cooledUntil cleared + reheated sample accepted",
+  "abort": "aborted stream not accepted as success"
+ }
+}

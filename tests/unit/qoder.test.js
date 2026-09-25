@@ -437,6 +437,10 @@ describe("wrapQoderSSE", () => {
   const { wrapQoderSSE } = qoderExecutorInternals;
 
   // Helper: build a fake Response carrying the given lines as the body.
+  function envelope(body) {
+    return `data: ${JSON.stringify({ statusCodeValue: 200, body })}\n\n`;
+  }
+
   function makeResponse(lines, { status = 200 } = {}) {
     const body = new ReadableStream({
       start(controller) {
@@ -484,14 +488,14 @@ describe("wrapQoderSSE", () => {
 
   // Regression for review finding #3: chunks could leak past [DONE] when
   // the success branch had no doneEmitted guard. We synthesize an error
-  // envelope (which sets doneEmitted=true) followed by a valid envelope
+  // envelope after content (which sets doneEmitted=true), followed by a valid envelope
   // and assert the second envelope is NOT forwarded.
   it("does not forward chunks after [DONE] has been emitted", async () => {
     const errorEnv = JSON.stringify({ statusCodeValue: 500, body: "boom" });
     const validInner = JSON.stringify({ choices: [{ delta: { content: "leak" } }] });
     const validEnv = JSON.stringify({ statusCodeValue: 200, body: validInner });
     const wrapped = await wrapQoderSSE(
-      makeResponse([`data: ${errorEnv}\n\ndata: ${validEnv}\n\n`]),
+      makeResponse([envelope(JSON.stringify({ choices: [{ delta: { content: "hi" } }] })) + `data: ${errorEnv}\n\ndata: ${validEnv}\n\n`]),
       "qoder/auto",
     );
     const out = await drain(wrapped);
@@ -517,12 +521,13 @@ describe("wrapQoderSSE", () => {
     expect(() => JSON.parse(dataLine.slice("data: ".length))).not.toThrow();
   });
 
-  it("upstream error envelope produces an error chunk + [DONE]", async () => {
+  it("upstream first-frame error envelope produces an HTTP error", async () => {
     const env = JSON.stringify({ statusCodeValue: 503, body: "service unavailable" });
     const wrapped = await wrapQoderSSE(makeResponse([`data: ${env}\n\n`]), "qoder/lite");
-    const out = await drain(wrapped);
-    expect(out).toContain("[qoder error 503");
-    expect(out).toContain("data: [DONE]\n\n");
+    expect(wrapped.status).toBe(503);
+    expect(await wrapped.json()).toEqual({
+      error: { message: "service unavailable", code: 503 },
+    });
   });
 
   it("non-ok responses are returned unchanged (no transform)", async () => {

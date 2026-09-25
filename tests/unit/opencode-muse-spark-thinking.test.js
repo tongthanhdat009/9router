@@ -114,7 +114,7 @@ describe("OpenCode Free Muse Spark thinking", () => {
       tools: [{ type: "function", function: { name: "Bash", description: "caller" } }],
     });
     expect(chat.stream).toBe(true);
-    expect(chat.tools.map((tool) => tool.function.name)).toEqual(["Bash", "bash", "read"]);
+    expect(chat.tools.map((tool) => tool.function.name)).toEqual(["bash", "glob", "grep", "read"]);
 
     const responses = executor.transformRequest("muse-spark-1.3-contributor-free", {
       stream: false,
@@ -124,7 +124,7 @@ describe("OpenCode Free Muse Spark thinking", () => {
     });
     expect(responses.stream).toBe(true);
     expect(responses.tool_choice).toBe("auto");
-    expect(responses.tools.map((tool) => tool.name)).toEqual(["weather", "bash", "read"]);
+    expect(responses.tools.map((tool) => tool.name)).toEqual(["weather", "bash", "glob", "grep", "read"]);
   });
 
   it("sanitizes prior Responses reasoning without losing function turns", () => {

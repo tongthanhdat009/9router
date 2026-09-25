@@ -11,6 +11,18 @@ export const BACKGROUND_REFRESH_LEAD_MS = 30 * 60 * 1000;
 export const MIN_REFRESH_INTERVAL_MS = 60 * 1000;
 const DEFAULT_INTERVAL_MS = 5 * 60 * 1000;
 const INITIAL_DELAY_MS = 10 * 1000;
+const SENSITIVE_PROVIDERS = new Set(["antigravity", "gemini-cli"]);
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function refreshDelayMs(provider) {
+  const sensitive = SENSITIVE_PROVIDERS.has(provider);
+  const base = Number(sensitive ? process.env.BG_REFRESH_GOOGLE_DELAY_MS : process.env.BG_REFRESH_DELAY_MS)
+    || (sensitive ? 12_000 : 1_500);
+  return base + (sensitive ? Math.floor(Math.random() * 4_000) : 200);
+}
 
 let started = false;
 let intervalHandle = null;
@@ -119,23 +131,25 @@ export async function runBackgroundTokenRefreshTick(deps = {}) {
       ids: due.map((c) => c.id).filter(Boolean),
     });
 
-    await Promise.allSettled(
-      due.map(async (conn) => {
-        try {
-          await refresh(conn);
-          log.info("BG_TOKEN_REFRESH", "Connection refresh finished", {
-            id: conn.id,
-            provider: conn.provider,
-          });
-        } catch (err) {
-          log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
-            id: conn?.id,
-            provider: conn?.provider,
-            error: err?.message ?? String(err),
-          });
-        }
-      })
-    );
+    const pause = deps.sleep || sleep;
+    for (let i = 0; i < due.length; i++) {
+      const conn = due[i];
+      try {
+        await refresh(conn);
+        log.info("BG_TOKEN_REFRESH", "Connection refresh finished", {
+          id: conn.id,
+          provider: conn.provider,
+        });
+      } catch (err) {
+        log.warn("BG_TOKEN_REFRESH", "Connection refresh failed (swallowed)", {
+          id: conn?.id,
+          provider: conn?.provider,
+          error: err?.message ?? String(err),
+        });
+      }
+      // Sequential delay between accounts so N Google accounts do not burst upstream.
+      if (i < due.length - 1) await pause(refreshDelayMs(conn.provider));
+    }
   } catch (err) {
     log.warn("BG_TOKEN_REFRESH", "Tick failed (swallowed)", {
       error: err?.message ?? String(err),

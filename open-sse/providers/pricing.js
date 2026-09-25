@@ -11,6 +11,7 @@
  */
 export const MODEL_PRICING = {
   // === Anthropic / Claude ===
+  "claude-opus-5-5":              { input: 4.00, output: 20.00, cached: 0.20, reasoning: 20.00, cache_creation: 5.00 }, // OpenRouter anthropic/claude-opus-5.5
   "claude-opus-4-6":              { input: 5.00,  output: 25.00, cached: 0.50,  reasoning: 25.00,  cache_creation: 6.25  },
   "claude-opus-4-5-20251101":     { input: 5.00,  output: 25.00, cached: 0.50,  reasoning: 25.00,  cache_creation: 6.25  },
   "claude-sonnet-4-6":            { input: 3.00,  output: 15.00, cached: 0.30,  reasoning: 15.00,  cache_creation: 3.75  },
@@ -130,6 +131,8 @@ export const MODEL_PRICING = {
   "grok-code-fast-1":             { input: 0.50,  output: 2.00,  cached: 0.25,  reasoning: 3.00,   cache_creation: 0.50  },
 
   // === Catalog additions — official lab pricing where published, else current OpenRouter public catalog ($/1M tokens) ===
+  "gpt-6-luna":                   { input: 0.10, output: 0.50, cached: 0.01, reasoning: 0.50, cache_creation: 0.125 }, // OpenRouter openai/gpt-6-luna; standard tier
+  "gpt-6-sol":                    { input: 2.00, output: 10.00, cached: 0.20, reasoning: 10.00, cache_creation: 2.50 }, // OpenRouter openai/gpt-6-sol; standard tier
   "gpt-6-astra":                  { input: 10.00, output: 50.00, cached: 1.00, cache_creation: 12.50 }, // upstream; OR openai/gpt-6-astra
   "deepseek-v4.1-flash":          { input: 0.15,  output: 0.60,  cached: 0.003 }, // upstream; OR deepseek/deepseek-v4.1-flash
   "deepseek-flash":               { input: 0.30,  output: 1.20,  cached: 0.006 }, // upstream; official api-docs.deepseek.com flash rate
@@ -369,6 +372,8 @@ export const PROVIDER_PRICING = {
     "openai/gpt-5.4-pro": { input: 30, output: 180, reasoning: 180 },
     "openai/gpt-5.5": { input: 5.0, output: 30.0, cached: 0.5, reasoning: 30.0 },
     "openai/gpt-5.5-pro": { input: 30, output: 180, reasoning: 180 },
+    "openai/gpt-6-luna": { input: 0.10, output: 0.50, cached: 0.01, reasoning: 0.50, cache_creation: 0.125 },
+    "openai/gpt-6-sol": { input: 2.00, output: 10.00, cached: 0.20, reasoning: 10.00, cache_creation: 2.50 },
     "openai/gpt-5.6-luna": { input: 0.2, output: 1.2, cached: 0.02, cache_creation: 0.25, reasoning: 1.2 },
     "openai/gpt-5.6-sol": { input: 5.0, output: 30.0, cached: 0.5, cache_creation: 6.25, reasoning: 30.0 },
     "openai/gpt-5.6-terra": { input: 2, output: 12, cached: 0.2, cache_creation: 2.5, reasoning: 12 },
