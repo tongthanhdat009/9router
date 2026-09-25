@@ -135,9 +135,20 @@ describe("decisions combo expansion", () => {
     });
   });
 
-  it("single (non-combo) model still goes straight to the proxy core", async () => {
+  it("passes chatCore-shaped proxy options for the selected connection", async () => {
     mocks.getComboModels.mockResolvedValue(null);
     mocks.getModelInfo.mockResolvedValue({ provider: "openrouter", model: "typesafe/jev-1.13" });
+    mocks.getProviderCredentials.mockResolvedValue({
+      connectionId: "conn-proxy",
+      connectionName: "Proxied account",
+      providerSpecificData: {
+        connectionProxyEnabled: true,
+        connectionProxyUrl: "http://proxy.test:8080",
+        connectionNoProxy: "localhost,127.0.0.1",
+        vercelRelayUrl: "",
+        connectionProxyPoolId: "pool-metadata-only",
+      },
+    });
     mocks.handleDecisionsProxyCore.mockResolvedValue({
       success: true,
       usage: { input_tokens: 10, output_tokens: 5 },
@@ -151,5 +162,13 @@ describe("decisions combo expansion", () => {
     expect(response.status).toBe(200);
     expect(mocks.handleComboChat).not.toHaveBeenCalled();
     expect(mocks.handleDecisionsProxyCore).toHaveBeenCalledOnce();
+    const coreArg = mocks.handleDecisionsProxyCore.mock.calls[0][0];
+    expect(coreArg.proxyOptions).toEqual({
+      connectionProxyEnabled: true,
+      connectionProxyUrl: "http://proxy.test:8080",
+      connectionNoProxy: "localhost,127.0.0.1",
+      vercelRelayUrl: "",
+    });
+    expect(coreArg.proxyOptions).not.toHaveProperty("connectionProxyPoolId");
   });
 });

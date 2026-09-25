@@ -9,7 +9,15 @@
  * Docs: https://openrouter.ai/docs/guides/community/typesafe-sdk
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+
+const proxyMocks = vi.hoisted(() => ({
+  proxyAwareFetch: vi.fn(),
+}));
+
+vi.mock("open-sse/utils/proxyFetch.js", () => ({
+  proxyAwareFetch: proxyMocks.proxyAwareFetch,
+}));
 
 vi.mock("open-sse/services/tokenRefresh.js", async (importOriginal) => {
   const actual = await importOriginal();
@@ -19,7 +27,6 @@ vi.mock("open-sse/services/tokenRefresh.js", async (importOriginal) => {
 import { handleDecisionsProxyCore, getDecisionsConfig } from "open-sse/handlers/decisionsCore.js";
 import { PROVIDER_MEDIA, PROVIDER_MODELS } from "open-sse/providers/index.js";
 
-const originalFetch = global.fetch;
 const jsonResponse = (body, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
@@ -79,11 +86,12 @@ describe("registry wiring", () => {
 });
 
 describe("decisionsCore proxy", () => {
-  beforeEach(() => { global.fetch = vi.fn(); });
-  afterEach(() => { global.fetch = originalFetch; });
+  beforeEach(() => {
+    proxyMocks.proxyAwareFetch.mockReset();
+  });
 
   it("POSTs the body verbatim to SystemOne with auth + attribution headers", async () => {
-    global.fetch.mockResolvedValueOnce(jsonResponse(DECISIONS_OK));
+    proxyMocks.proxyAwareFetch.mockResolvedValueOnce(jsonResponse(DECISIONS_OK));
 
     const raw = JSON.stringify(DECISIONS_BODY);
     const result = await handleDecisionsProxyCore({
@@ -93,7 +101,7 @@ describe("decisionsCore proxy", () => {
     });
 
     expect(result.success).toBe(true);
-    const [url, init] = global.fetch.mock.calls[0];
+    const [url, init] = proxyMocks.proxyAwareFetch.mock.calls[0];
     expect(url).toBe("https://openrouter.ai/api/v1/systemone");
     expect(init.method).toBe("POST");
     expect(init.body).toBe(raw); // verbatim — noul/choice/score must not be reshaped
@@ -111,11 +119,11 @@ describe("decisionsCore proxy", () => {
     });
     expect(result.success).toBe(false);
     expect(result.status).toBe(400);
-    expect(global.fetch).not.toHaveBeenCalled();
+    expect(proxyMocks.proxyAwareFetch).not.toHaveBeenCalled();
   });
 
   it("surfaces upstream errors with status", async () => {
-    global.fetch.mockResolvedValueOnce(
+    proxyMocks.proxyAwareFetch.mockResolvedValueOnce(
       jsonResponse({ error: { message: "typesafe/jev-1.13 is a decisions model", code: 400 } }, 400),
     );
     const result = await handleDecisionsProxyCore({
@@ -127,19 +135,31 @@ describe("decisionsCore proxy", () => {
     expect(result.status).toBe(400);
   });
 
-  it("sends Bearer public + x-opencode-client for noauth (opencode zen SystemOne)", async () => {
-    global.fetch.mockResolvedValueOnce(jsonResponse(DECISIONS_OK));
+  it("routes noauth Jev through the exact per-connection proxy options", async () => {
+    proxyMocks.proxyAwareFetch.mockResolvedValueOnce(jsonResponse(DECISIONS_OK));
+    const raw = JSON.stringify({ ...DECISIONS_BODY, model: "jev-1.13-free" });
+    const proxyOptions = {
+      connectionProxyEnabled: true,
+      connectionProxyUrl: "http://proxy.test:8080",
+      connectionNoProxy: "localhost,127.0.0.1",
+      vercelRelayUrl: "",
+    };
 
     const result = await handleDecisionsProxyCore({
       provider: "opencode",
-      rawBody: JSON.stringify({ ...DECISIONS_BODY, model: "jev-1.13-free" }),
+      rawBody: raw,
       credentials: { connectionId: "noauth", id: "noauth", accessToken: "public" },
+      proxyOptions,
     });
 
     expect(result.success).toBe(true);
-    const [url, init] = global.fetch.mock.calls[0];
+    expect(proxyMocks.proxyAwareFetch).toHaveBeenCalledOnce();
+    const [url, init, receivedProxyOptions] = proxyMocks.proxyAwareFetch.mock.calls[0];
     expect(url).toBe("https://opencode.ai/zen/v1/systemone");
+    expect(init.method).toBe("POST");
+    expect(init.body).toBe(raw);
     expect(init.headers.Authorization).toBe("Bearer public");
     expect(init.headers["x-opencode-client"]).toBe("desktop");
+    expect(receivedProxyOptions).toBe(proxyOptions);
   });
 });
