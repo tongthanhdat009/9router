@@ -39,6 +39,55 @@ async function canonicalRouteModels(models) {
     return { model: member, providerId: info?.provider, modelId: info?.model };
   }));
 }
+// Empty-200 guard: a 2xx JSON body with no assistant text/tool intent carries
+// nothing Codex can act on (Codex then re-issues the identical tool call →
+// pinball loop). Treated as failure so combo fallback continues instead of
+// binding affinity to the empty member. Covers Chat Completions
+// (choices[0].message) and Responses API (object:response/output[]).
+// Fail-open: streaming, non-JSON, unparsable, reasoning-only, or unknown
+// shapes are never classified as empty.
+async function isEmptyChatSuccess(response) {
+  try {
+    if (!response || typeof response.clone !== "function") return false;
+    const contentType = response.headers?.get?.("content-type") || "";
+    if (/text\/event-stream/i.test(contentType)) return false;
+    const json = await response.clone().json();
+    // Responses API shape (Codex client): { object: "response", output: [...] }
+    if (json?.object === "response" && Array.isArray(json.output)) {
+      let hasText = false;
+      let hasTools = false;
+      let hasReasoning = false;
+      for (const item of json.output) {
+        if (!item || typeof item !== "object") continue;
+        if (item.type === "function_call" || item.type === "custom_tool_call") { hasTools = true; break; }
+        if (item.type === "reasoning") {
+          const summary = Array.isArray(item.summary) ? item.summary.map((s) => s?.text || "").join("") : "";
+          if (summary.trim()) { hasReasoning = true; break; }
+          continue;
+        }
+        if (item.type === "message" && Array.isArray(item.content)) {
+          for (const c of item.content) {
+            if (typeof c?.text === "string" && c.text.length > 0) { hasText = true; break; }
+          }
+          if (hasText) break;
+        }
+      }
+      if (hasTools || hasText || hasReasoning) return false;
+      return true;
+    }
+    const msg = json?.choices?.[0]?.message;
+    if (!msg || typeof msg !== "object") return false;
+    const content = msg.content;
+    if (!(content == null || content === "")) return false;
+    if (Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) return false;
+    // Reasoning-only (thinking models) is useful output — never empty.
+    if (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0) return false;
+    if (typeof msg.reasoning === "string" && msg.reasoning.length > 0) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 /**
  * Handle chat completion request
@@ -243,6 +292,16 @@ async function handleChatInner(request, clientRawRequest = null, registerAffinit
             routeSwitch: Boolean(routePrior && routePrior !== m),
             rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
           }, diagnostics, finalizeAffinityRequest, adaptiveRoute);
+          if (response.ok && await isEmptyChatSuccess(response)) {
+            // Empty 200 carries no assistant text/tool intent — unwind the
+            // account bind chatCore already made, do not pin route affinity,
+            // and let combo fallback continue to the next candidate.
+            const slash = m.indexOf("/");
+            if (slash > 0) invalidateAccountAffinity(affinitySessionId, m.slice(0, slash), m.slice(slash + 1));
+            invalidateRouteAffinity(affinitySessionId, modelStr);
+            log.warn("CHAT", `Empty 200 from ${m} → next combo candidate`);
+            return errorResponse(HTTP_STATUS.BAD_GATEWAY, `[${m}] returned an empty response`);
+          }
           if (response.ok) {
             if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
             const nextCount = priorRouteForCount === m ? priorRouteRequestCount + 1 : 1;
@@ -387,6 +446,13 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
               routeSwitch: Boolean(routePrior && routePrior !== m),
               rebindReason: routePrior && routePrior !== m ? "route-fallback" : null,
             }, diagnostics, finalizeAffinityRequest, adaptiveRoute);
+            if (response.ok && await isEmptyChatSuccess(response)) {
+              const slash = m.indexOf("/");
+              if (slash > 0) invalidateAccountAffinity(affinitySessionId, m.slice(0, slash), m.slice(slash + 1));
+              invalidateRouteAffinity(affinitySessionId, modelStr);
+              log.warn("CHAT", `Empty 200 from ${m} → next combo candidate`);
+              return errorResponse(HTTP_STATUS.BAD_GATEWAY, `[${m}] returned an empty response`);
+            }
             if (response.ok) {
               if (routePrior && routePrior !== m) logAffinity("affinity.rebind", { requestId: diagnostics.requestId, sessionHash: diagnostics.sessionHash, layer: "route", fromProvider: routePrior.split("/")[0] || null, fromModel: routePrior, toProvider: m.split("/")[0] || null, toModel: m, reason: "route_fallback" });
               const nextCount = priorRouteForCount === m ? priorRouteRequestCount + 1 : 1;
@@ -610,6 +676,19 @@ async function handleSingleModelChat(body, modelStr, clientRawRequest = null, re
         if (adaptiveRouteSample) {
           const settled = adaptiveRouter.recordObservation(adaptiveRouteSample);
           logAffinity("adaptive.observation", { requestId: diagnostics?.requestId, provider, model, connectionId: credentials?.connectionId, ...settled, probe: false });
+        }
+        // Empty-stream guard: a 200 stream with zero completion tokens and
+        // no semantic generation carries no text/tool intent (Codex then
+        // re-issues the identical tool call). Invalidate affinities so the
+        // next turn does not pin the empty member. Fail-open: any ambiguity
+        // keeps the old bind path.
+        const emptyStream = outcome !== "cancelled"
+          && firstSemanticGenerationAt == null
+          && (usage?.completion_tokens ?? usage?.output_tokens ?? 0) === 0;
+        if (emptyStream) {
+          if (affinityMeta?.routeCompletion) invalidateRouteAffinity(affinitySessionId, affinityMeta.routeCompletion.routeScope);
+          invalidateAccountAffinity(affinitySessionId, provider, model);
+          log.warn("CHAT", `Empty stream from ${provider}/${model} → affinity invalidated`);
         }
         const route = affinityMeta?.routeCompletion;
         if (!route) return;
