@@ -5,7 +5,7 @@ import { resolveTransport } from "../../open-sse/services/provider.js";
 
 // Chat-only models (no /messages, no /responses support on opencode-go)
 const CHAT_ONLY = ["glm-5.3", "glm-5.2", "glm-5.1", "kimi-k2.7-code", "kimi-k2.6", "kimi-k3",
-  "deepseek-v4.1-flash", "longcat-2.0", "mimo-v2.5", "mimo-v2.5-pro", "hy4-preview", "hy3"];
+  "deepseek-v4.1-flash", "longcat-2.0", "longcat-2.5-preview-free", "mimo-v2.5", "mimo-v2.5-pro", "hy4-preview", "hy3", "step-5-preview-free"];
 // Models that also expose the Anthropic /messages endpoint
 const CLAUDE_CAPABLE = ["minimax-m3", "minimax-m2.7", "minimax-m2.5",
   "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus"];
@@ -35,6 +35,7 @@ describe("OpenCode Go model catalog", () => {
       "minimax-m3", "minimax-m2.7", "minimax-m2.5",
       "qwen3.8-max", "qwen3.8-flash", "qwen3.7-max", "qwen3.7-plus", "qwen3.6-plus",
       "hy4-preview", "hy3",
+      "step-5-preview-free", "longcat-2.5-preview-free",
       "grok-4.6", "gpt-5.6-luna",
     ]);
   });

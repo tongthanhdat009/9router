@@ -9,6 +9,7 @@ vi.mock("@/lib/usageDb.js", () => ({
 const { FORMATS } = await import("../../open-sse/translator/formats.js");
 const { translateNonStreamingResponse } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
 const { handleForcedSSEToJson } = await import("../../open-sse/handlers/chatCore/sseToJsonHandler.js");
+const { handleNonStreamingResponse } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
 
 // A chat.completion body as returned by a chat-native upstream (e.g. op-ericding)
 const CHAT_TOOL_BODY = {
@@ -138,11 +139,180 @@ describe("forced-SSE JSON path for a Responses-API client behind a chat upstream
     });
   });
 
+  it("keeps reasoning-only Responses streams as success for a chat client (muse-spark thinking)", async () => {
+    const encoder = new TextEncoder();
+    const raw = [
+      'event: response.created',
+      'data: {"response":{"id":"resp_1","created_at":1700000000}}',
+      "",
+      'event: response.output_item.done',
+      'data: {"output_index":0,"item":{"type":"reasoning","summary":[{"type":"summary_text","text":"plan more"}]}}',
+      "",
+      'event: response.completed',
+      'data: {"response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":5,"total_tokens":15}}}',
+      "",
+    ].join("\n");
+    const ctx = {
+      providerResponse: new Response(new ReadableStream({
+        start(controller) { controller.enqueue(encoder.encode(raw)); controller.close(); }
+      }), { headers: { "content-type": "text/event-stream" } }),
+      sourceFormat: FORMATS.OPENAI,
+      targetFormat: FORMATS.OPENAI_RESPONSES,
+      provider: "opencode-go",
+      model: "muse-spark-1.3-contributor",
+      body: { model: "muse-spark-1.3-contributor", messages: [] },
+      stream: false,
+      requestStartTime: Date.now(),
+      connectionId: "test-connection",
+      clientRawRequest: { endpoint: "/v1/chat/completions" },
+      trackDone: vi.fn(),
+      appendLog: vi.fn(),
+    };
+    const result = await handleForcedSSEToJson(ctx);
+    expect(result.success).toBe(true);
+    const json = await result.response.json();
+    expect(json.object).toBe("chat.completion");
+    expect(json.choices[0].message.reasoning_content).toBe("plan more");
+  });
+
+  it("still 502 on empty Responses streams with no text/tool/reasoning", async () => {
+    const encoder = new TextEncoder();
+    const raw = [
+      'event: response.created',
+      'data: {"response":{"id":"resp_1","created_at":1700000000}}',
+      "",
+      'event: response.output_item.done',
+      'data: {"output_index":0,"item":{"type":"message","role":"assistant","content":[]}}',
+      "",
+      'event: response.completed',
+      'data: {"response":{"status":"completed","usage":{"input_tokens":10,"output_tokens":0,"total_tokens":10}}}',
+      "",
+    ].join("\n");
+    const ctx = {
+      providerResponse: new Response(new ReadableStream({
+        start(controller) { controller.enqueue(encoder.encode(raw)); controller.close(); }
+      }), { headers: { "content-type": "text/event-stream" } }),
+      sourceFormat: FORMATS.OPENAI,
+      targetFormat: FORMATS.OPENAI_RESPONSES,
+      provider: "opencode-go",
+      model: "muse-spark-1.3-contributor",
+      body: { model: "muse-spark-1.3-contributor", messages: [] },
+      stream: false,
+      requestStartTime: Date.now(),
+      connectionId: "test-connection",
+      clientRawRequest: { endpoint: "/v1/chat/completions" },
+      trackDone: vi.fn(),
+      appendLog: vi.fn(),
+    };
+    const result = await handleForcedSSEToJson(ctx);
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(502);
+  });
+
   it("still returns chat.completion for a plain chat client", async () => {
     const result = await handleForcedSSEToJson(sseCtx(FORMATS.OPENAI, FORMATS.OPENAI));
     expect(result.success).toBe(true);
     const json = await result.response.json();
     expect(json.object).toBe("chat.completion");
     expect(json.choices[0].message.tool_calls[0].function.name).toBe("shell");
+  });
+});
+
+describe("non-stream JSON path with Responses SSE upstream (muse-spark 502)", () => {
+  const responsesSSE = () => {
+    const encoder = new TextEncoder();
+    const raw = [
+      "event: response.created",
+      'data: {"response":{"id":"resp_1","created_at":1700000000}}',
+      "",
+      "event: response.output_item.done",
+      'data: {"output_index":0,"item":{"type":"reasoning","status":"completed","summary":[]}}',
+      "",
+      "event: response.output_item.done",
+      'data: {"output_index":1,"item":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"pong"}]}}',
+      "",
+      "event: response.completed",
+      'data: {"response":{"status":"completed","usage":{"input_tokens":8,"output_tokens":10,"total_tokens":18}}}',
+      "",
+    ].join("\n");
+    return new Response(new ReadableStream({
+      start(controller) { controller.enqueue(encoder.encode(raw)); controller.close(); }
+    }), { headers: { "content-type": "text/event-stream" } });
+  };
+  const nonStreamCtx = (providerResponse) => ({
+    providerResponse,
+    sourceFormat: FORMATS.OPENAI,
+    targetFormat: FORMATS.OPENAI_RESPONSES,
+    provider: "opencode-go",
+    model: "muse-spark-1.3-contributor",
+    body: { model: "muse-spark-1.3-contributor", messages: [] },
+    stream: false,
+    requestStartTime: Date.now(),
+    connectionId: "test-connection",
+    clientRawRequest: { endpoint: "/v1/chat/completions" },
+    trackDone: vi.fn(),
+    appendLog: vi.fn(),
+    reqLogger: { logProviderResponse: vi.fn(), logConvertedResponse: vi.fn(), logError: vi.fn() },
+  });
+
+  it("converts Responses SSE into chat.completion instead of 502", async () => {
+    const result = await handleNonStreamingResponse(nonStreamCtx(responsesSSE()));
+    expect(result.success).toBe(true);
+    const json = await result.response.json();
+    expect(json.object).toBe("chat.completion");
+    expect(json.choices).toHaveLength(1);
+    expect(json.choices[0].message.content).toContain("pong");
+  });
+
+  it("still 502 on garbage SSE for Responses upstream", async () => {
+    const encoder = new TextEncoder();
+    const bad = new Response(new ReadableStream({
+      start(controller) { controller.enqueue(encoder.encode("data: not-json\n\ndata: [DONE]\n")); controller.close(); }
+    }), { headers: { "content-type": "text/event-stream" } });
+    const result = await handleNonStreamingResponse(nonStreamCtx(bad));
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(502);
+  });
+});
+
+describe("non-stream Responses upstream for a Chat client (muse-spark no-choices)", () => {
+  const RESPONSES_BODY = {
+    id: "resp_1",
+    object: "response",
+    created_at: 1700000000,
+    model: "muse-spark-1.3-contributor",
+    status: "completed",
+    output: [
+      { type: "reasoning", summary: [] },
+      { type: "message", role: "assistant", content: [{ type: "output_text", text: "Hi there, how are you?", annotations: [] }] }
+    ],
+    usage: { input_tokens: 8, output_tokens: 10, total_tokens: 18 }
+  };
+
+  it("converts object:response into chat.completion with choices", async () => {
+    const { translateNonStreamingResponse: t } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
+    const out = t(RESPONSES_BODY, FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI);
+    expect(out.object).toBe("chat.completion");
+    expect(out.choices).toHaveLength(1);
+    expect(out.choices[0].message.content).toBe("Hi there, how are you?");
+    expect(out.choices[0].finish_reason).toBe("stop");
+  });
+
+  it("maps function_call items to tool_calls", async () => {
+    const { translateNonStreamingResponse: t } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
+    const body = {
+      ...RESPONSES_BODY,
+      output: [{ type: "function_call", call_id: "call_1", name: "shell", arguments: "{\"cmd\":\"ls\"}" }]
+    };
+    const out = t(body, FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI);
+    expect(out.choices[0].finish_reason).toBe("tool_calls");
+    expect(out.choices[0].message.tool_calls[0]).toMatchObject({ id: "call_1" });
+    expect(out.choices[0].message.tool_calls[0].function.name).toBe("shell");
+  });
+
+  it("leaves non-Responses bodies untouched", async () => {
+    const { translateNonStreamingResponse: t } = await import("../../open-sse/handlers/chatCore/nonStreamingHandler.js");
+    const garbage = { object: "response", status: "completed" };
+    expect(t(garbage, FORMATS.OPENAI_RESPONSES, FORMATS.OPENAI)).toBe(garbage);
   });
 });

@@ -6,6 +6,8 @@ import { addBufferToUsage, filterUsageForFormat } from "../../utils/usageTrackin
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
 import { parseSSEToOpenAIResponse } from "./sseToJsonHandler.js";
+import { convertResponsesStreamToJson } from "../../transformer/streamToJsonConverter.js";
+import { PROVIDERS } from "../../config/providers.js";
 import { unwrapClineEnvelope } from "../../shared/clineEnvelope.js";
 import { buildRequestDetail, extractRequestConfig, extractUsageFromResponse, saveUsageStats, formatDoneLine } from "./requestDetail.js";
 import { appendRequestLog, saveRequestDetail } from "@/lib/usageDb.js";
@@ -143,6 +145,83 @@ export function openAICompletionToResponses(responseBody, customToolNames = null
 }
 
 /**
+ * Convert an OpenAI Responses API non-streaming body into OpenAI Chat
+ * Completions shape. Used when a Chat Completions client
+ * (e.g. /v1/chat/completions or the dashboard model test) is routed to a
+ * Responses-only upstream such as opencode-go muse-spark on /responses:
+ * without this the raw `object:response` body reaches the client with no
+ * `choices` array and surfaces as "no completion choices".
+ * Mirrors the forced-SSE JSON path in sseToJsonHandler.js. Fail-open: a body
+ * without an `output` array is returned untouched.
+ */
+export function responsesToOpenAICompletion(responseBody) {
+  const output = responseBody?.output;
+  if (!Array.isArray(output)) return responseBody;
+
+  // Last non-empty assistant message wins (Codex emits many alternating items).
+  let textContent = "";
+  for (const item of output) {
+    if (item?.type !== RESPONSES_ITEM.MESSAGE || !Array.isArray(item.content)) continue;
+    const part = item.content.find((c) => c?.type === RESPONSES_ITEM.OUTPUT_TEXT && typeof c?.text === "string" && c.text.length > 0)
+      || item.content.find((c) => typeof c?.text === "string" && c.text.length > 0);
+    if (part?.text) textContent = part.text;
+  }
+
+  const reasoningText = output
+    .filter((item) => item?.type === RESPONSES_ITEM.REASONING)
+    .map((item) => (item.summary || []).map((seg) => seg?.text || "").join(""))
+    .join("");
+
+  const toolCalls = [];
+  for (const item of output) {
+    if (item?.type === RESPONSES_ITEM.FUNCTION_CALL) {
+      toolCalls.push({
+        id: item.call_id || `call_${item.name || "fn"}_${toolCalls.length}`,
+        type: "function",
+        function: {
+          name: item.name || "",
+          arguments: typeof item.arguments === "string" ? item.arguments : JSON.stringify(item.arguments ?? {}),
+        },
+      });
+    } else if (item?.type === RESPONSES_ITEM.CUSTOM_TOOL_CALL) {
+      toolCalls.push({
+        id: item.call_id || `call_${item.name || "fn"}_${toolCalls.length}`,
+        type: "function",
+        function: {
+          name: item.name || "",
+          arguments: typeof item.input === "string" ? JSON.stringify({ input: item.input }) : JSON.stringify(item.input ?? {}),
+        },
+      });
+    }
+  }
+
+  const status = responseBody.status;
+  const finishReason = toolCalls.length > 0 ? "tool_calls" : status === "completed" ? "stop" : status === "incomplete" ? "length" : status || "stop";
+
+  const message = { role: ROLE.ASSISTANT, content: textContent || (toolCalls.length > 0 ? null : "") };
+  if (reasoningText) message.reasoning_content = reasoningText;
+  if (toolCalls.length > 0) message.tool_calls = toolCalls;
+
+  const usage = responseBody.usage || {};
+  const cachedTokens = usage.input_tokens_details?.cached_tokens ?? usage.prompt_tokens_details?.cached_tokens;
+  const promptTokens = usage.input_tokens ?? usage.prompt_tokens ?? 0;
+  const completionTokens = usage.output_tokens ?? usage.completion_tokens ?? 0;
+  return {
+    id: responseBody.id || `chatcmpl-${Date.now()}`,
+    object: "chat.completion",
+    created: responseBody.created_at || Math.floor(Date.now() / 1000),
+    model: responseBody.model || "unknown",
+    choices: [{ index: 0, message, finish_reason: finishReason }],
+    usage: {
+      prompt_tokens: promptTokens,
+      completion_tokens: completionTokens,
+      total_tokens: usage.total_tokens ?? promptTokens + completionTokens,
+      ...(cachedTokens !== undefined && cachedTokens !== null ? { prompt_tokens_details: { cached_tokens: cachedTokens } } : {}),
+    },
+  };
+}
+
+/**
  * Translate non-streaming response body from provider format → OpenAI format.
  */
 export function translateNonStreamingResponse(responseBody, targetFormat, sourceFormat, customToolNames = null) {
@@ -154,6 +233,14 @@ export function translateNonStreamingResponse(responseBody, targetFormat, source
   }
   if (targetFormat === FORMATS.OPENAI && sourceFormat === FORMATS.CLAUDE) {
     return openAICompletionToClaudeMessage(responseBody);
+  }
+  // Responses-only upstream (e.g. opencode-go muse-spark on /responses) behind a
+  // Chat Completions client — convert so `choices` exist (no-choices fix).
+  // NOTE: arg order here is (providerFormat=targetFormat, clientFormat=sourceFormat),
+  // i.e. targetFormat=provider wire format, sourceFormat=client format.
+  if (targetFormat === FORMATS.OPENAI_RESPONSES && sourceFormat === FORMATS.OPENAI) {
+    const out = responsesToOpenAICompletion(responseBody);
+    if (out !== responseBody) return out;
   }
   if (targetFormat === FORMATS.OPENAI) return responseBody;
 
@@ -294,10 +381,29 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     const sseText = await providerResponse.text();
     const parsed = parseSSEToOpenAIResponse(sseText, model);
     if (!parsed) {
-      appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
-      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
+      // Upstream spoke Responses-API SSE (e.g. opencode-go muse-spark on
+      // /responses) while this path only parses Chat SSE: convert instead of
+      // 502. Fail-open: converter miss still yields the original 502.
+      const isResponsesUpstream = targetFormat === FORMATS.OPENAI_RESPONSES
+        || PROVIDERS[provider]?.format === FORMATS.OPENAI_RESPONSES;
+      if (isResponsesUpstream) {
+        try {
+          const enc = new TextEncoder().encode(sseText);
+          const converted = await convertResponsesStreamToJson(new ReadableStream({
+            start(c) { c.enqueue(enc); c.close(); }
+          }));
+          if (converted && Array.isArray(converted.output) && converted.output.length > 0) {
+            responseBody = converted;
+          }
+        } catch { /* fall through to 502 */ }
+      }
+      if (!responseBody) {
+        appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
+        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
+      }
+    } else {
+      responseBody = parsed;
     }
-    responseBody = parsed;
   } else {
     try {
       responseBody = await providerResponse.json();

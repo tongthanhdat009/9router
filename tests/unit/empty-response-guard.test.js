@@ -37,6 +37,17 @@ describe("empty SSE collapses to null (callers map to 502)", () => {
     expect(parsed.choices[0].message.content).toBeNull();
   });
 
+  it("keeps reasoning-only streams as success (step/minimax thinking)", () => {
+    const raw = SSE([
+      'data: {"choices":[{"delta":{"role":"assistant","reasoning_content":"plan"},"finish_reason":null}]}',
+      'data: {"choices":[{"delta":{"reasoning":" more"},"finish_reason":"stop"}]}',
+      "data: [DONE]"
+    ]);
+    const parsed = parseSSEToOpenAIResponse(raw, "step-5-preview-free");
+    expect(parsed).not.toBeNull();
+    expect(parsed.choices[0].message.reasoning_content).toBe("plan more");
+  });
+
   it("keeps content streams as success", () => {
     const raw = SSE([
       'data: {"choices":[{"delta":{"content":"hi"},"finish_reason":null}]}',
