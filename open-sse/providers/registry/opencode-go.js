@@ -62,8 +62,6 @@ export default {
     { id: "qwen3.6-plus", name: "Qwen 3.6 Plus", supportedFormats: ["openai", "claude"] },
     { id: "hy4-preview", name: "Hy4 Preview", supportedFormats: ["openai"] },
     { id: "hy3", name: "Hy3", supportedFormats: ["openai"] },
-    { id: "step-5-preview-free", name: "Step 5 Preview Free", supportedFormats: ["openai"] },
-    { id: "longcat-2.5-preview-free", name: "LongCat 2.5 Preview Free", supportedFormats: ["openai"] },
     // Served by /zen/go/v1/responses only — the responses-only entry forces chatCore
     // past the sourceFormat-matched transports into translation (see chatCore guard).
     { id: "grok-4.6", name: "Grok 4.6", targetFormat: "openai-responses", supportedFormats: ["openai-responses"] },

@@ -1,5 +1,4 @@
 import { convertResponsesStreamToJson } from "../../transformer/streamToJsonConverter.js";
-import { extractReasoningText } from "../../translator/concerns/reasoning.js";
 import { restoreToolNames } from "../../utils/opencodeFingerprint.js";
 import { createErrorResult } from "../../utils/error.js";
 import { HTTP_STATUS } from "../../config/runtimeConfig.js";
@@ -143,8 +142,7 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
     const choice = chunk?.choices?.[0];
     const delta = choice?.delta || {};
     if (typeof delta.content === "string" && delta.content.length > 0) contentParts.push(delta.content);
-    const reasoningText = extractReasoningText(delta);
-    if (reasoningText) reasoningParts.push(reasoningText);
+    if (typeof delta.reasoning_content === "string" && delta.reasoning_content.length > 0) reasoningParts.push(delta.reasoning_content);
     if (choice?.finish_reason) finishReason = choice.finish_reason;
     if (chunk?.usage && typeof chunk.usage === "object") usage = chunk.usage;
 
@@ -164,12 +162,10 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
   }
 
   const joinedContent = contentParts.join("");
-  const joinedReasoning = reasoningParts.join("");
-  // Empty content with no tool calls and no reasoning is an error, not success:
-  // the caller maps null to 502 so the account loop falls back instead of binding
+  // Empty content with no tool calls is an error, not success: the caller
+  // maps null to 502 so the account loop falls back instead of binding
   // affinity on an empty-200 (Codex then re-issues the identical tool call).
-  // Reasoning-only is useful output (thinking models) and stays success.
-  if (!joinedContent && toolCallMap.size === 0 && !joinedReasoning) return null;
+  if (!joinedContent && toolCallMap.size === 0) return null;
 
   const message = { role: "assistant", content: joinedContent || (toolCallMap.size > 0 ? null : "") };
   if (reasoningParts.length > 0) message.reasoning_content = reasoningParts.join("");
@@ -280,15 +276,12 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
           }
         };
       } else {
-        // Empty content with no function calls and no reasoning is an error, not success:
+        // Empty content with no function calls is an error, not success:
         // yield 502 so the account loop falls back instead of binding
         // affinity on an empty-200. Toolcall-only (null content +
-        // function_call items) and reasoning-only (thinking models) stay success.
-        const reasoningItems = (jsonResponse.output || []).filter(item => item?.type === RESPONSES_ITEM.REASONING);
-        const reasoningText = reasoningItems.map(item => (item.summary || []).map(seg => seg?.text || "").join("")).join("");
-        if (!textContent && !hasToolCalls && !reasoningText) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
+        // function_call items) stays success.
+        if (!textContent && !hasToolCalls) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
         const message = { role: "assistant", content: textContent || (hasToolCalls ? null : "") };
-        if (reasoningText) message.reasoning_content = reasoningText;
         if (hasToolCalls) message.tool_calls = toolCalls;
         const responseDone = jsonResponse.status === "completed" || jsonResponse.status === "done";
         const finishReason = hasToolCalls ? "tool_calls" : (responseDone ? "stop" : (jsonResponse.status || "stop"));

@@ -91,5 +91,3 @@ graphify-out/*
 # Exhaustive provider cache evidence ledger
 !docs/provider-cache-audit.md
 /tests/.omc
-/.omo
-/.freebuff
