@@ -161,13 +161,7 @@ export function parseSSEToOpenAIResponse(rawSSE, fallbackModel) {
     }
   }
 
-  const joinedContent = contentParts.join("");
-  // Empty content with no tool calls is an error, not success: the caller
-  // maps null to 502 so the account loop falls back instead of binding
-  // affinity on an empty-200 (Codex then re-issues the identical tool call).
-  if (!joinedContent && toolCallMap.size === 0) return null;
-
-  const message = { role: "assistant", content: joinedContent || (toolCallMap.size > 0 ? null : "") };
+  const message = { role: "assistant", content: contentParts.join("") || (toolCallMap.size > 0 ? null : "") };
   if (reasoningParts.length > 0) message.reasoning_content = reasoningParts.join("");
   if (toolCallMap.size > 0) {
     message.tool_calls = [...toolCallMap.entries()].sort((a, b) => a[0] - b[0]).map(([, tc]) => tc);
@@ -276,11 +270,6 @@ export async function handleForcedSSEToJson({ providerResponse, sourceFormat, ta
           }
         };
       } else {
-        // Empty content with no function calls is an error, not success:
-        // yield 502 so the account loop falls back instead of binding
-        // affinity on an empty-200. Toolcall-only (null content +
-        // function_call items) stays success.
-        if (!textContent && !hasToolCalls) return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid SSE response for non-streaming request");
         const message = { role: "assistant", content: textContent || (hasToolCalls ? null : "") };
         if (hasToolCalls) message.tool_calls = toolCalls;
         const responseDone = jsonResponse.status === "completed" || jsonResponse.status === "done";

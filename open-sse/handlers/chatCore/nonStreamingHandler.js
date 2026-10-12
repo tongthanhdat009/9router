@@ -377,42 +377,6 @@ export async function handleNonStreamingResponse({ providerResponse, provider, m
     }
   }
 
-  // Empty-200 guard: no text/tool intent is a 502 so the account/combo loop
-  // falls back instead of binding affinity on an empty success (Codex then
-  // re-issues the identical tool call). Reasoning-only is useful output.
-  // Fail-open: unknown shapes never classified as empty.
-  if (isResponsesResponse && Array.isArray(translatedResponse?.output)) {
-    let hasSignal = false;
-    for (const item of translatedResponse.output) {
-      if (!item || typeof item !== "object") continue;
-      if (item.type === "function_call" || item.type === "custom_tool_call") { hasSignal = true; break; }
-      if (item.type === "reasoning") {
-        const summary = Array.isArray(item.summary) ? item.summary.map((s) => s?.text || "").join("") : "";
-        if (summary.trim()) { hasSignal = true; break; }
-        continue;
-      }
-      if (item.type === "message" && Array.isArray(item.content)) {
-        if (item.content.some((c) => typeof c?.text === "string" && c.text.length > 0)) { hasSignal = true; break; }
-      }
-    }
-    if (!hasSignal) {
-      appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
-      return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid response for non-streaming request");
-    }
-  } else if (Array.isArray(translatedResponse?.choices)) {
-    const msg = translatedResponse.choices[0]?.message;
-    if (msg && typeof msg === "object") {
-      const content = msg.content;
-      const hasTools = Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0;
-      const hasReasoning = (typeof msg.reasoning_content === "string" && msg.reasoning_content.length > 0)
-        || (typeof msg.reasoning === "string" && msg.reasoning.length > 0);
-      if ((content == null || content === "") && !hasTools && !hasReasoning) {
-        appendLog({ status: `FAILED ${HTTP_STATUS.BAD_GATEWAY}` });
-        return createErrorResult(HTTP_STATUS.BAD_GATEWAY, "Invalid response for non-streaming request");
-      }
-    }
-  }
-
   reqLogger.logConvertedResponse(translatedResponse);
 
   const totalLatency = Date.now() - requestStartTime;

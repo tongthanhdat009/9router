@@ -83,58 +83,6 @@ export function createSSEStream(options = {}) {
   let streamDoneSent = false;  // track duplicate [DONE] across transform + flush
   let finalized = false;
 
-  // Empty-stream failure signal: track emitted semantic text vs tool calls for
-  // Responses passthrough. Zero of both => synthesize response.failed so a
-  // headers-already-sent stream still signals failure in-body.
-  let responsesTextCount = 0;
-  let responsesToolCount = 0;
-  let responsesFailedSynthesized = false;
-  let lastFunctionCallSignature = null;
-  let lastFunctionCallWasSame = false;
-
-  const RESPONSES_TEXT_DELTA_EVENTS = new Set([
-    "response.output_text.delta",
-    "response.refusal.delta",
-    "response.reasoning_summary_text.delta",
-  ]);
-  const RESPONSES_TOOL_DELTA_EVENTS = new Set([
-    "response.function_call_arguments.delta",
-    "response.function_call_arguments.done",
-    "response.custom_tool_call_input.delta",
-    "response.custom_tool_call_input.done",
-  ]);
-  const isResponsesFailureTerminal = (eventName, parsed) => {
-    if (eventName === "response.failed" || eventName === "error") return true;
-    const t = parsed?.type;
-    if (t === "response.failed" || t === "error") return true;
-    return parsed?.response?.status === "failed";
-  };
-  // Empty-output check for success terminals. Explicit empty output (output: [])
-  // means the upstream produced nothing -> failure. Absent output/item keys is
-  // ambiguous (legacy bare response.done/completed) -> fail open, assume content
-  // so normal streams stay unchanged.
-  // Fail-open dedup key: all three must be strings, call_id+name non-empty.
-  const extractFunctionCallSignature = (parsed) => {
-    const item = parsed?.item?.type === "function_call" || parsed?.item?.type === "custom_tool_call"
-      ? parsed.item
-      : (parsed?.type === "function_call" ? parsed : null);
-    if (!item) return null;
-    const callId = item.call_id;
-    const name = item.name;
-    const args = item.arguments;
-    if (typeof callId !== "string" || !callId) return null;
-    if (typeof name !== "string" || !name) return null;
-    if (typeof args !== "string") return null;
-    return `${callId}\0${name}\0${args}`;
-  };
-  const isResponsesToolSignal = (eventName, parsed) => {
-    if (RESPONSES_TOOL_DELTA_EVENTS.has(eventName)) return true;
-    const itemType = parsed?.item?.type;
-    if (itemType === "function_call" || itemType === "custom_tool_call") return true;
-    if (parsed?.type === "function_call" || parsed?.type === "custom_tool_call") return true;
-    return false;
-  };
-
   // Usage/logging tail, callable from transform() as well as flush(): a client that
   // closes right after the terminal event cancels the reader, and flush() never runs.
   const finalizeStream = () => {
@@ -385,39 +333,6 @@ export function createSSEStream(options = {}) {
           // check below is unreachable for same-format streams (they `continue` above)
           if (!firstSemanticGenerationAt && hasOpenAIResponsesSemanticGenerationDelta(openAIResponsesEventName, parsed)) {
             firstSemanticGenerationAt = Date.now();
-          }
-          var isRespTerminal = isOpenAIResponsesTerminalEvent(openAIResponsesEventName, parsed);
-          var isRespFailure = isResponsesFailureTerminal(openAIResponsesEventName, parsed);
-          var fnSig = extractFunctionCallSignature(parsed);
-          var carriesFnCall = fnSig !== null || parsed?.item?.type === "function_call" || parsed?.item?.type === "custom_tool_call" || parsed?.type === "function_call" || parsed?.type === "custom_tool_call";
-          if (carriesFnCall && fnSig && lastFunctionCallWasSame && fnSig === lastFunctionCallSignature) {
-            currentOpenAIResponsesEvent = null;
-            continue; // exact repeat consecutive to the previously forwarded call — drop
-          }
-          // Strictly consecutive: any other forwarded event breaks the run.
-          // Ambiguous (unextractable) shapes fail open and also break the run.
-          lastFunctionCallSignature = fnSig;
-          lastFunctionCallWasSame = carriesFnCall && fnSig !== null;
-          var outArr = Array.isArray(parsed?.response?.output) ? parsed.response.output : (Array.isArray(parsed?.output) ? parsed.output : null);
-          var hasOutputItems = outArr ? outArr.length > 0 : (parsed?.item && typeof parsed.item === "object");
-          var termEmpty = isRespTerminal && !isRespFailure && outArr !== null && outArr.length === 0 && !hasOutputItems;
-          if (termEmpty && responsesTextCount === 0 && responsesToolCount === 0 && !responsesFailedSynthesized) {
-            var emptyFailed = formatIncompleteOpenAIResponsesStreamFailure();
-            reqLogger?.appendConvertedChunk?.(emptyFailed);
-            controller.enqueue(sharedEncoder.encode(emptyFailed));
-            responsesFailedSynthesized = true;
-            openAIResponsesTerminalSeen = true;
-            currentOpenAIResponsesEvent = null;
-            sseEmittedCount++;
-            finalizeStream();
-            continue;
-          }
-          if (RESPONSES_TEXT_DELTA_EVENTS.has(openAIResponsesEventName) && typeof parsed?.delta === "string" && parsed.delta.length > 0) {
-            responsesTextCount++;
-          } else if (isResponsesToolSignal(openAIResponsesEventName, parsed)) {
-            responsesToolCount++;
-          } else if (hasOutputItems) {
-            responsesTextCount++;
           }
           const output = formatSSE({ event: openAIResponsesEventName, data: parsed }, sourceFormat);
           reqLogger?.appendConvertedChunk?.(output);
